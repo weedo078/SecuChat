@@ -375,12 +375,14 @@ class SAMService {
         resolve(response);
       };
 
+      // SESSION CREATE can take longer while i2pd builds its first tunnels
+      const isSlowCommand = command.startsWith('SESSION ') || command.startsWith('DEST ');
       const timeout = setTimeout(() => {
         // Remove this resolver from the queue
         const idx = this.pendingResolvers.indexOf(wrappedResolve);
         if (idx !== -1) this.pendingResolvers.splice(idx, 1);
         reject(new Error(`SAM command timeout: ${command.split(' ').slice(0, 2).join(' ')}`));
-      }, 10000);
+      }, isSlowCommand ? 30000 : 10000);
 
       this.pendingResolvers.push(wrappedResolve);
       this.socket.send(command);

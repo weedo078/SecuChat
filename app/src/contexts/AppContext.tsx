@@ -185,44 +185,43 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setSecuritySettings(savedSecuritySettings);
       }
       
-      // Initialize I2P
+      // Register I2P listeners and start initialization in the background.
+      // We do NOT await i2p init here — the app loads immediately and I2P
+      // connects whenever it's ready (status updates via onStatusChange).
       if (savedUser?.i2pAddress && savedUser.i2pPublicKey && savedUser.i2pPrivateKey) {
         await i2pService.restoreIdentity(
-          savedUser.i2pPublicKey, 
-          savedUser.i2pPrivateKey, 
+          savedUser.i2pPublicKey,
+          savedUser.i2pPrivateKey,
           savedUser.i2pSamDestination
         );
-        
+
         // Deregister old listeners if already registered (prevents memory leak)
         if (listenersRegisteredRef.current) {
           i2pService.offMessage(handleIncomingMessage);
           i2pService.offStatusChange(setI2pStatus);
         }
-        
+
         // Register new listeners
         i2pService.onMessage(handleIncomingMessage);
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
-        
-        // Initialize with settings — cap at 15 s so the app never hangs on loading
+
+        // Fire-and-forget: I2P connects in background, UI updates via setI2pStatus
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        const status = await Promise.race([
-          i2pService.initialize(i2pSettings.sam),
-          new Promise<I2PStatus>((resolve) =>
-            setTimeout(() => resolve({ samConnected: false, samAvailable: false, address: null, error: 'I2P-Init-Timeout' }), 15000)
-          ),
-        ]);
-        setI2pStatus(status);
-        
-        // Save SAM destination if newly generated
-        if (status.newDestinationGenerated && savedUser) {
-          const identity = i2pService.getIdentity();
-          if (identity?.samDestination) {
-            const updatedUser = { ...savedUser, i2pSamDestination: identity.samDestination };
-            await storageService.saveUser(updatedUser);
-            setUser(updatedUser);
+        i2pService.initialize(i2pSettings.sam).then((status) => {
+          setI2pStatus(status);
+          if (status.newDestinationGenerated && savedUser) {
+            const identity = i2pService.getIdentity();
+            if (identity?.samDestination) {
+              const updatedUser = { ...savedUser, i2pSamDestination: identity.samDestination };
+              storageService.saveUser(updatedUser).catch(console.error);
+              setUser(updatedUser);
+            }
           }
-        }
+        }).catch((err) => {
+          console.error('[AppContext] I2P init failed:', err);
+          setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
+        });
       }
       
     } catch (error) {
@@ -300,6 +299,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Handle sync messages (multi-device) - TODO: Implement for I2P
   // This would require a sync protocol over I2P SAM streams
   // For now, sync is disabled in pure I2P mode
+
+  // Auto-retry I2P connection every 30 s when not connected
+  useEffect(() => {
+    if (!user || i2pStatus?.samConnected || !settings.i2p.sam.enabled) return;
+    const timer = setTimeout(() => {
+      i2pService.initialize(settings.i2p.sam).then(setI2pStatus).catch((err) => {
+        setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
+      });
+    }, 30000);
+    return () => clearTimeout(timer);
+  }, [user, i2pStatus, settings.i2p.sam]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
