@@ -16,7 +16,7 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const I2PD_BINARY = app.isPackaged
-  ? join(process.resourcesPath, 'i2pd', process.platform === 'win32' ? 'i2pd.exe' : 'i2pd')
+  ? join(process.resourcesPath, 'i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd')
   : join(__dirname, '../../resources/i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd');
 
 const I2PD_CERTS_SRC = app.isPackaged
