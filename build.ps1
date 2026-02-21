@@ -1,7 +1,6 @@
 # SecuChat Windows Build Script
-# Requires: Node.js 20+, Git
-# Usage:
-#   .\build.ps1     # Build Windows installer
+# Automatically installs all missing dependencies and builds the app.
+# Usage: .\build.ps1
 
 param([switch]$All)
 
@@ -15,16 +14,31 @@ $I2PD_EXE     = "$ELECTRON_DIR\resources\i2pd\win\i2pd.exe"
 function Info  { param($msg) Write-Host "[build] $msg" -ForegroundColor Green }
 function Abort { param($msg) Write-Host "[build] ERROR: $msg" -ForegroundColor Red; exit 1 }
 
-# --- Check Node.js ---
-Info "Checking dependencies..."
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Abort "Node.js not found. Install from https://nodejs.org"
+function Refresh-Path {
+    $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("Path","User")
 }
-Info "Node.js $(node --version) found."
 
-# --- Download i2pd.exe ---
+# --- Install Node.js if missing ---
+Info "Checking Node.js..."
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+    Info "Node.js not found. Installing via winget..."
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Abort "winget not found. Please install Node.js manually from https://nodejs.org (LTS) and re-run this script."
+    }
+    winget install --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements -e
+    Refresh-Path
+    if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
+        Abort "Node.js installation failed. Please install manually from https://nodejs.org and re-run."
+    }
+    Info "Node.js installed successfully."
+}
+Info "Node.js $(node --version) ready."
+
+# --- Download i2pd.exe if missing ---
+Info "Checking i2pd..."
 if (Test-Path $I2PD_EXE) {
-    Info "i2pd.exe already present, skipping download."
+    Info "i2pd.exe already present."
 } else {
     Info "Downloading i2pd $I2PD_VERSION Windows x64..."
     $url    = "https://github.com/PurpleI2P/i2pd/releases/download/$I2PD_VERSION/i2pd_${I2PD_VERSION}_win64_mingw.zip"
@@ -42,10 +56,11 @@ if (Test-Path $I2PD_EXE) {
 }
 
 # --- Check certificates ---
+Info "Checking i2pd certificates..."
 $certsDir = "$ELECTRON_DIR\resources\i2pd\certificates"
 if (Test-Path $certsDir) {
     $certCount = (Get-ChildItem $certsDir -Recurse -Filter "*.crt").Count
-    Info "i2pd certificates present ($certCount files)."
+    Info "Certificates present ($certCount files)."
 } else {
     Abort "Certificates missing at $certsDir - make sure you cloned the full repo."
 }
