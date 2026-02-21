@@ -1,0 +1,43 @@
+{
+  "appId": "com.securechat.desktop",
+  "productName": "SecuChat",
+  "directories": {
+    "output": "release",
+    "buildResources": "build-assets"
+  },
+  "files": [
+    "dist/**/*",
+    "!dist/**/*.map"
+  ],
+  "extraResources": [
+    {
+      "from": "../app/dist",
+      "to": "app",
+      "filter": ["**/*"]
+    },
+    {
+      "from": "resources/i2pd",
+      "to": "i2pd",
+      "filter": ["**/*"]
+    }
+  ],
+  "linux": {
+    "target": [
+      { "target": "AppImage", "arch": ["x64"] },
+      { "target": "deb", "arch": ["x64"] }
+    ],
+    "category": "Network",
+    "icon": "build-assets/icon.png"
+  },
+  "win": {
+    "target": [
+      { "target": "nsis", "arch": ["x64"] }
+    ],
+    "icon": "build-assets/icon.ico"
+  },
+  "nsis": {
+    "oneClick": false,
+    "allowToChangeInstallationDirectory": true,
+    "createDesktopShortcut": true
+  }
+}

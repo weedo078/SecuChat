@@ -1,0 +1,23 @@
+{
+  "name": "securechat",
+  "version": "0.0.1",
+  "description": "Privacy-focused messaging with PGP + I2P",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc && electron dist/main.js",
+    "dist": "npm run build && electron-builder",
+    "dist:linux": "npm run build && electron-builder --linux",
+    "dist:win": "npm run build && electron-builder --win"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.5.0"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

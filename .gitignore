@@ -9,7 +9,9 @@ build/
 release/
 
 # Electron resources (binaries not in git)
-electron/resources/i2pd/
+electron/resources/i2pd/linux/i2pd
+electron/resources/i2pd/win/i2pd.exe
+electron/release/
 
 # Environment & secrets
 .env
