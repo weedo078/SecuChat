@@ -1,6 +1,6 @@
 # SecuChat Windows Build Script
 # Automatically installs all missing dependencies and builds the app.
-# Usage: .\build.ps1
+# Usage: .\build.ps1   (run as Administrator for automatic Defender handling)
 
 param([switch]$All)
 
@@ -12,11 +12,31 @@ $APP_DIR      = "$SCRIPT_DIR\app"
 $I2PD_EXE     = "$ELECTRON_DIR\resources\i2pd\win\i2pd.exe"
 
 function Info  { param($msg) Write-Host "[build] $msg" -ForegroundColor Green }
+function Warn  { param($msg) Write-Host "[build] WARN: $msg" -ForegroundColor Yellow }
 function Abort { param($msg) Write-Host "[build] ERROR: $msg" -ForegroundColor Red; exit 1 }
 
 function Refresh-Path {
     $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" +
                 [System.Environment]::GetEnvironmentVariable("Path","User")
+}
+
+# --- Defender exclusion for the entire repo (persistent) ---
+# i2pd.exe is a legitimate open-source privacy tool that Windows Defender
+# incorrectly flags as malware. We add the repo folder as a permanent
+# exclusion so Defender never deletes it during or after the build.
+Info "Adding Windows Defender exclusion for repo folder..."
+try {
+    Add-MpPreference -ExclusionPath $SCRIPT_DIR -ErrorAction Stop
+    Info "Defender exclusion added: $SCRIPT_DIR"
+    Info "Note: This exclusion is permanent so i2pd.exe won't be deleted."
+} catch {
+    Warn "Could not add Defender exclusion automatically."
+    Warn "Please run this script as Administrator, OR add the exclusion manually:"
+    Warn "  Windows Security -> Virus & threat protection -> Manage settings"
+    Warn "  -> Add or remove exclusions -> Add folder: $SCRIPT_DIR"
+    Write-Host ""
+    $continue = Read-Host "[build] Continue anyway? (y/n)"
+    if ($continue -ne "y") { exit 1 }
 }
 
 # --- Install Node.js if missing ---
@@ -45,17 +65,10 @@ if (Test-Path $I2PD_EXE) {
     $tmpZip = "$env:TEMP\i2pd_win64.zip"
     $tmpDir = "$env:TEMP\i2pd_win64_extracted"
 
-    # i2pd.exe triggers Windows Defender false positive (network anonymity tool).
-    # Add temporary exclusion so extraction is not blocked.
-    $defenderExcluded = $false
+    # Also exclude TEMP during extraction
     try {
         Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction Stop
-        $defenderExcluded = $true
-        Info "Defender exclusion added for TEMP folder."
-    } catch {
-        Write-Host "[build] Note: Could not add Defender exclusion (run as Administrator for automatic handling)." -ForegroundColor Yellow
-        Write-Host "[build] If extraction fails, right-click build.ps1 -> 'Run as Administrator'." -ForegroundColor Yellow
-    }
+    } catch { }
 
     try {
         Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
@@ -67,11 +80,7 @@ if (Test-Path $I2PD_EXE) {
         Copy-Item "$tmpDir\i2pd.exe" $I2PD_EXE
         Info "i2pd.exe installed."
     } finally {
-        # Always remove the exclusion again
-        if ($defenderExcluded) {
-            Remove-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue
-            Info "Defender exclusion removed."
-        }
+        try { Remove-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue } catch { }
     }
 }
 
@@ -117,4 +126,7 @@ Info "Build complete! Output:"
 Get-ChildItem "$ELECTRON_DIR\release\" -Filter "*.exe" | ForEach-Object {
     Write-Host "  -> $($_.FullName) ($([math]::Round($_.Length/1MB, 1)) MB)" -ForegroundColor Cyan
 }
+Write-Host ""
+Info "Reminder: Defender exclusion for $SCRIPT_DIR is active."
+Info "i2pd.exe is a legitimate privacy tool (https://i2pd.website)."
 Write-Host ""
