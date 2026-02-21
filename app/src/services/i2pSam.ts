@@ -264,7 +264,12 @@ class SAMService {
    * Real I2P: SHA-256 of the destination bytes → Base32 encode
    */
   async computeB32Address(destinationBase64: string): Promise<string> {
-    const binaryStr = atob(destinationBase64);
+    // I2P uses modified Base64: '-' instead of '+', '~' instead of '/', no padding
+    const standard = destinationBase64
+      .replace(/-/g, '+')
+      .replace(/~/g, '/')
+      + '='.repeat((4 - destinationBase64.length % 4) % 4);
+    const binaryStr = atob(standard);
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) {
       bytes[i] = binaryStr.charCodeAt(i);
