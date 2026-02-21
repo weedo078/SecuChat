@@ -1,0 +1,13 @@
+{
+  "name": "sam-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "WebSocket-to-TCP proxy for I2P SAM bridge",
+  "main": "proxy.mjs",
+  "scripts": {
+    "start": "node proxy.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
