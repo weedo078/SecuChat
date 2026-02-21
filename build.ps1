@@ -45,14 +45,34 @@ if (Test-Path $I2PD_EXE) {
     $tmpZip = "$env:TEMP\i2pd_win64.zip"
     $tmpDir = "$env:TEMP\i2pd_win64_extracted"
 
-    Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
-    if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
-    Expand-Archive -Path $tmpZip -DestinationPath $tmpDir
+    # i2pd.exe triggers Windows Defender false positive (network anonymity tool).
+    # Add temporary exclusion so extraction is not blocked.
+    $defenderExcluded = $false
+    try {
+        Add-MpPreference -ExclusionPath $env:TEMP -ErrorAction Stop
+        $defenderExcluded = $true
+        Info "Defender exclusion added for TEMP folder."
+    } catch {
+        Write-Host "[build] Note: Could not add Defender exclusion (run as Administrator for automatic handling)." -ForegroundColor Yellow
+        Write-Host "[build] If extraction fails, right-click build.ps1 -> 'Run as Administrator'." -ForegroundColor Yellow
+    }
 
-    $destDir = Split-Path $I2PD_EXE
-    if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir | Out-Null }
-    Copy-Item "$tmpDir\i2pd.exe" $I2PD_EXE
-    Info "i2pd.exe installed."
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $tmpZip -UseBasicParsing
+        if (Test-Path $tmpDir) { Remove-Item $tmpDir -Recurse -Force }
+        Expand-Archive -Path $tmpZip -DestinationPath $tmpDir
+
+        $destDir = Split-Path $I2PD_EXE
+        if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir | Out-Null }
+        Copy-Item "$tmpDir\i2pd.exe" $I2PD_EXE
+        Info "i2pd.exe installed."
+    } finally {
+        # Always remove the exclusion again
+        if ($defenderExcluded) {
+            Remove-MpPreference -ExclusionPath $env:TEMP -ErrorAction SilentlyContinue
+            Info "Defender exclusion removed."
+        }
+    }
 }
 
 # --- Check certificates ---
