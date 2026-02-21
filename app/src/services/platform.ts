@@ -27,8 +27,11 @@ class PlatformService {
   private cachedInfo: PlatformInfo | null = null;
 
   isElectron(): boolean {
-    return typeof (window as unknown as Record<string, unknown>).electronAPI !== 'undefined' &&
-      !!(window as unknown as Record<string, { isElectron?: boolean }>).electronAPI?.isElectron;
+    // Primary: contextBridge API set by preload.ts
+    const api = (window as unknown as Record<string, { isElectron?: boolean } | undefined>).electronAPI;
+    if (api?.isElectron) return true;
+    // Fallback: Electron always injects "Electron/<version>" into the user-agent
+    return /Electron\//.test(navigator.userAgent);
   }
 
   detectPlatform(): PlatformType {
