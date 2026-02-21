@@ -201,7 +201,11 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     } catch (err) {
       setI2pTestStatus('error');
       if (err instanceof Error && err.message === 'TIMEOUT') {
-        setError(`Verbindungstimeout nach ${timeoutMs / 1000}s. Bitte überprüfen Sie:\n1. Läuft i2pd?\n2. Ist der SAM-Proxy auf Port 7657 erreichbar?\n3. Firewall-Einstellungen prüfen`);
+        if (platformService.isElectron()) {
+          setError(`i2pd ist noch nicht bereit (${timeoutMs / 1000}s Timeout). Beim ersten Start dauert es 1–2 Minuten. Klicken Sie auf "Weiter" und testen Sie später in Einstellungen → I2P, oder versuchen Sie es gleich nochmal.`);
+        } else {
+          setError(`Verbindungstimeout nach ${timeoutMs / 1000}s. Bitte überprüfen Sie:\n1. Läuft i2pd?\n2. Ist der SAM-Proxy auf Port 7657 erreichbar?\n3. Firewall-Einstellungen prüfen`);
+        }
       } else {
         setError('Fehler beim Verbindungstest. Bitte überprüfen Sie die i2pd-Konfiguration.');
       }

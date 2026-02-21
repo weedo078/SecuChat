@@ -109,8 +109,8 @@ async function startI2pd(): Promise<boolean> {
     i2pdProcess = null;
   });
 
-  // Wait up to 10s for i2pd to open SAM port
-  const ready = await waitForPort(7656, 10000);
+  // Wait up to 20s for i2pd to open SAM port (Windows can be slow)
+  const ready = await waitForPort(7656, 20000);
   console.log('[Main] i2pd SAM port ready:', ready);
   return ready;
 }
