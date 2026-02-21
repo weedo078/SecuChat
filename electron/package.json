@@ -2,6 +2,11 @@
   "name": "securechat",
   "version": "0.0.1",
   "description": "Privacy-focused messaging with PGP + I2P",
+  "homepage": "https://github.com/weedo078/SecuChat",
+  "author": {
+    "name": "weedo078",
+    "email": "weedo078@users.noreply.github.com"
+  },
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
