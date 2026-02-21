@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService, samService } from '@/services/i2p';
@@ -71,7 +70,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
+        <div className="flex-1 min-h-0 overflow-y-auto -mx-6 px-6">
           <div className="space-y-6">
             {/* Appearance */}
             <section>
@@ -296,7 +295,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
               </button>
             </section>
           </div>
-        </ScrollArea>
+        </div>
       </DialogContent>
 
       <BackupDialog isOpen={showBackupDialog} onClose={() => setShowBackupDialog(false)} />
