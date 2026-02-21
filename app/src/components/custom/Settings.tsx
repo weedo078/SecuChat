@@ -63,7 +63,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+      <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader>
           <DialogTitle>Einstellungen</DialogTitle>
           <DialogDescription>
@@ -71,7 +71,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
           </DialogDescription>
         </DialogHeader>
 
-        <ScrollArea className="flex-1 -mx-6 px-6">
+        <ScrollArea className="flex-1 min-h-0 -mx-6 px-6">
           <div className="space-y-6">
             {/* Appearance */}
             <section>
