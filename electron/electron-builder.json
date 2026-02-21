@@ -33,7 +33,7 @@
     "target": [
       { "target": "nsis", "arch": ["x64"] }
     ],
-    "icon": "build-assets/icon.ico"
+    "icon": "build-assets/icon.png"
   },
   "nsis": {
     "oneClick": false,
