@@ -87,7 +87,8 @@ class I2PService {
       if (!this.identity?.samDestination) {
         const session = await samService.generateDestination();
         if (this.identity) {
-          this.identity.samDestination = session.destination;
+          // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
+          this.identity.samDestination = session.privateKey;
           newDestinationGenerated = true;
         }
       }
@@ -148,7 +149,8 @@ class I2PService {
     if (samService.isSAMConnected()) {
       try {
         const session = await samService.generateDestination();
-        this.identity.samDestination = session.destination;
+        // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
+        this.identity.samDestination = session.privateKey;
         // Use the SAM-derived b32 address instead
         const samB32 = await samService.getB32Address();
         if (samB32) {

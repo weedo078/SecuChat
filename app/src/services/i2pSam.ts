@@ -178,7 +178,7 @@ class SAMService {
     const dest = privateKey || this.session?.privateKey;
     const destParam = dest ? `DESTINATION=${dest}` : 'DESTINATION=TRANSIENT';
     const resp = await this.sendRaw(
-      `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam} SIGNATURE_TYPE=EdDSA_SHA512_Ed25519`
+      `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
     );
 
     if (!resp.includes('RESULT=OK')) {
