@@ -76,6 +76,14 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     };
   }, []);
 
+  // In Electron, auto-test the connection when the user reaches step 4
+  useEffect(() => {
+    if (step === 4 && platformService.isElectron() && i2pTestStatus === 'idle') {
+      testI2PConnection();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
   const generateKeys = async () => {
     if (passphrase !== confirmPassphrase) {
       setError('Passphrases stimmen nicht überein');
@@ -168,8 +176,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const testI2PConnection = async () => {
     setI2pTestStatus('testing');
     setError(null);
-    
-    const timeoutMs = 10000;
+
+    // Electron has bundled i2pd that may need a moment to start — give it more time
+    const timeoutMs = platformService.isElectron() ? 30000 : 10000;
     
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -588,11 +597,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
                 <p className="text-sm text-yellow-500 font-medium flex items-center gap-2">
                   <Lock className="h-4 w-4" />
-                  i2pd + SAM-Proxy erforderlich
+                  {platformService.isElectron() ? 'i2pd integriert' : 'i2pd + SAM-Proxy erforderlich'}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  Für anonyme Kommunikation benötigen Sie i2pd (SAM auf Port 7656) und den SAM-Proxy (Port 7657).
-                  Sie können dies auch später in den Einstellungen konfigurieren.
+                  {platformService.isElectron()
+                    ? 'i2pd ist direkt in SecuChat Desktop integriert und startet automatisch. Beim ersten Start bitte 5–10 Minuten warten.'
+                    : 'Für anonyme Kommunikation benötigen Sie i2pd (SAM auf Port 7656) und den SAM-Proxy (Port 7657). Sie können dies auch später in den Einstellungen konfigurieren.'}
                 </p>
               </div>
             </div>

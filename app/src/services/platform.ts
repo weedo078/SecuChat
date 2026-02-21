@@ -26,7 +26,13 @@ export interface I2PInstructions {
 class PlatformService {
   private cachedInfo: PlatformInfo | null = null;
 
+  isElectron(): boolean {
+    return typeof (window as unknown as Record<string, unknown>).electronAPI !== 'undefined' &&
+      !!(window as unknown as Record<string, { isElectron?: boolean }>).electronAPI?.isElectron;
+  }
+
   detectPlatform(): PlatformType {
+    if (this.isElectron()) return 'desktop';
     const ua = navigator.userAgent;
     
     // Android detection
@@ -48,8 +54,20 @@ class PlatformService {
       return this.cachedInfo;
     }
 
+    // Electron desktop app has i2pd bundled — treat as native
+    if (this.isElectron()) {
+      this.cachedInfo = {
+        type: 'desktop',
+        name: 'SecuChat Desktop',
+        i2pSupport: 'native',
+        canInstallI2PD: false,
+        instructions: this.getElectronInstructions(),
+      };
+      return this.cachedInfo;
+    }
+
     const type = this.detectPlatform();
-    
+
     switch (type) {
       case 'android':
         this.cachedInfo = {
@@ -60,7 +78,7 @@ class PlatformService {
           instructions: this.getAndroidInstructions(),
         };
         break;
-        
+
       case 'desktop':
         this.cachedInfo = {
           type: 'desktop',
@@ -84,6 +102,20 @@ class PlatformService {
     }
     
     return this.cachedInfo;
+  }
+
+  private getElectronInstructions(): I2PInstructions {
+    return {
+      title: 'i2pd läuft automatisch',
+      description: 'SecuChat Desktop startet i2pd automatisch im Hintergrund. Kein manuelles Setup erforderlich.',
+      steps: [
+        'i2pd wurde bereits zusammen mit SecuChat gestartet',
+        'Beim ersten Start dauert der Aufbau des I2P-Netzwerks 5–10 Minuten',
+        'Bitte klicken Sie auf "Verbindung testen" — bei Erfolg können Sie fortfahren',
+        'Falls der Test fehlschlägt, warten Sie kurz und versuchen Sie es erneut',
+      ],
+      configHelp: 'i2pd ist in SecuChat Desktop integriert und startet automatisch.',
+    };
   }
 
   private getAndroidInstructions(): I2PInstructions {
