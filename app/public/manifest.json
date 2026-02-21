@@ -48,5 +48,29 @@
       "sizes": "512x512",
       "type": "image/png"
     }
+  ],
+  "categories": ["social", "communication", "security"],
+  "screenshots": [
+    {
+      "src": "/screenshots/chat.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    },
+    {
+      "src": "/screenshots/mobile.png",
+      "sizes": "750x1334",
+      "type": "image/png",
+      "form_factor": "narrow"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Neuer Chat",
+      "short_name": "Chat",
+      "description": "Starte einen neuen Chat",
+      "url": "/?action=new-chat",
+      "icons": [{ "src": "/icon-chat.png", "sizes": "96x96" }]
+    }
   ]
 }

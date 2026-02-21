@@ -1,4 +1,5 @@
 import * as openpgp from 'openpgp';
+import { logger } from '@/utils/logger';
 import type { User, Contact } from '@/types';
 
 export class CryptoService {
@@ -19,7 +20,7 @@ export class CryptoService {
    */
   async generateKeyPair(username: string, passphrase: string): Promise<{ publicKey: string; privateKey: string; fingerprint: string }> {
     try {
-      console.log('Starting key generation for:', username);
+      logger.log('Starting key generation for:', username);
       
       // Sanitize username for PGP user ID (remove special chars, keep alphanumeric and spaces)
       const sanitizedName = username.replace(/[^a-zA-Z0-9\s]/g, '').trim() || 'User';
@@ -38,7 +39,7 @@ export class CryptoService {
         format: 'armored',
       });
 
-      console.log('Key pair generated successfully');
+      logger.log('Key pair generated successfully');
 
       // Get fingerprint from public key
       const publicKeyObj = await openpgp.readKey({ armoredKey: publicKey });
@@ -47,11 +48,11 @@ export class CryptoService {
       this.userKeyPair = { publicKey, privateKey, fingerprint };
       this.decryptedPrivateKey = await openpgp.readPrivateKey({ armoredKey: privateKey });
       
-      console.log('Fingerprint:', fingerprint);
+      logger.log('Fingerprint:', fingerprint);
       
       return { publicKey, privateKey, fingerprint };
     } catch (error) {
-      console.error('Error generating key pair:', error);
+      logger.error('Error generating key pair:', error);
       throw new Error(`Failed to generate PGP key pair: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -74,7 +75,7 @@ export class CryptoService {
       
       return { fingerprint };
     } catch (error) {
-      console.error('Error importing key pair:', error);
+      logger.error('Error importing key pair:', error);
       throw new Error('Failed to import PGP key pair');
     }
   }
@@ -94,7 +95,7 @@ export class CryptoService {
 
       return encrypted;
     } catch (error) {
-      console.error('Error encrypting message:', error);
+      logger.error('Error encrypting message:', error);
       throw new Error('Failed to encrypt message');
     }
   }
@@ -129,7 +130,7 @@ export class CryptoService {
 
       return decrypted;
     } catch (error) {
-      console.error('Error decrypting message:', error);
+      logger.error('Error decrypting message:', error);
       throw new Error('Failed to decrypt message');
     }
   }
@@ -156,7 +157,7 @@ export class CryptoService {
 
       return signed;
     } catch (error) {
-      console.error('Error signing message:', error);
+      logger.error('Error signing message:', error);
       throw new Error('Failed to sign message');
     }
   }
@@ -179,7 +180,7 @@ export class CryptoService {
       
       return { valid: valid === true, data: verificationResult.data };
     } catch (error) {
-      console.error('Error verifying signature:', error);
+      logger.error('Error verifying signature:', error);
       return { valid: false, data: '' };
     }
   }

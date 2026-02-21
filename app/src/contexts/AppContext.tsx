@@ -296,16 +296,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // This would require a sync protocol over I2P SAM streams
   // For now, sync is disabled in pure I2P mode
 
-  // Sync connectionState with I2P status
+  // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
-    if (i2pStatus?.samConnected) {
+    if (isLocked) {
+      setConnectionState('locked');
+    } else if (encryptionState === 'error') {
+      setConnectionState('error');
+    } else if (i2pStatus?.samConnected) {
       setConnectionState('connected');
     } else if (i2pStatus?.error) {
       setConnectionState('error');
     } else {
       setConnectionState('disconnected');
     }
-  }, [i2pStatus]);
+  }, [i2pStatus, isLocked, encryptionState]);
 
   // Contact operations
   const addContact = useCallback(async (contact: Contact) => {
@@ -427,7 +431,27 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadMessages = useCallback(async (chatId: string) => {
     const chatMessages = await storageService.getMessagesByChatId(chatId);
-    setMessages(chatMessages);
+    
+    // Try to decrypt messages if we have the key pair loaded
+    if (cryptoService.hasKeyPair()) {
+      const decryptedMessages = await Promise.all(
+        chatMessages.map(async (message) => {
+          if (message.encryptedContent && !message.decryptedContent) {
+            try {
+              const decrypted = await cryptoService.decryptMessage(message.encryptedContent);
+              return { ...message, decryptedContent: decrypted };
+            } catch {
+              // If decryption fails, return message as-is
+              return message;
+            }
+          }
+          return message;
+        })
+      );
+      setMessages(decryptedMessages);
+    } else {
+      setMessages(chatMessages);
+    }
   }, []);
 
   // File operations

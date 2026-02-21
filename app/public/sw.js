@@ -1,7 +1,7 @@
 // SecureChat Service Worker - MINIMAL VERSION
 // Only caches app shell files, NO access to IndexedDB or user data
 
-const CACHE_NAME = 'securechat-v1';
+const CACHE_NAME = `securechat-v1-${Date.now()}`;
 const APP_SHELL = [
   '/',
   '/index.html',

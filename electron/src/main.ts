@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import { join } from 'path';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, cpSync } from 'fs';
 import net from 'net';
 import { WebSocketServer, WebSocket } from 'ws';
 
@@ -18,6 +18,10 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const I2PD_BINARY = app.isPackaged
   ? join(process.resourcesPath, 'i2pd', process.platform === 'win32' ? 'i2pd.exe' : 'i2pd')
   : join(__dirname, '../../resources/i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd');
+
+const I2PD_CERTS_SRC = app.isPackaged
+  ? join(process.resourcesPath, 'i2pd', 'certificates')
+  : join(__dirname, '../../resources/i2pd/certificates');
 
 const APP_DIST = app.isPackaged
   ? join(process.resourcesPath, 'app')
@@ -42,6 +46,17 @@ function waitForPort(port: number, timeoutMs = 30000): Promise<boolean> {
     }
     attempt();
   });
+}
+
+// ─── i2pd setup ───────────────────────────────────────────────────────────────
+
+function setupI2pdDataDir(dataDir: string) {
+  const certsDir = join(dataDir, 'certificates');
+  if (!existsSync(certsDir) && existsSync(I2PD_CERTS_SRC)) {
+    mkdirSync(dataDir, { recursive: true });
+    cpSync(I2PD_CERTS_SRC, certsDir, { recursive: true });
+    console.log('[Main] Copied i2pd certificates to', certsDir);
+  }
 }
 
 // ─── i2pd ─────────────────────────────────────────────────────────────────────
@@ -70,6 +85,7 @@ async function startI2pd(): Promise<boolean> {
   }
 
   const dataDir = join(app.getPath('userData'), 'i2pd');
+  setupI2pdDataDir(dataDir);
   console.log('[Main] Starting bundled i2pd...');
 
   i2pdProcess = spawn(I2PD_BINARY, [

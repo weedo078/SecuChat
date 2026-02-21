@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -67,6 +67,15 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     }
   };
 
+  const isMountedRef = useRef(true);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   const generateKeys = async () => {
     if (passphrase !== confirmPassphrase) {
       setError('Passphrases stimmen nicht überein');
@@ -79,10 +88,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     try {
       // Generate PGP keys
       const keys = await cryptoService.generateKeyPair(username, passphrase);
+      if (!isMountedRef.current) return;
       setKeyPair(keys);
       
       // Generate I2P identity
       const i2p = await i2pService.generateIdentity();
+      if (!isMountedRef.current) return;
       setI2pIdentity({
         publicKey: uint8ArrayToBase64(i2p.publicKey),
         privateKey: uint8ArrayToBase64(i2p.privateKey),
@@ -91,9 +102,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       
       handleNext();
     } catch (err) {
+      if (!isMountedRef.current) return;
       setError(err instanceof Error ? err.message : 'Fehler bei der Generierung');
     } finally {
-      setIsGenerating(false);
+      if (isMountedRef.current) {
+        setIsGenerating(false);
+      }
     }
   };
 
@@ -153,15 +167,35 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
   const testI2PConnection = async () => {
     setI2pTestStatus('testing');
+    setError(null);
+    
+    const timeoutMs = 10000;
+    
     try {
-      const available = await samService.isAvailable({
-        host: '127.0.0.1',
-        port: 7657,
-        enabled: true,
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs);
       });
+      
+      const available = await Promise.race([
+        samService.isAvailable({
+          host: '127.0.0.1',
+          port: 7657,
+          enabled: true,
+        }),
+        timeoutPromise,
+      ]);
+      
       setI2pTestStatus(available ? 'success' : 'error');
-    } catch {
+      if (!available) {
+        setError('i2pd nicht erreichbar. Bitte überprüfen Sie, ob i2pd mit SAM-Proxy läuft (Port 7657).');
+      }
+    } catch (err) {
       setI2pTestStatus('error');
+      if (err instanceof Error && err.message === 'TIMEOUT') {
+        setError(`Verbindungstimeout nach ${timeoutMs / 1000}s. Bitte überprüfen Sie:\n1. Läuft i2pd?\n2. Ist der SAM-Proxy auf Port 7657 erreichbar?\n3. Firewall-Einstellungen prüfen`);
+      } else {
+        setError('Fehler beim Verbindungstest. Bitte überprüfen Sie die i2pd-Konfiguration.');
+      }
     }
   };
 
@@ -672,20 +706,70 @@ function DeviceScanner({ onDevicePaired }: { onDevicePaired: () => void }) {
   );
 }
 
-// Manual Import Component - simplified
+// Manual Import Component - imports device keys as contact
 function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
   const [importData, setImportData] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   const handleImport = async () => {
     try {
       const parsed = JSON.parse(importData);
-      if (!parsed.pgpPrivateKey || !parsed.i2pPrivateKey) {
-        throw new Error('Ungültige Backup-Datei');
+      
+      // Validate required fields according to Device-Import format
+      if (!parsed.version || !parsed.metadata || !parsed.keys || !parsed.network) {
+        throw new Error('Ungültiges Format: version, metadata, keys und network erforderlich');
       }
-      onComplete();
-    } catch {
-      setError('Fehler beim Import. Überprüfen Sie Ihre Backup-Datei.');
+      
+      // Validate version
+      if (parsed.version !== '1.0') {
+        throw new Error(`Nicht unterstützte Version: ${parsed.version}`);
+      }
+      
+      // Validate metadata
+      if (!parsed.metadata.timestamp || !parsed.metadata.username || !parsed.metadata.deviceId) {
+        throw new Error('Ungültige metadata: timestamp, username und deviceId erforderlich');
+      }
+      
+      // Validate keys
+      if (!parsed.keys.pgpPublicKey || !parsed.keys.fingerprint || !parsed.keys.i2pAddress || !parsed.keys.i2pPublicKey) {
+        throw new Error('Ungültige keys: pgpPublicKey, fingerprint, i2pAddress und i2pPublicKey erforderlich');
+      }
+      
+      // Validate network
+      if (!parsed.network.p2pIdentifier || !parsed.network.protocol || !parsed.network.i2pAddress) {
+        throw new Error('Ungültige network: p2pIdentifier, protocol und i2pAddress erforderlich');
+      }
+      
+      // Create contact from imported device data
+      const contact = {
+        id: crypto.randomUUID(),
+        name: parsed.metadata.username,
+        pgpPublicKey: parsed.keys.pgpPublicKey,
+        fingerprint: parsed.keys.fingerprint,
+        p2pIdentifier: parsed.network.p2pIdentifier,
+        i2pAddress: parsed.keys.i2pAddress,
+        status: 'offline' as const,
+        lastSeen: parsed.metadata.timestamp,
+      };
+      
+      // Save contact to storage
+      await storageService.saveContact(contact);
+      
+      setSuccess(true);
+      setError(null);
+      
+      // Complete after short delay to show success message
+      setTimeout(() => {
+        onComplete();
+      }, 1500);
+    } catch (err) {
+      if (err instanceof SyntaxError) {
+        setError('Ungültiges JSON-Format. Bitte überprüfen Sie die Eingabe.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Fehler beim Import. Überprüfen Sie Ihre Backup-Datei.');
+      }
+      setSuccess(false);
     }
   };
 
@@ -693,7 +777,7 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
     <div className="space-y-4">
       <textarea
         className="w-full h-40 p-3 rounded-md border border-input bg-background text-xs font-mono"
-        placeholder="Fügen Sie Ihre Backup-Daten hier ein..."
+        placeholder='{"version": "1.0", "metadata": {...}, "keys": {...}, "network": {...}}'
         value={importData}
         onChange={(e) => setImportData(e.target.value)}
       />
@@ -704,9 +788,16 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
+      
+      {success && (
+        <Alert className="bg-green-500/10 border-green-500/30">
+          <Check className="h-4 w-4 text-green-500" />
+          <AlertDescription className="text-green-500">Kontakt erfolgreich importiert!</AlertDescription>
+        </Alert>
+      )}
 
-      <Button onClick={handleImport} disabled={!importData} className="w-full">
-        Importieren
+      <Button onClick={handleImport} disabled={!importData || success} className="w-full">
+        {success ? 'Importiert!' : 'Importieren'}
       </Button>
     </div>
   );

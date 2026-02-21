@@ -19,6 +19,11 @@
       "from": "resources/i2pd",
       "to": "i2pd",
       "filter": ["**/*"]
+    },
+    {
+      "from": "resources/i2pd/certificates",
+      "to": "i2pd/certificates",
+      "filter": ["**/*"]
     }
   ],
   "linux": {

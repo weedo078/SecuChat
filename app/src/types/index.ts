@@ -129,6 +129,6 @@ export interface BackupData {
   devices: DeviceInfo[];
 }
 
-export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error' | 'locked';
 export type EncryptionState = 'unencrypted' | 'encrypting' | 'encrypted' | 'error';
 export type I2PState = 'unavailable' | 'connecting' | 'connected' | 'error';

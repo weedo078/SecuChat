@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useApp } from '@/contexts/AppContext';
+import { toast } from 'sonner';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -76,8 +77,12 @@ export function ChatView() {
 
       await sendFile(activeChat.contact.i2pAddress, file);
       setPreviewImage(null);
+      toast.success('Bild erfolgreich gesendet');
     } catch (err) {
       console.error('Error sending image:', err);
+      toast.error('Fehler beim Senden des Bildes', {
+        description: err instanceof Error ? err.message : 'Unbekannter Fehler',
+      });
     } finally {
       setIsUploading(false);
     }
@@ -102,24 +107,41 @@ export function ChatView() {
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'sending':
-        return <Clock className="h-3 w-3 text-muted-foreground" />;
+        return <Clock className="h-3 w-3 text-muted-foreground" aria-hidden="true" />;
       case 'sent':
-        return <Check className="h-3 w-3 text-muted-foreground" />;
+        return <Check className="h-3 w-3 text-muted-foreground" aria-hidden="true" />;
       case 'delivered':
-        return <CheckCheck className="h-3 w-3 text-muted-foreground" />;
+        return <CheckCheck className="h-3 w-3 text-muted-foreground" aria-hidden="true" />;
       case 'read':
-        return <CheckCheck className="h-3 w-3 text-blue-500" />;
+        return <CheckCheck className="h-3 w-3 text-blue-500" aria-hidden="true" />;
       case 'failed':
-        return <Clock className="h-3 w-3 text-destructive" />;
+        return <Clock className="h-3 w-3 text-destructive" aria-hidden="true" />;
       default:
         return null;
+    }
+  };
+
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'sending':
+        return 'Wird gesendet';
+      case 'sent':
+        return 'Gesendet';
+      case 'delivered':
+        return 'Zugestellt';
+      case 'read':
+        return 'Gelesen';
+      case 'failed':
+        return 'Fehlgeschlagen';
+      default:
+        return '';
     }
   };
 
   if (!activeChat) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-background p-8">
-        <Shield className="h-24 w-24 text-primary/20 mb-6" />
+        <Shield className="h-24 w-24 text-primary/20 mb-6" aria-hidden="true" />
         <h2 className="text-2xl font-semibold mb-2">Willkommen bei SecureChat</h2>
         <p className="text-muted-foreground text-center max-w-md mb-6">
           Wählen Sie einen Chat aus der Liste oder fügen Sie neue Kontakte hinzu,
@@ -127,11 +149,15 @@ export function ChatView() {
         </p>
         <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-green-500" />
+            <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />
             <span>PGP-Verschlüsselung aktiv</span>
           </div>
           <div className="flex items-center gap-2">
-            <span className={`h-2 w-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+            <span 
+              className={`h-2 w-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`}
+              aria-label={i2pStatus?.samConnected ? 'I2P verbunden' : 'I2P nicht verbunden'}
+              role="status"
+            />
             <span>{i2pStatus?.samConnected ? 'I2P verbunden' : 'I2P nicht verbunden'}</span>
           </div>
           {i2pStatus?.error && (
@@ -150,11 +176,15 @@ export function ChatView() {
       <div className="h-16 border-b border-border flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Avatar className="h-10 w-10">
+            <Avatar className="h-10 w-10" aria-label={`Avatar von ${activeChat.contact?.name}`}>
               <AvatarFallback>{getInitials(activeChat.contact?.name || '??')}</AvatarFallback>
             </Avatar>
             {activeChat.contact?.status === 'online' && (
-              <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-background" />
+              <span 
+                className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-background"
+                aria-label="Online"
+                role="status"
+              />
             )}
           </div>
           <div>
@@ -163,9 +193,9 @@ export function ChatView() {
               <span>{activeChat.contact?.status === 'online' ? 'Online' : 'Offline'}</span>
               {encryptionState === 'encrypted' && (
                 <>
-                  <span>•</span>
+                  <span aria-hidden="true">•</span>
                   <span className="text-green-500 flex items-center gap-1">
-                    <Shield className="h-3 w-3" />
+                    <Shield className="h-3 w-3" aria-hidden="true" />
                     Verschlüsselt
                   </span>
                 </>
@@ -178,8 +208,13 @@ export function ChatView() {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" disabled>
-                  <Phone className="h-5 w-5" />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  disabled
+                  aria-label="Anruf (demnächst verfügbar)"
+                >
+                  <Phone className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
@@ -191,8 +226,13 @@ export function ChatView() {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button variant="ghost" size="icon" disabled>
-                  <Video className="h-5 w-5" />
+                <Button 
+                  variant="ghost" 
+                  size="icon" 
+                  disabled
+                  aria-label="Videoanruf (demnächst verfügbar)"
+                >
+                  <Video className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
@@ -203,8 +243,12 @@ export function ChatView() {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon">
-                <MoreVertical className="h-5 w-5" />
+              <Button 
+                variant="ghost" 
+                size="icon"
+                aria-label="Chat-Menü"
+              >
+                <MoreVertical className="h-5 w-5" aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -219,7 +263,7 @@ export function ChatView() {
       </div>
 
       {/* Messages Area */}
-      <ScrollArea ref={scrollRef} className="flex-1 p-4">
+      <ScrollArea ref={scrollRef} className="flex-1 p-4" role="log" aria-label="Nachrichtenverlauf">
         <div className="space-y-4">
           {messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -274,11 +318,18 @@ export function ChatView() {
                           </p>
                         )}
                       </div>
-                      <div className={`flex items-center gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}>
+                      <div 
+                        className={`flex items-center gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}
+                        aria-label={isOwn ? `Status: ${getStatusLabel(message.status)}` : undefined}
+                      >
                         <span className="text-xs text-muted-foreground">
                           {formatMessageTime(message.timestamp)}
                         </span>
-                        {isOwn && getStatusIcon(message.status)}
+                        {isOwn && (
+                          <span aria-label={getStatusLabel(message.status)}>
+                            {getStatusIcon(message.status)}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -295,7 +346,7 @@ export function ChatView() {
           <div className="flex items-center gap-4">
             <img 
               src={previewImage} 
-              alt="Preview" 
+              alt="Vorschau" 
               className="h-20 w-20 object-cover rounded-lg"
             />
             <div className="flex-1">
@@ -303,14 +354,23 @@ export function ChatView() {
               <p className="text-xs text-muted-foreground">Klicken Sie auf Senden</p>
             </div>
             <div className="flex gap-2">
-              <Button variant="ghost" size="icon" onClick={() => setPreviewImage(null)}>
-                <X className="h-5 w-5" />
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={() => setPreviewImage(null)}
+                aria-label="Bildvorschau schließen"
+              >
+                <X className="h-5 w-5" aria-hidden="true" />
               </Button>
-              <Button onClick={handleSendImage} disabled={isUploading}>
+              <Button 
+                onClick={handleSendImage} 
+                disabled={isUploading}
+                aria-label={isUploading ? 'Wird gesendet...' : 'Bild senden'}
+              >
                 {isUploading ? (
                   <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
                 ) : (
-                  <Send className="h-5 w-5" />
+                  <Send className="h-5 w-5" aria-hidden="true" />
                 )}
               </Button>
             </div>
@@ -327,14 +387,16 @@ export function ChatView() {
             accept="image/*"
             className="hidden"
             onChange={handleFileSelect}
+            aria-label="Bild auswählen"
           />
           <Button 
             variant="ghost" 
             size="icon" 
             onClick={() => fileInputRef.current?.click()}
             disabled={encryptionState !== 'encrypted'}
+            aria-label="Bild anhängen"
           >
-            <ImageIcon className="h-5 w-5" />
+            <ImageIcon className="h-5 w-5" aria-hidden="true" />
           </Button>
           <Input
             placeholder="Nachricht schreiben..."
@@ -343,13 +405,15 @@ export function ChatView() {
             onKeyDown={handleKeyDown}
             className="flex-1"
             disabled={encryptionState !== 'encrypted'}
+            aria-label="Nachricht eingeben"
           />
           <Button 
             onClick={handleSend} 
             disabled={!messageText.trim() || encryptionState !== 'encrypted'}
             size="icon"
+            aria-label="Nachricht senden"
           >
-            <Send className="h-5 w-5" />
+            <Send className="h-5 w-5" aria-hidden="true" />
           </Button>
         </div>
         {encryptionState !== 'encrypted' && (
@@ -371,7 +435,7 @@ export function ChatView() {
             <div className="relative">
               <img 
                 src={selectedImage} 
-                alt="Full size" 
+                alt="Vollbildansicht" 
                 className="w-full h-auto"
               />
               <Button
@@ -384,8 +448,9 @@ export function ChatView() {
                   link.download = 'image.png';
                   link.click();
                 }}
+                aria-label="Bild herunterladen"
               >
-                <Download className="h-5 w-5" />
+                <Download className="h-5 w-5" aria-hidden="true" />
               </Button>
             </div>
           )}

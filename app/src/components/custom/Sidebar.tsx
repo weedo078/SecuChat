@@ -77,8 +77,12 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
           <div className="flex gap-1">
             <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
               <DialogTrigger asChild>
-                <Button variant="ghost" size="icon">
-                  <Plus className="h-5 w-5" />
+                <Button 
+                  variant="ghost" 
+                  size="icon"
+                  aria-label="Neuen Chat erstellen"
+                >
+                  <Plus className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -95,6 +99,7 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
                         key={contact.id}
                         onClick={() => handleNewChat(contact)}
                         className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors text-left"
+                        aria-label={`Chat mit ${contact.name} starten`}
                       >
                         <Avatar className="h-10 w-10">
                           <AvatarFallback>{getInitials(contact.name)}</AvatarFallback>
@@ -116,32 +121,43 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
                 </ScrollArea>
               </DialogContent>
             </Dialog>
-            <Button variant="ghost" size="icon" onClick={onAddContact}>
-              <UserPlus className="h-5 w-5" />
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={onAddContact}
+              aria-label="Kontakt hinzufügen"
+            >
+              <UserPlus className="h-5 w-5" aria-hidden="true" />
             </Button>
-            <Button variant="ghost" size="icon" onClick={onShowQR}>
-              <QrCode className="h-5 w-5" />
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              onClick={onShowQR}
+              aria-label="QR-Code anzeigen"
+            >
+              <QrCode className="h-5 w-5" aria-hidden="true" />
             </Button>
           </div>
         </div>
         
         <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <Input
             placeholder="Chats durchsuchen..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
+            aria-label="Chats durchsuchen"
           />
         </div>
       </div>
 
       {/* Chat List */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1" role="navigation" aria-label="Chat-Liste">
         <div className="p-2">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" />
+              <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" aria-hidden="true" />
               <p>Keine Chats vorhanden</p>
               <p className="text-sm">Fügen Sie Kontakte hinzu, um zu starten</p>
             </div>
@@ -155,13 +171,19 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
                     ? 'bg-primary text-primary-foreground' 
                     : 'hover:bg-accent'
                 }`}
+                aria-label={`Chat mit ${chat.contact?.name}, Status: ${chat.contact?.status === 'online' ? 'Online' : 'Offline'}${chat.unreadCount > 0 ? `, ${chat.unreadCount} ungelesene Nachrichten` : ''}`}
+                aria-current={activeChat?.id === chat.id ? 'page' : undefined}
               >
                 <div className="relative">
                   <Avatar className="h-12 w-12">
                     <AvatarFallback>{getInitials(chat.contact?.name || '??')}</AvatarFallback>
                   </Avatar>
                   {chat.contact?.status === 'online' && (
-                    <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-card" />
+                    <span 
+                      className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-card"
+                      aria-label="Online"
+                      role="status"
+                    />
                   )}
                 </div>
                 <div className="flex-1 min-w-0">
@@ -178,7 +200,11 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
                       {chat.contact?.status === 'online' ? 'Online' : 'Offline'}
                     </p>
                     {chat.unreadCount > 0 && (
-                      <Badge variant={activeChat?.id === chat.id ? 'secondary' : 'default'} className="text-xs">
+                      <Badge 
+                        variant={activeChat?.id === chat.id ? 'secondary' : 'default'} 
+                        className="text-xs"
+                        aria-label={`${chat.unreadCount} ungelesene Nachrichten`}
+                      >
                         {chat.unreadCount}
                       </Badge>
                     )}
@@ -193,15 +219,20 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
       {/* Footer */}
       <div className="p-4 border-t border-border">
         <div className="flex items-center justify-between">
-          <Button variant="ghost" size="sm" className="flex-1" onClick={onSettingsClick}>
-            <Settings className="h-4 w-4 mr-2" />
+          <Button 
+            variant="ghost" 
+            size="sm" 
+            className="flex-1" 
+            onClick={onSettingsClick}
+          >
+            <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
             Einstellungen
           </Button>
         </div>
         {user && (
           <div className="mt-3 pt-3 border-t border-border">
             <div className="flex items-center gap-3">
-              <Avatar className="h-8 w-8">
+              <Avatar className="h-8 w-8" aria-label={`Mein Avatar: ${user.username}`}>
                 <AvatarFallback>{getInitials(user.username)}</AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">

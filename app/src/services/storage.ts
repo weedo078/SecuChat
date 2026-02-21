@@ -316,8 +316,12 @@ export class StorageService {
   // Message operations
   async saveMessage(message: Message): Promise<void> {
     const store = this.getStore('messages', 'readwrite');
+    // IMPORTANT: Never store decryptedContent in database for security
+    // decryptedContent is kept in memory only
+    const messageToStore = { ...message };
+    delete (messageToStore as { decryptedContent?: string }).decryptedContent;
     return new Promise((resolve, reject) => {
-      const request = store.put(message);
+      const request = store.put(messageToStore);
       request.onsuccess = () => resolve();
       request.onerror = () => reject(request.error);
     });
@@ -519,13 +523,20 @@ export class StorageService {
     const messages = await this.getAllMessages();
     const devices = await this.getAllDevices();
 
+    // Ensure no decrypted content is included in backup for security
+    const sanitizedMessages = messages.map(msg => {
+      const sanitized = { ...msg };
+      delete (sanitized as { decryptedContent?: string }).decryptedContent;
+      return sanitized;
+    });
+
     return {
       version: '2.0',
       timestamp: new Date().toISOString(),
       user: user!,
       contacts,
       chats,
-      messages,
+      messages: sanitizedMessages,
       devices,
     };
   }

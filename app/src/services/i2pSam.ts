@@ -31,6 +31,7 @@ export interface SAMStream {
   connected: boolean;
 }
 
+import { logger } from '@/utils/logger';
 type ResponseResolver = (response: string) => void;
 
 class SAMService {
@@ -103,7 +104,7 @@ class SAMService {
           clearTimeout(timeout);
           this.isConnected = true;
           this.reconnectAttempts = 0;
-          console.log('[SAM] WebSocket connected to proxy');
+          logger.log('[SAM] WebSocket connected to proxy');
           resolve(true);
         };
 
@@ -118,7 +119,7 @@ class SAMService {
       // Wire up message handler
       this.socket!.onmessage = (ev) => this.handleMessage(ev.data as string);
       this.socket!.onclose = () => {
-        console.log('[SAM] Connection closed');
+        logger.log('[SAM] Connection closed');
         this.isConnected = false;
         this.helloCompleted = false;
         this.attemptReconnect();
@@ -133,7 +134,7 @@ class SAMService {
       }
 
       this.helloCompleted = true;
-      console.log('[SAM] HELLO handshake completed');
+      logger.log('[SAM] HELLO handshake completed');
       return true;
 
     } catch (error) {
@@ -194,7 +195,7 @@ class SAMService {
       };
     }
 
-    console.log('[SAM] Session created:', nickname);
+      logger.log('[SAM] Session created:', nickname);
   }
 
   /**
@@ -233,7 +234,7 @@ class SAMService {
     const resp = await this.sendRaw(`STREAM ACCEPT ID=${nickname} SILENT=false`);
 
     if (resp.includes('RESULT=OK')) {
-      console.log('[SAM] Accepting connections on:', nickname);
+      logger.log('[SAM] Accepting connections on:', nickname);
     }
     // STREAM ACCEPT may also immediately return a connection
     // with the peer destination appended
@@ -379,7 +380,7 @@ class SAMService {
         const idx = this.pendingResolvers.indexOf(wrappedResolve);
         if (idx !== -1) this.pendingResolvers.splice(idx, 1);
         reject(new Error(`SAM command timeout: ${command.split(' ').slice(0, 2).join(' ')}`));
-      }, 30000);
+      }, 10000);
 
       this.pendingResolvers.push(wrappedResolve);
       this.socket.send(command);
@@ -390,7 +391,7 @@ class SAMService {
    * Handle incoming SAM messages from the proxy
    */
   private handleMessage(data: string): void {
-    console.log('[SAM] ←', data);
+    logger.log('[SAM] ←', data);
 
     // SAM protocol responses start with known prefixes
     const isSAMResponse =
@@ -428,15 +429,18 @@ class SAMService {
     };
     this.streams.set(streamId, stream);
     this.streamHandlers.forEach(h => h(stream));
-    console.log('[SAM] Incoming stream from:', peerDestination.slice(0, 20) + '...');
+    logger.log('[SAM] Incoming stream from:', peerDestination.slice(0, 20) + '...');
   }
 
   private attemptReconnect(): void {
     if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) return;
     this.isReconnecting = true;
     this.reconnectAttempts++;
-    const delay = 5000 * this.reconnectAttempts;
-    console.log(`[SAM] Reconnecting in ${delay / 1000}s... (attempt ${this.reconnectAttempts})`);
+    // Exponential backoff with jitter: min(30s, 1000 * 2^attempt) + random(0-1s)
+    const baseDelay = Math.min(30000, 1000 * Math.pow(2, this.reconnectAttempts));
+    const jitter = Math.random() * 1000;
+    const delay = baseDelay + jitter;
+    logger.log(`[SAM] Reconnecting in ${Math.round(delay / 1000)}s... (attempt ${this.reconnectAttempts})`);
     this.reconnectTimer = setTimeout(() => {
       this.connect(this.config)
         .catch(() => {})

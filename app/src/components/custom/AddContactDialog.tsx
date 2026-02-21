@@ -58,6 +58,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
   // File import states
   const [isImporting, setIsImporting] = useState(false);
   
+  // Add contact states
+  const [isAddingContact, setIsAddingContact] = useState(false);
+  
   // Manual input
   const [manualName, setManualName] = useState('');
   const [manualI2p, setManualI2p] = useState('');
@@ -199,42 +202,47 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
   const addContact = async () => {
     if (!scannedContact) return;
 
-    // Validate PGP key if present
-    if (scannedContact.k) {
-      const validation = await cryptoService.validatePublicKey(scannedContact.k);
-      if (!validation.valid) {
-        setScanError('Ungültiger PGP Public Key');
-        return;
+    setIsAddingContact(true);
+    try {
+      // Validate PGP key if present
+      if (scannedContact.k) {
+        const validation = await cryptoService.validatePublicKey(scannedContact.k);
+        if (!validation.valid) {
+          setScanError('Ungültiger PGP Public Key');
+          return;
+        }
       }
-    }
 
-    // Create contact
-    const contact: Contact = {
-      id: crypto.randomUUID(),
-      name: scannedContact.n,
-      pgpPublicKey: scannedContact.k || '',  // May be empty from QR (key exchanged later)
-      fingerprint: scannedContact.f,
-      p2pIdentifier: scannedContact.i,
-      i2pAddress: scannedContact.i,
-      status: 'unknown',
-    };
+      // Create contact
+      const contact: Contact = {
+        id: crypto.randomUUID(),
+        name: scannedContact.n,
+        pgpPublicKey: scannedContact.k || '',  // May be empty from QR (key exchanged later)
+        fingerprint: scannedContact.f,
+        p2pIdentifier: scannedContact.i,
+        i2pAddress: scannedContact.i,
+        status: 'unknown',
+      };
 
-    // Save contact
-    await storageService.saveContact(contact);
+      // Save contact
+      await storageService.saveContact(contact);
 
-    // Try to connect via I2P
-    if (i2pStatus?.samConnected && scannedContact.i) {
-      try {
-        await i2pService.connectToPeer(scannedContact.i);
-        contact.status = 'online';
-        await storageService.saveContact(contact);
-      } catch (error) {
-        console.log('I2P connection failed:', error);
+      // Try to connect via I2P
+      if (i2pStatus?.samConnected && scannedContact.i) {
+        try {
+          await i2pService.connectToPeer(scannedContact.i);
+          contact.status = 'online';
+          await storageService.saveContact(contact);
+        } catch {
+          // I2P connection failed, but contact is saved
+        }
       }
-    }
 
-    onContactAdded?.(contact);
-    resetAndClose();
+      onContactAdded?.(contact);
+      resetAndClose();
+    } finally {
+      setIsAddingContact(false);
+    }
   };
 
   // Add contact manually
@@ -244,38 +252,43 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
       return;
     }
 
-    // Validate PGP key
-    const validation = await cryptoService.validatePublicKey(manualPgp);
-    if (!validation.valid) {
-      setScanError('Ungültiger PGP Public Key');
-      return;
-    }
-
-    const contact: Contact = {
-      id: crypto.randomUUID(),
-      name: manualName,
-      pgpPublicKey: manualPgp,
-      fingerprint: validation.fingerprint!,
-      p2pIdentifier: manualI2p,
-      i2pAddress: manualI2p,
-      status: 'unknown',
-    };
-
-    await storageService.saveContact(contact);
-    
-    // Try to connect via I2P
-    if (i2pStatus?.samConnected) {
-      try {
-        await i2pService.connectToPeer(manualI2p);
-        contact.status = 'online';
-        await storageService.saveContact(contact);
-      } catch (error) {
-        console.log('I2P connection failed:', error);
+    setIsAddingContact(true);
+    try {
+      // Validate PGP key
+      const validation = await cryptoService.validatePublicKey(manualPgp);
+      if (!validation.valid) {
+        setScanError('Ungültiger PGP Public Key');
+        return;
       }
-    }
 
-    onContactAdded?.(contact);
-    resetAndClose();
+      const contact: Contact = {
+        id: crypto.randomUUID(),
+        name: manualName,
+        pgpPublicKey: manualPgp,
+        fingerprint: validation.fingerprint!,
+        p2pIdentifier: manualI2p,
+        i2pAddress: manualI2p,
+        status: 'unknown',
+      };
+
+      await storageService.saveContact(contact);
+      
+      // Try to connect via I2P
+      if (i2pStatus?.samConnected) {
+        try {
+          await i2pService.connectToPeer(manualI2p);
+          contact.status = 'online';
+          await storageService.saveContact(contact);
+        } catch {
+          // I2P connection failed, but contact is saved
+        }
+      }
+
+      onContactAdded?.(contact);
+      resetAndClose();
+    } finally {
+      setIsAddingContact(false);
+    }
   };
 
   // Export my contact as file (includes full PGP key)
@@ -311,6 +324,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     setManualI2p('');
     setManualPgp('');
     setActiveTab('scan');
+    setIsAddingContact(false);
     onClose();
   };
 
@@ -318,14 +332,14 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
   const getAnonymityDisplay = () => {
     if (i2pStatus?.samConnected) {
       return {
-        icon: <Shield className="h-4 w-4 text-green-500" />,
+        icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />,
         text: 'Anonym (I2P)',
         color: 'text-green-500',
         description: 'Ihre IP-Adresse ist durch I2P verborgen',
       };
     }
     return {
-      icon: <AlertTriangle className="h-4 w-4 text-red-500" />,
+      icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />,
       text: 'Nicht verbunden',
       color: 'text-red-500',
       description: 'i2pd nicht verbunden - Kontakt wird gespeichert, aber nicht erreichbar',
@@ -357,7 +371,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
         {!i2pStatus?.samConnected && (
           <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
             <p className="text-sm text-red-500 font-medium flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" />
+              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
               i2pd nicht verbunden
             </p>
             <p className="text-xs text-muted-foreground mt-1">
@@ -370,15 +384,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="scan">
-              <Camera className="h-4 w-4 mr-2" />
+              <Camera className="h-4 w-4 mr-2" aria-hidden="true" />
               Scannen
             </TabsTrigger>
             <TabsTrigger value="myqr">
-              <QrCode className="h-4 w-4 mr-2" />
+              <QrCode className="h-4 w-4 mr-2" aria-hidden="true" />
               Mein QR
             </TabsTrigger>
             <TabsTrigger value="manual">
-              <Globe className="h-4 w-4 mr-2" />
+              <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
               Manuell
             </TabsTrigger>
           </TabsList>
@@ -392,9 +406,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                   <button
                     onClick={() => cameraInputRef.current?.click()}
                     className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors flex items-center gap-3"
+                    aria-label="Kamera zum Scannen verwenden"
                   >
                     <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Camera className="h-5 w-5 text-primary" />
+                      <Camera className="h-5 w-5 text-primary" aria-hidden="true" />
                     </div>
                     <div className="text-left">
                       <p className="font-medium">Kamera verwenden</p>
@@ -406,9 +421,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                   <button
                     onClick={() => fileInputRef.current?.click()}
                     className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors flex items-center gap-3"
+                    aria-label="QR-Code aus Datei importieren"
                   >
                     <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
-                      <Upload className="h-5 w-5" />
+                      <Upload className="h-5 w-5" aria-hidden="true" />
                     </div>
                     <div className="text-left">
                       <p className="font-medium">Datei importieren</p>
@@ -441,7 +457,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                 )}
 
                 {scanError && (
-                  <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+                  <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
                     {scanError}
                   </div>
                 )}
@@ -450,7 +466,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
               <div className="space-y-4">
                 <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
                   <div className="flex items-center gap-2 mb-2">
-                    <Check className="h-5 w-5 text-green-500" />
+                    <Check className="h-5 w-5 text-green-500" aria-hidden="true" />
                     <p className="font-medium text-green-500">Kontakt gefunden!</p>
                   </div>
                   <div className="space-y-1 text-sm">
@@ -464,12 +480,30 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                 </div>
 
                 <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setScannedContact(null)}>
+                  <Button 
+                    variant="outline" 
+                    className="flex-1" 
+                    onClick={() => setScannedContact(null)}
+                    disabled={isAddingContact}
+                  >
                     Zurück
                   </Button>
-                  <Button className="flex-1" onClick={addContact}>
-                    <UserPlus className="h-4 w-4 mr-2" />
-                    Hinzufügen
+                  <Button 
+                    className="flex-1" 
+                    onClick={addContact}
+                    disabled={isAddingContact}
+                  >
+                    {isAddingContact ? (
+                      <>
+                        <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                        Wird hinzugefügt...
+                      </>
+                    ) : (
+                      <>
+                        <UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />
+                        Hinzufügen
+                      </>
+                    )}
                   </Button>
                 </div>
               </div>
@@ -480,7 +514,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
           <TabsContent value="myqr" className="space-y-4">
             {!showMyQR ? (
               <div className="text-center py-8">
-                <QrCode className="h-16 w-16 mx-auto mb-4 text-muted-foreground" />
+                <QrCode className="h-16 w-16 mx-auto mb-4 text-muted-foreground" aria-hidden="true" />
                 <p className="text-muted-foreground mb-4">
                   Generieren Sie einen QR-Code mit Ihrer I2P-Adresse und Ihrem PGP-Key.
                 </p>
@@ -492,7 +526,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                     </>
                   ) : (
                     <>
-                      <QrCode className="h-4 w-4 mr-2" />
+                      <QrCode className="h-4 w-4 mr-2" aria-hidden="true" />
                       QR-Code generieren
                     </>
                   )}
@@ -504,7 +538,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                   {myQRCode && (
                     <img 
                       src={myQRCode} 
-                      alt="My QR Code" 
+                      alt="Mein QR-Code" 
                       className="w-64 h-64 rounded-lg border border-border"
                     />
                   )}
@@ -515,7 +549,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                     Neu generieren
                   </Button>
                   <Button variant="outline" className="flex-1" onClick={exportContactFile}>
-                    <Download className="h-4 w-4 mr-2" />
+                    <Download className="h-4 w-4 mr-2" aria-hidden="true" />
                     Als Datei
                   </Button>
                 </div>
@@ -561,15 +595,24 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
               <Button 
                 className="w-full" 
                 onClick={addManualContact}
-                disabled={!manualName || !manualI2p || !manualPgp}
+                disabled={!manualName || !manualI2p || !manualPgp || isAddingContact}
               >
-                <UserPlus className="h-4 w-4 mr-2" />
-                Kontakt hinzufügen
+                {isAddingContact ? (
+                  <>
+                    <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                    Wird hinzugefügt...
+                  </>
+                ) : (
+                  <>
+                    <UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />
+                    Kontakt hinzufügen
+                  </>
+                )}
               </Button>
             </div>
 
             {scanError && (
-              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm">
+              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
                 {scanError}
               </div>
             )}

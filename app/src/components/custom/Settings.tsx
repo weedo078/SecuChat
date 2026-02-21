@@ -634,6 +634,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const [samPort, setSamPort] = useState(settings.i2p.sam.port.toString());
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
+  const [portError, setPortError] = useState<string | null>(null);
 
   const handleTestConnection = async () => {
     setTesting(true);
@@ -650,12 +651,20 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   };
 
   const handleSave = async () => {
+    // Validate port range (1-65535)
+    const portNum = parseInt(samPort);
+    if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
+      setPortError('Ungültiger Port. Der Port muss zwischen 1 und 65535 liegen.');
+      return;
+    }
+    setPortError(null);
+
     const newI2pSettings = {
       mode: 'sam' as const,
       sam: {
         enabled: true,
         host: samHost,
-        port: parseInt(samPort) || 7657,
+        port: portNum,
         nickname: 'securechat',
       },
     };
@@ -722,11 +731,17 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                 <label className="text-xs text-muted-foreground">Port</label>
                 <input
                   type="number"
-                  className="w-full p-2 rounded-md border border-input mt-1"
+                  className={`w-full p-2 rounded-md border mt-1 ${portError ? 'border-destructive' : 'border-input'}`}
                   value={samPort}
-                  onChange={(e) => setSamPort(e.target.value)}
+                  onChange={(e) => {
+                    setSamPort(e.target.value);
+                    setPortError(null);
+                  }}
                   placeholder="7657"
                 />
+                {portError && (
+                  <p className="text-xs text-destructive mt-1">{portError}</p>
+                )}
               </div>
 
               <Button

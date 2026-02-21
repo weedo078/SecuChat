@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
-import { Button } from '@/components/ui/button';
 import { useApp } from '@/contexts/AppContext';
 import { Header } from '@/components/custom/Header';
 import { Sidebar } from '@/components/custom/Sidebar';
@@ -9,6 +8,7 @@ import { ContactManager } from '@/components/custom/ContactManager';
 import { QRCodeShare } from '@/components/custom/QRCodeShare';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
+import { UnlockDialog } from '@/components/custom/UnlockDialog';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
@@ -17,8 +17,6 @@ function App() {
   const [showContactManager, setShowContactManager] = useState(false);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [passphrase, setPassphrase] = useState('');
-  const [unlockError, setUnlockError] = useState('');
   const [unlockDismissed, setUnlockDismissed] = useState(false);
 
   // Derive unlock dialog from isLocked state without useEffect
@@ -28,15 +26,17 @@ function App() {
     initialize();
   }, [initialize]);
 
-  const handleUnlock = async () => {
+  const handleUnlock = async (passphrase: string): Promise<boolean> => {
     const success = await unlockApp(passphrase);
     if (success) {
       setUnlockDismissed(true);
-      setPassphrase('');
-      setUnlockError('');
-    } else {
-      setUnlockError('Falsche Passphrase');
     }
+    return success;
+  };
+
+  const handleCloseUnlockDialog = () => {
+    // Dialog kann nicht geschlossen werden ohne Entsperrung
+    // (optional: könnte auch setUnlockDismissed(false) bleiben)
   };
 
   if (isLoading) {
@@ -114,31 +114,11 @@ function App() {
         onClose={() => setShowSettings(false)} 
       />
 
-      {/* Unlock Dialog */}
-      {showUnlockDialog && (
-        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
-          <div className="bg-card border border-border rounded-xl p-6 w-full max-w-md mx-4">
-            <h2 className="text-xl font-semibold mb-2">App entsperren</h2>
-            <p className="text-muted-foreground mb-4">
-              Geben Sie Ihre Passphrase ein, um auf Ihre Nachrichten zuzugreifen.
-            </p>
-            <input
-              type="password"
-              className="w-full p-3 rounded-md border border-input bg-background mb-4"
-              placeholder="Passphrase"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-            />
-            {unlockError && (
-              <p className="text-sm text-destructive mb-4">{unlockError}</p>
-            )}
-            <Button onClick={handleUnlock} className="w-full">
-              Entsperren
-            </Button>
-          </div>
-        </div>
-      )}
+      <UnlockDialog
+        isOpen={showUnlockDialog}
+        onClose={handleCloseUnlockDialog}
+        onUnlock={handleUnlock}
+      />
 
       <Toaster />
     </div>

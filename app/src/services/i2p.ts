@@ -8,6 +8,7 @@
 import nacl from 'tweetnacl';
 import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
+import { logger } from '@/utils/logger';
 export { samService, type SAMConfig };
 
 export interface I2PIdentity {
@@ -101,7 +102,7 @@ class I2PService {
       try {
         await samService.accept('securechat');
       } catch (err) {
-        console.warn('[I2P] Accept setup deferred:', err);
+        logger.warn('[I2P] Accept setup deferred:', err);
       }
 
       // Get our address
@@ -154,7 +155,7 @@ class I2PService {
           this.identity.b32Address = samB32;
         }
       } catch (error) {
-        console.warn('[I2P] Failed to create SAM destination:', error);
+        logger.warn('[I2P] Failed to create SAM destination:', error);
       }
     }
 
@@ -379,7 +380,7 @@ class I2PService {
     });
 
     samService.onStream((stream) => {
-      console.log('[I2P] New incoming stream:', stream.id);
+      logger.log('[I2P] New incoming stream:', stream.id);
     });
   }
 
