@@ -1,12 +1,9 @@
 # SecuChat Windows Build Script
 # Requires: Node.js 20+, Git
 # Usage:
-#   .\build.ps1          # Build Windows installer
-#   .\build.ps1 -All     # Build Windows + Linux AppImage (Linux AppImage requires WSL)
+#   .\build.ps1     # Build Windows installer
 
-param(
-    [switch]$All
-)
+param([switch]$All)
 
 $ErrorActionPreference = "Stop"
 $I2PD_VERSION = "2.59.0"
@@ -16,18 +13,16 @@ $APP_DIR      = "$SCRIPT_DIR\app"
 $I2PD_EXE     = "$ELECTRON_DIR\resources\i2pd\win\i2pd.exe"
 
 function Info  { param($msg) Write-Host "[build] $msg" -ForegroundColor Green }
-function Warn  { param($msg) Write-Host "[build] $msg" -ForegroundColor Yellow }
 function Abort { param($msg) Write-Host "[build] ERROR: $msg" -ForegroundColor Red; exit 1 }
 
-# ─── Check Node.js ────────────────────────────────────────────────────────────
+# --- Check Node.js ---
 Info "Checking dependencies..."
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Abort "Node.js not found. Install from https://nodejs.org"
 }
-$nodeVersion = node --version
-Info "Node.js $nodeVersion found."
+Info "Node.js $(node --version) found."
 
-# ─── Download i2pd.exe ────────────────────────────────────────────────────────
+# --- Download i2pd.exe ---
 if (Test-Path $I2PD_EXE) {
     Info "i2pd.exe already present, skipping download."
 } else {
@@ -46,16 +41,16 @@ if (Test-Path $I2PD_EXE) {
     Info "i2pd.exe installed."
 }
 
-# ─── Certificates are already in the repo ────────────────────────────────────
+# --- Check certificates ---
 $certsDir = "$ELECTRON_DIR\resources\i2pd\certificates"
 if (Test-Path $certsDir) {
     $certCount = (Get-ChildItem $certsDir -Recurse -Filter "*.crt").Count
     Info "i2pd certificates present ($certCount files)."
 } else {
-    Abort "Certificates missing at $certsDir — make sure you cloned the full repo."
+    Abort "Certificates missing at $certsDir - make sure you cloned the full repo."
 }
 
-# ─── Build web app ────────────────────────────────────────────────────────────
+# --- Build web app ---
 Info "Installing app dependencies..."
 Set-Location $APP_DIR
 npm install --silent
@@ -64,9 +59,9 @@ if ($LASTEXITCODE -ne 0) { Abort "npm install failed in app/" }
 Info "Building web app..."
 npm run build
 if ($LASTEXITCODE -ne 0) { Abort "npm run build failed in app/" }
-Info "Web app built → app\dist\"
+Info "Web app built -> app\dist\"
 
-# ─── Build Electron ───────────────────────────────────────────────────────────
+# --- Build Electron ---
 Info "Installing Electron dependencies..."
 Set-Location $ELECTRON_DIR
 npm install --silent
@@ -76,15 +71,15 @@ Info "Compiling TypeScript..."
 npm run build
 if ($LASTEXITCODE -ne 0) { Abort "TypeScript compilation failed" }
 
-# ─── Package ──────────────────────────────────────────────────────────────────
+# --- Package ---
 Info "Packaging Windows installer (NSIS)..."
 & ".\node_modules\.bin\electron-builder.cmd" --win nsis --x64
 if ($LASTEXITCODE -ne 0) { Abort "electron-builder failed" }
 
-# ─── Done ─────────────────────────────────────────────────────────────────────
+# --- Done ---
 Write-Host ""
 Info "Build complete! Output:"
 Get-ChildItem "$ELECTRON_DIR\release\" -Filter "*.exe" | ForEach-Object {
-    Write-Host "  → $($_.FullName) ($([math]::Round($_.Length/1MB, 1)) MB)" -ForegroundColor Cyan
+    Write-Host "  -> $($_.FullName) ($([math]::Round($_.Length/1MB, 1)) MB)" -ForegroundColor Cyan
 }
 Write-Host ""
