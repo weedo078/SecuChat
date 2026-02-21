@@ -204,9 +204,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
         
-        // Initialize with settings
+        // Initialize with settings — cap at 15 s so the app never hangs on loading
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        const status = await i2pService.initialize(i2pSettings.sam);
+        const status = await Promise.race([
+          i2pService.initialize(i2pSettings.sam),
+          new Promise<I2PStatus>((resolve) =>
+            setTimeout(() => resolve({ samConnected: false, samAvailable: false, address: null, error: 'I2P-Init-Timeout' }), 15000)
+          ),
+        ]);
         setI2pStatus(status);
         
         // Save SAM destination if newly generated
