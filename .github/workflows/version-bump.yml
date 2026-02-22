@@ -18,6 +18,7 @@ jobs:
 
     permissions:
       contents: write
+      actions: write
 
     steps:
       - uses: actions/checkout@v4
@@ -74,3 +75,10 @@ jobs:
           git tag "v$V"
           git push
           git push --tags
+
+      - name: Trigger release workflow
+        run: |
+          V="${{ steps.new.outputs.version }}"
+          gh workflow run release.yml --ref "v$V" --field tag="v$V"
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
