@@ -90,18 +90,33 @@ async function startI2pd(): Promise<boolean> {
 
   i2pdProcess = spawn(I2PD_BINARY, [
     '--datadir', dataDir,
+    // SAM for SecuChat
     '--sam.enabled', 'true',
     '--sam.address', '127.0.0.1',
     '--sam.port', '7656',
+    // Web console for debugging
     '--http.enabled', 'true',
     '--http.address', '127.0.0.1',
     '--http.port', '7070',
+    // Disable unused services
     '--httpproxy.enabled', 'false',
     '--socksproxy.enabled', 'false',
     '--bob.enabled', 'false',
     '--i2cp.enabled', 'false',
-    '--upnp.enabled', 'false',
+    // Network configuration
+    '--upnp.enabled', 'true',
     '--nat', 'true',
+    // Tunnel configuration - required for LeaseSet publication
+    '--inbound.quantity', '3',
+    '--outbound.quantity', '3',
+    '--inbound.length', '2',
+    '--outbound.length', '2',
+    // Bandwidth for faster tunnel building
+    '--bandwidth', '256',
+    // Participate in network (helps with connectivity)
+    '--share', '10',
+    // Enable floodfill for better routing (if resources allow)
+    '--floodfill', 'false',
   ], { detached: false, windowsHide: true });
 
   i2pdProcess.stdout?.on('data', (d) => console.log('[i2pd]', d.toString().trim()));

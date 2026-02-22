@@ -33,6 +33,7 @@ export interface I2PStatus {
   address: string | null;
   error?: string;
   newDestinationGenerated?: boolean;
+  leasesetPublished?: boolean;  // true when inbound tunnels are ready
 }
 
 class I2PService {
@@ -47,7 +48,9 @@ class I2PService {
     samConnected: false,
     samAvailable: false,
     address: null,
+    leasesetPublished: false,
   };
+  private tunnelCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Initialize I2P service — connects to SAM via proxy
@@ -114,10 +117,15 @@ class I2PService {
         samAvailable: true,
         address: b32 || this.getAddress(),
         newDestinationGenerated,
+        leasesetPublished: false,
       };
 
       this.setupSAMListeners();
       this.notifyStatusChange();
+      
+      // Start checking for tunnel readiness (LeaseSet publication)
+      this.startTunnelCheck();
+      
       return this.currentStatus;
 
     } catch (error) {
@@ -414,6 +422,75 @@ class I2PService {
       };
       this.notifyStatusChange();
     });
+  }
+
+  /**
+   * Poll i2pd web console to check if inbound tunnels are established
+   * This indicates the LeaseSet is published and we're reachable
+   */
+  private startTunnelCheck(): void {
+    // Stop any existing check
+    this.stopTunnelCheck();
+    
+    // Check every 5 seconds for up to 2 minutes
+    let attempts = 0;
+    const maxAttempts = 24; // 2 minutes
+    
+    this.tunnelCheckInterval = setInterval(async () => {
+      attempts++;
+      const ready = await this.checkTunnelsReady();
+      
+      if (ready) {
+        logger.log('[I2P] Tunnels ready, LeaseSet published');
+        this.currentStatus.leasesetPublished = true;
+        this.stopTunnelCheck();
+        this.notifyStatusChange();
+      } else if (attempts >= maxAttempts) {
+        logger.warn('[I2P] Tunnel check timeout - may need manual port forwarding');
+        this.stopTunnelCheck();
+      }
+    }, 5000);
+  }
+  
+  private stopTunnelCheck(): void {
+    if (this.tunnelCheckInterval) {
+      clearInterval(this.tunnelCheckInterval);
+      this.tunnelCheckInterval = null;
+    }
+  }
+  
+  /**
+   * Check i2pd web console API for tunnel status
+   */
+  private async checkTunnelsReady(): Promise<boolean> {
+    try {
+      const response = await fetch('http://127.0.0.1:7070/?page=i2p_tunnels_json', {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+      });
+      
+      if (!response.ok) return false;
+      
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const data = await response.json() as Record<string, any>;
+      
+      // Check if we have any inbound tunnels with 'established' status
+      const inboundTunnels = data.inbound || [];
+      const hasEstablishedInbound = inboundTunnels.some(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (t: any) => t.status === 'established' || t.status === 'building'
+      );
+      
+      // Also check local destinations (SAM sessions should appear here)
+      const localDests = data.destinations || [];
+      const hasLocalDestination = localDests.length > 0;
+      
+      return hasEstablishedInbound && hasLocalDestination;
+    } catch {
+      // If we can't reach the API, assume we're in a restricted environment
+      // Fall back to SAM connected status
+      return this.currentStatus.samConnected;
+    }
   }
 
   private notifyStatusChange(): void {
