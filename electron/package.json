@@ -17,7 +17,56 @@
     "dev": "tsc && electron dist/main.js",
     "dist": "npm run build && electron-builder",
     "dist:linux": "npm run build && electron-builder --linux --publish never",
-    "dist:win": "npm run build && electron-builder --win --publish never"
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "publish": "npm run build && electron-builder --publish always"
+  },
+  "build": {
+    "appId": "com.secuchat.app",
+    "productName": "SecuChat",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "../app/dist/**/*",
+      "../resources/i2pd/**/*"
+    ],
+    "publish": {
+      "provider": "github",
+      "owner": "weedo078",
+      "repo": "SecuChat",
+      "releaseType": "release"
+    },
+    "mac": {
+      "category": "public.app-category.social-networking",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        }
+      ],
+      "category": "Network;Chat;"
+    }
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
@@ -27,6 +76,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
+    "electron-updater": "^6.8.3",
     "ws": "^8.18.0"
   }
 }
