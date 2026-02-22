@@ -241,9 +241,20 @@ class SAMService {
 
     const dest = privateKey || this.session?.privateKey;
     const destParam = dest ? `DESTINATION=${dest}` : 'DESTINATION=TRANSIENT';
-    const resp = await this.sendRaw(
+    let resp = await this.sendRaw(
       `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
     );
+
+    // i2pd keeps the old session alive for ~5 min after the TCP connection drops.
+    // If we try to recreate it with the same ID we get DUPLICATED_ID.
+    // Retry once with a unique suffix so we don't have to wait.
+    if (resp.includes('RESULT=DUPLICATED_ID')) {
+      nickname = `${nickname}-${Date.now()}`;
+      logger.log('[SAM] Session ID taken, retrying with:', nickname);
+      resp = await this.sendRaw(
+        `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
+      );
+    }
 
     if (!resp.includes('RESULT=OK')) {
       throw new Error(`SESSION CREATE failed: ${resp}`);
