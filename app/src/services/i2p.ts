@@ -225,12 +225,16 @@ class I2PService {
    * Connect to a peer via I2P SAM
    */
   async connectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
+    logger.log(`[I2P] Connecting to peer: ${b32Address.slice(0, 20)}...`);
+    
     if (!this.currentStatus.samConnected) {
+      logger.warn('[I2P] Cannot connect - SAM not connected');
       throw new Error('I2P nicht verbunden. Starten Sie i2pd und sam-proxy.');
     }
 
     const existing = this.peers.get(b32Address);
     if (existing?.status === 'connected') {
+      logger.log('[I2P] Peer already connected:', b32Address.slice(0, 20));
       return existing;
     }
 
@@ -245,10 +249,12 @@ class I2PService {
     this.peers.set(b32Address, peer);
 
     try {
+      logger.log('[I2P] Calling samService.connectTo for:', b32Address.slice(0, 20));
       const stream = await samService.connectTo(b32Address);
       peer.samStreamId = stream.id;
       peer.status = 'connected';
       peer.lastSeen = Date.now();
+      logger.log('[I2P] Peer connected successfully:', b32Address.slice(0, 20), 'stream:', stream.id);
     } catch (error) {
       console.error('[I2P] Failed to connect to peer:', error);
       peer.status = 'disconnected';

@@ -313,6 +313,7 @@ class SAMService {
    */
   private async attemptStreamConnect(destination: string): Promise<SAMStream> {
     // Create a new socket for this stream connection
+    logger.log(`[SAM] Creating new stream socket to ${this.config.host}:${this.config.port} for peer ${destination.slice(0, 20)}...`);
     const streamSocket = new WebSocket(`ws://${this.config.host}:${this.config.port}`);
     
     const streamId = this.nextStreamId++;
@@ -326,16 +327,19 @@ class SAMService {
 
     try {
       // Wait for connection
+      logger.log(`[SAM] Waiting for stream socket ${streamId} to open...`);
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Stream socket timeout')), 10000);
         
         streamSocket.onopen = () => {
           clearTimeout(timeout);
+          logger.log(`[SAM] Stream socket ${streamId} opened`);
           resolve();
         };
         
-        streamSocket.onerror = () => {
+        streamSocket.onerror = (err) => {
           clearTimeout(timeout);
+          logger.error(`[SAM] Stream socket ${streamId} error:`, err);
           reject(new Error('Stream socket error'));
         };
       });
@@ -367,6 +371,7 @@ class SAMService {
       };
 
       // SAM v3.1: HELLO on new socket
+      logger.log(`[SAM] Sending HELLO on stream socket ${streamId}...`);
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('HELLO timeout')), 10000);
 
@@ -374,6 +379,7 @@ class SAMService {
           if (typeof ev.data === 'string' && ev.data.includes('RESULT=OK')) {
             streamSocket.removeEventListener('message', onMessage);
             clearTimeout(timeout);
+            logger.log(`[SAM] HELLO reply received on stream ${streamId}`);
             resolve();
           }
         };
@@ -383,6 +389,7 @@ class SAMService {
       });
 
       // STREAM CONNECT — I2P tunnel build can take 30–60s on first connect
+      logger.log(`[SAM] Sending STREAM CONNECT on socket ${streamId} to ${destination.slice(0, 20)}...`);
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('STREAM CONNECT timeout')), 60000);
         
@@ -392,9 +399,11 @@ class SAMService {
             if (ev.data.includes('RESULT=OK')) {
               stream.connected = true;
               clearTimeout(timeout);
+              logger.log(`[SAM] STREAM CONNECT success on socket ${streamId}`);
               resolve();
             } else {
               clearTimeout(timeout);
+              logger.warn(`[SAM] STREAM CONNECT failed on socket ${streamId}:`, ev.data);
               reject(new Error(`STREAM CONNECT failed: ${ev.data}`));
             }
           }

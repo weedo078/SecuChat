@@ -151,11 +151,17 @@ function startSamProxy(): Promise<void> {
       console.log(`[SAM-Proxy] Client connected from ${req.socket.remoteAddress}`);
       const tcp = new net.Socket();
       let tcpConnected = false;
+      let pendingMessages: string[] = [];
       let buffer = '';
 
       tcp.connect(SAM_PROXY_SAM_PORT, SAM_PROXY_SAM_HOST, () => {
         tcpConnected = true;
         console.log('[SAM-Proxy] Connected to i2pd SAM');
+        // Flush any messages that arrived while connecting
+        for (const msg of pendingMessages) {
+          tcp.write(msg);
+        }
+        pendingMessages = [];
       });
 
       tcp.on('data', (data) => {
@@ -178,22 +184,35 @@ function startSamProxy(): Promise<void> {
       tcp.on('error', (err) => {
         console.error('[SAM-Proxy] TCP error:', err.message);
         tcp.destroy();
+        pendingMessages = [];
         if (ws.readyState === WebSocket.OPEN) { ws.close(); }
       });
 
       tcp.on('close', () => {
         tcpConnected = false;
+        pendingMessages = [];
         if (ws.readyState === WebSocket.OPEN) { ws.close(); }
       });
 
       ws.on('message', (data) => {
-        if (!tcpConnected) return;
         const msg = data.toString();
-        tcp.write(msg.endsWith('\n') ? msg : msg + '\n');
+        const formattedMsg = msg.endsWith('\n') ? msg : msg + '\n';
+        if (!tcpConnected) {
+          // Buffer messages until TCP is connected
+          pendingMessages.push(formattedMsg);
+          return;
+        }
+        tcp.write(formattedMsg);
       });
 
-      ws.on('close', () => tcp.destroy());
-      ws.on('error', () => tcp.destroy());
+      ws.on('close', () => {
+        pendingMessages = [];
+        tcp.destroy();
+      });
+      ws.on('error', () => {
+        pendingMessages = [];
+        tcp.destroy();
+      });
     });
   });
 }
