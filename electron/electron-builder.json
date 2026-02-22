@@ -41,6 +41,6 @@
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
     "include": "installer.nsh",
-    "requestExecutionLevel": "admin"
+
   }
 }

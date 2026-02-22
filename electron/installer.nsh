@@ -2,6 +2,9 @@
 ; Adds Windows Defender exclusion for i2pd.exe (legitimate open-source
 ; privacy tool, see https://i2pd.website — flagged as false positive).
 
+; Request admin privileges
+RequestExecutionLevel admin
+
 !macro customInstall
   ; Add install directory as Defender exclusion (persistent)
   ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Add-MpPreference -ExclusionPath \"$INSTDIR\""'
