@@ -26,6 +26,7 @@
     "directories": {
       "output": "release"
     },
+    "asar": false,
     "files": [
       "dist/**/*",
       {
@@ -55,7 +56,8 @@
             "arm64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
@@ -65,7 +67,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "linux": {
       "target": [
