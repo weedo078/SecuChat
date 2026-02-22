@@ -1,6 +1,6 @@
 {
   "name": "securechat",
-  "version": "0.0.30",
+  "version": "0.0.31",
   "description": "Privacy-focused messaging with PGP + I2P",
   "homepage": "https://github.com/weedo078/SecuChat",
   "repository": {
@@ -42,7 +42,10 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["x64", "arm64"]
+          "arch": [
+            "x64",
+            "arm64"
+          ]
         }
       ]
     },
@@ -50,7 +53,9 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },
@@ -58,11 +63,15 @@
       "target": [
         {
           "target": "AppImage",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "deb",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "category": "Network;Chat;"
