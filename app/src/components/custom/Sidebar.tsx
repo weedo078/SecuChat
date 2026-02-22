@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquare, Settings, Plus, Search, Share2, UserPlus } from 'lucide-react';
+import { MessageSquare, Settings, Plus, Search, Share2, UserPlus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -15,6 +15,17 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { toast } from 'sonner';
 
 interface SidebarProps {
   onAddContact: () => void;
@@ -23,9 +34,10 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: SidebarProps) {
-  const { chats, activeChat, setActiveChat, contacts, createChat, user } = useApp();
+  const { chats, activeChat, setActiveChat, contacts, createChat, user, deleteChat } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewChatDialog, setShowNewChatDialog] = useState(false);
+  const [chatToDelete, setChatToDelete] = useState<string | null>(null);
 
   const filteredChats = chats.filter(chat => 
     chat.contact?.name?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -163,17 +175,20 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
             </div>
           ) : (
             filteredChats.map(chat => (
-              <button
+              <div
                 key={chat.id}
-                onClick={() => handleChatClick(chat)}
-                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left ${
+                className={`group w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${
                   activeChat?.id === chat.id 
                     ? 'bg-primary text-primary-foreground' 
                     : 'hover:bg-accent'
                 }`}
-                aria-label={`Chat mit ${chat.contact?.name}, Status: ${chat.contact?.status === 'online' ? 'Online' : 'Offline'}${chat.unreadCount > 0 ? `, ${chat.unreadCount} ungelesene Nachrichten` : ''}`}
-                aria-current={activeChat?.id === chat.id ? 'page' : undefined}
               >
+                <button
+                  onClick={() => handleChatClick(chat)}
+                  className="flex-1 flex items-center gap-3 text-left"
+                  aria-label={`Chat mit ${chat.contact?.name}, Status: ${chat.contact?.status === 'online' ? 'Online' : 'Offline'}${chat.unreadCount > 0 ? `, ${chat.unreadCount} ungelesene Nachrichten` : ''}`}
+                  aria-current={activeChat?.id === chat.id ? 'page' : undefined}
+                >
                 <div className="relative">
                   <Avatar className="h-12 w-12">
                     <AvatarFallback>{getInitials(chat.contact?.name || '??')}</AvatarFallback>
@@ -209,12 +224,53 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                       </Badge>
                     )}
                   </div>
-                </div>
-              </button>
+                </button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={`opacity-0 group-hover:opacity-100 transition-opacity shrink-0 ${
+                    activeChat?.id === chat.id ? 'text-primary-foreground hover:text-primary-foreground' : ''
+                  }`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setChatToDelete(chat.id);
+                  }}
+                  aria-label={`Chat mit ${chat.contact?.name} löschen`}
+                >
+                  <Trash2 className="h-4 w-4 text-destructive" />
+                </Button>
+              </div>
             ))
           )}
         </div>
       </ScrollArea>
+
+      {/* Delete Chat Confirmation */}
+      <AlertDialog open={!!chatToDelete} onOpenChange={() => setChatToDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Chat löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Möchtest du diesen Chat wirklich löschen? Alle Nachrichten werden unwiderruflich gelöscht.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={async () => {
+                if (chatToDelete) {
+                  await deleteChat(chatToDelete);
+                  setChatToDelete(null);
+                  toast.success('Chat gelöscht');
+                }
+              }}
+              className="bg-destructive"
+            >
+              Löschen
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Footer */}
       <div className="p-4 border-t border-border">
