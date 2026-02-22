@@ -19,16 +19,13 @@
       "from": "resources/i2pd",
       "to": "i2pd",
       "filter": ["**/*"]
-    },
-    {
-      "from": "resources/i2pd/certificates",
-      "to": "i2pd/certificates",
-      "filter": ["**/*"]
     }
   ],
+  "publish": [],
   "linux": {
     "target": [
-      { "target": "AppImage", "arch": ["arm64"] }
+      { "target": "AppImage", "arch": ["x64"] },
+      { "target": "deb", "arch": ["x64"] }
     ],
     "category": "Network",
     "icon": "build-assets/icon.png"

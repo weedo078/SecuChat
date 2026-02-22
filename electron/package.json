@@ -3,6 +3,10 @@
   "version": "0.0.6",
   "description": "Privacy-focused messaging with PGP + I2P",
   "homepage": "https://github.com/weedo078/SecuChat",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/weedo078/SecuChat.git"
+  },
   "author": {
     "name": "weedo078",
     "email": "weedo078@users.noreply.github.com"
