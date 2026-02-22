@@ -25,7 +25,7 @@ const I2PD_CERTS_SRC = app.isPackaged
   : join(__dirname, '../../resources/i2pd/certificates');
 
 const APP_DIST = app.isPackaged
-  ? join(process.resourcesPath, 'app')
+  ? join(process.resourcesPath, 'app', 'app')  // Frontend is in app/app/
   : join(__dirname, '../../app/dist');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
@@ -250,6 +250,8 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      webSecurity: false, // Allow loading local files
+      allowRunningInsecureContent: false,
     },
   });
 

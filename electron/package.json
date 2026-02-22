@@ -28,20 +28,20 @@
     },
     "asar": false,
     "files": [
-      "dist/**/*",
+      {
+        "from": "dist",
+        "to": ".",
+        "filter": ["**/*"]
+      },
       {
         "from": "../app/dist",
         "to": "app",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       },
       {
         "from": "../resources/i2pd",
         "to": "i2pd",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       }
     ],
     "publish": {
