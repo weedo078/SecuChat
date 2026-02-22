@@ -241,20 +241,9 @@ class SAMService {
 
     const dest = privateKey || this.session?.privateKey;
     const destParam = dest ? `DESTINATION=${dest}` : 'DESTINATION=TRANSIENT';
-    let resp = await this.sendRaw(
+    const resp = await this.sendRaw(
       `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
     );
-
-    // i2pd keeps the old session alive for ~5 min after the TCP connection drops.
-    // If we try to recreate it with the same ID we get DUPLICATED_ID.
-    // Retry once with a unique suffix so we don't have to wait.
-    if (resp.includes('RESULT=DUPLICATED_ID')) {
-      nickname = `${nickname}-${Date.now()}`;
-      logger.log('[SAM] Session ID taken, retrying with:', nickname);
-      resp = await this.sendRaw(
-        `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
-      );
-    }
 
     if (!resp.includes('RESULT=OK')) {
       throw new Error(`SESSION CREATE failed: ${resp}`);
@@ -341,10 +330,11 @@ class SAMService {
         stream.connected = false;
       };
 
-      // Do HELLO handshake on new socket
+      // SAM v3.1: HELLO on new socket, then immediately STREAM CONNECT
+      // There is NO "attach to session" step — the session ID is passed in STREAM CONNECT itself
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('HELLO timeout')), 10000);
-        
+
         const onMessage = (ev: MessageEvent) => {
           if (typeof ev.data === 'string' && ev.data.includes('RESULT=OK')) {
             streamSocket.removeEventListener('message', onMessage);
@@ -352,35 +342,14 @@ class SAMService {
             resolve();
           }
         };
-        
+
         streamSocket.addEventListener('message', onMessage);
         streamSocket.send('HELLO VERSION MIN=3.1 MAX=3.1\n');
       });
 
-      // Attach to existing session
+      // STREAM CONNECT — I2P tunnel build can take 30–60s on first connect
       await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('SESSION timeout')), 10000);
-        
-        const onMessage = (ev: MessageEvent) => {
-          if (typeof ev.data === 'string' && ev.data.includes('SESSION STATUS')) {
-            streamSocket.removeEventListener('message', onMessage);
-            if (ev.data.includes('RESULT=OK')) {
-              clearTimeout(timeout);
-              resolve();
-            } else {
-              clearTimeout(timeout);
-              reject(new Error(`SESSION failed: ${ev.data}`));
-            }
-          }
-        };
-        
-        streamSocket.addEventListener('message', onMessage);
-        streamSocket.send(`SESSION ID=${this.sessionNickname}\n`);
-      });
-
-      // Now do STREAM CONNECT
-      await new Promise<void>((resolve, reject) => {
-        const timeout = setTimeout(() => reject(new Error('STREAM CONNECT timeout')), 30000);
+        const timeout = setTimeout(() => reject(new Error('STREAM CONNECT timeout')), 60000);
         
         const onMessage = (ev: MessageEvent) => {
           if (typeof ev.data === 'string' && ev.data.includes('STREAM STATUS')) {
@@ -654,9 +623,12 @@ class SAMService {
       try {
         const ok = await this.connect(this.config);
         if (ok && this.lastSessionNickname) {
-          // Restore the session that was lost when the connection dropped
-          await this.createSession(this.lastSessionNickname, this.lastSessionPrivateKey);
-          logger.log('[SAM] Session restored after reconnect');
+          // Always use a fresh nickname so i2pd never rejects with DUPLICATED_ID
+          // (i2pd keeps old sessions alive for ~5 min after the TCP connection drops)
+          const base = this.lastSessionNickname.replace(/-\d+$/, '');
+          const freshNick = `${base}-${Date.now()}`;
+          await this.createSession(freshNick, this.lastSessionPrivateKey);
+          logger.log('[SAM] Session restored after reconnect as:', freshNick);
           this.reconnectHandlers.forEach(h => h());
         }
       } catch (err) {

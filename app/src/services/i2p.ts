@@ -93,15 +93,16 @@ class I2PService {
         }
       }
 
-      // Create session for accepting connections
+      // Create session for accepting connections.
+      // Always use a timestamp-based nickname so i2pd never rejects with
+      // DUPLICATED_ID (old sessions stay alive ~5 min after TCP drop).
       const sessionPrivKey = this.identity?.samDestination || undefined;
-      await samService.createSession('securechat', sessionPrivKey);
+      const sessionNick = `sc-${Date.now()}`;
+      await samService.createSession(sessionNick, sessionPrivKey);
 
       // Start accepting incoming connections
-      // Note: STREAM ACCEPT on a new SAM connection is needed per the spec,
-      // but for the main session we set it up here
       try {
-        await samService.accept('securechat');
+        await samService.accept(sessionNick);
       } catch (err) {
         logger.warn('[I2P] Accept setup deferred:', err);
       }

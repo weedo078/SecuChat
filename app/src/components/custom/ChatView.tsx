@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download } from 'lucide-react';
+import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -10,6 +10,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -23,13 +24,25 @@ import {
   DialogContent,
   DialogTitle,
 } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 
 export function ChatView() {
-  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus } = useApp();
+  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat } = useApp();
   const [messageText, setMessageText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -255,7 +268,12 @@ export function ChatView() {
             <DropdownMenuContent align="end">
               <DropdownMenuItem>Kontaktinfo</DropdownMenuItem>
               <DropdownMenuItem>Nachrichten suchen</DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive">
+              <DropdownMenuSeparator />
+              <DropdownMenuItem 
+                className="text-destructive focus:text-destructive"
+                onClick={() => setShowDeleteDialog(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
                 Chat löschen
               </DropdownMenuItem>
             </DropdownMenuContent>
@@ -458,6 +476,42 @@ export function ChatView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Delete Chat Confirmation */}
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Chat löschen?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Möchtest du diesen Chat wirklich löschen? Alle Nachrichten werden unwiderruflich gelöscht.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogAction 
+              onClick={async () => {
+                if (!activeChat || isDeleting) return;
+                setIsDeleting(true);
+                try {
+                  await deleteChat(activeChat.id);
+                  setShowDeleteDialog(false);
+                  toast.success('Chat gelöscht');
+                } catch (error) {
+                  toast.error('Fehler beim Löschen des Chats', {
+                    description: error instanceof Error ? error.message : 'Unbekannter Fehler'
+                  });
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+              disabled={isDeleting}
+              className="bg-destructive"
+            >
+              {isDeleting ? 'Wird gelöscht...' : 'Löschen'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
