@@ -4,6 +4,8 @@ import { join } from 'path';
 import { existsSync, mkdirSync, cpSync } from 'fs';
 import net from 'net';
 import { WebSocketServer, WebSocket } from 'ws';
+import { autoUpdater } from 'electron-updater';
+import { log as electronLog } from 'electron-log';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -309,9 +311,94 @@ app.on('before-quit', () => {
   stopI2pd();
 });
 
+// ─── Auto-Updater ─────────────────────────────────────────────────────────────
+
+// Configure auto-updater to use GitHub releases
+autoUpdater.autoDownload = false; // We'll ask user first
+autoUpdater.autoInstallOnAppQuit = true;
+
+// Check for updates (called from renderer)
+function checkForUpdates(): void {
+  if (isDev) {
+    console.log('[Auto-Update] Skipped in development mode');
+    return;
+  }
+  console.log('[Auto-Update] Checking for updates...');
+  autoUpdater.checkForUpdates().catch(err => {
+    console.error('[Auto-Update] Check failed:', err);
+  });
+}
+
+// Auto-update event handlers
+autoUpdater.on('checking-for-update', () => {
+  console.log('[Auto-Update] Checking for update...');
+  mainWindow?.webContents.send('update:checking');
+});
+
+autoUpdater.on('update-available', (info) => {
+  console.log('[Auto-Update] Update available:', info.version);
+  mainWindow?.webContents.send('update:available', {
+    version: info.version,
+    releaseDate: info.releaseDate,
+  });
+});
+
+autoUpdater.on('update-not-available', () => {
+  console.log('[Auto-Update] No updates available');
+  mainWindow?.webContents.send('update:not-available');
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('[Auto-Update] Error:', err);
+  mainWindow?.webContents.send('update:error', err.message);
+});
+
+autoUpdater.on('download-progress', (progress) => {
+  console.log(`[Auto-Update] Download progress: ${progress.percent.toFixed(1)}%`);
+  mainWindow?.webContents.send('update:progress', {
+    percent: progress.percent,
+    speed: progress.bytesPerSecond,
+  });
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log('[Auto-Update] Update downloaded, ready to install');
+  mainWindow?.webContents.send('update:downloaded', {
+    version: info.version,
+  });
+});
+
+// IPC handlers for auto-updater
+ipcMain.handle('update:check', () => {
+  checkForUpdates();
+});
+
+ipcMain.handle('update:download', async () => {
+  console.log('[Auto-Update] Starting download...');
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    console.error('[Auto-Update] Download failed:', err);
+    return { success: false, error: (err as Error).message };
+  }
+});
+
+ipcMain.handle('update:install', () => {
+  console.log('[Auto-Update] Quitting and installing update...');
+  autoUpdater.quitAndInstall();
+});
+
 // ─── IPC ─────────────────────────────────────────────────────────────────────
 
 ipcMain.handle('i2p:status', async () => ({
   i2pdRunning: await isI2pdRunning(),
   samProxyRunning: samProxyWss !== null,
 }));
+
+// Check for updates on startup (after 10s delay)
+app.whenReady().then(() => {
+  setTimeout(() => {
+    checkForUpdates();
+  }, 10000);
+});

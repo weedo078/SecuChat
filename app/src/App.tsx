@@ -9,6 +9,7 @@ import { AddContactDialog } from '@/components/custom/AddContactDialog';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
 import { UnlockDialog } from '@/components/custom/UnlockDialog';
+import { UpdateNotification } from '@/components/custom/UpdateNotification';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
@@ -122,6 +123,9 @@ function App() {
       />
 
       <Toaster />
+      
+      {/* Auto-update notifications */}
+      <UpdateNotification />
     </div>
   );
 }
