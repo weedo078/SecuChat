@@ -106,7 +106,8 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     setScanError(null);
 
     try {
-      const isJson = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+      const name = file.name.toLowerCase();
+      const isJson = file.type === 'application/json' || name.endsWith('.json') || name.endsWith('.secuchat');
       console.log('[Import] isJson:', isJson);
 
       // Try as QR image first (skip for JSON files)
@@ -331,7 +332,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = `securechat-contact-${user.username}.json`;
+    link.download = `${user.username}.secuchat`;
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -450,7 +451,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                     </div>
                     <div className="text-left">
                       <p className="font-medium">Datei importieren</p>
-                      <p className="text-sm text-muted-foreground">QR-Code Bild oder Kontaktdatei</p>
+                      <p className="text-sm text-muted-foreground">.secuchat Kontaktdatei oder QR-Code Bild</p>
                     </div>
                   </button>
                 </div>
@@ -466,7 +467,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*,.json"
+                  accept="image/*,.json,.secuchat"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
@@ -572,7 +573,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                   </Button>
                   <Button variant="outline" className="flex-1" onClick={exportContactFile}>
                     <Download className="h-4 w-4 mr-2" aria-hidden="true" />
-                    Als Datei
+                    .secuchat speichern
                   </Button>
                 </div>
 
