@@ -106,11 +106,6 @@ async function startI2pd(): Promise<boolean> {
     // Network configuration
     '--upnp.enabled', 'true',
     '--nat', 'true',
-    // Tunnel configuration - required for LeaseSet publication
-    '--inbound.quantity', '3',
-    '--outbound.quantity', '3',
-    '--inbound.length', '2',
-    '--outbound.length', '2',
     // Bandwidth for faster tunnel building
     '--bandwidth', '256',
     // Participate in network (helps with connectivity)
