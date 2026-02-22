@@ -121,4 +121,8 @@ Bekannte Sicherheitsprobleme und deren Behebung: [plan/BUGPLAN.md](plan/BUGPLAN.
 
 ## Lizenz
 
-MIT
+GNU Affero General Public License v3.0 (AGPL-3.0)
+
+Jede Nutzung, Modifikation oder Verbreitung dieses Codes — auch über ein Netzwerk — verpflichtet dazu, den Quellcode unter der gleichen Lizenz offenzulegen. Kommerzielle Closed-Source-Nutzung ist nicht gestattet.
+
+Siehe [LICENSE](LICENSE) für den vollständigen Lizenztext.
