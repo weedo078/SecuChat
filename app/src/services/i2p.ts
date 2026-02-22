@@ -102,15 +102,17 @@ class I2PService {
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
 
-      // Start accepting incoming connections
-      try {
-        await samService.accept(sessionNick);
-      } catch (err) {
-        logger.warn('[I2P] Accept setup deferred:', err);
-      }
+      // Note: STREAM ACCEPT must use a *separate* socket (SAM v3.1 spec).
+      // Calling accept() on the session socket corrupts the session state in
+      // i2pd and causes INVALID_ID on subsequent STREAM CONNECT calls.
+      // Incoming stream support will be implemented with a dedicated socket.
 
-      // Get our address
+      // Get our address and sync it into the identity object so that
+      // exportIdentity() and contact exports always carry the real SAM b32.
       const b32 = await samService.getB32Address();
+      if (b32 && this.identity) {
+        this.identity.b32Address = b32;
+      }
 
       this.currentStatus = {
         samConnected: true,
