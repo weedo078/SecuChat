@@ -128,7 +128,7 @@ jobs:
   release:
     name: Create GitHub Release
     needs: [build-linux-x64, build-windows]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, unraid]
     permissions:
       contents: write
 

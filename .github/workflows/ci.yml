@@ -13,7 +13,7 @@ concurrency:
 jobs:
   test:
     name: Test & Lint
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, unraid]
 
     steps:
       - uses: actions/checkout@v4
