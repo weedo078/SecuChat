@@ -16,16 +16,22 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
+// electron-builder (asar:false) places files relative to resources/app/:
+//   dist/**/*            → resources/app/          (main.js, preload.js)
+//   ../app/dist  to:app  → resources/app/app/       (index.html, assets)
+//   ../resources/i2pd to:i2pd → resources/app/i2pd/ (i2pd binary)
+const APP_ROOT = app.isPackaged ? join(process.resourcesPath, 'app') : null;
+
 const I2PD_BINARY = app.isPackaged
-  ? join(process.resourcesPath, 'i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd')
+  ? join(APP_ROOT!, 'i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd')
   : join(__dirname, '../../resources/i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd');
 
 const I2PD_CERTS_SRC = app.isPackaged
-  ? join(process.resourcesPath, 'i2pd', 'certificates')
+  ? join(APP_ROOT!, 'i2pd', 'certificates')
   : join(__dirname, '../../resources/i2pd/certificates');
 
 const APP_DIST = app.isPackaged
-  ? join(process.resourcesPath, 'app')
+  ? join(APP_ROOT!, 'app')
   : join(__dirname, '../../app/dist');
 
 // ─── Utilities ────────────────────────────────────────────────────────────────
