@@ -215,8 +215,8 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                       {chat.contact?.status === 'online' ? 'Online' : 'Offline'}
                     </p>
                     {chat.unreadCount > 0 && (
-                      <Badge 
-                        variant={activeChat?.id === chat.id ? 'secondary' : 'default'} 
+                      <Badge
+                        variant={activeChat?.id === chat.id ? 'secondary' : 'default'}
                         className="text-xs"
                         aria-label={`${chat.unreadCount} ungelesene Nachrichten`}
                       >
@@ -224,6 +224,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                       </Badge>
                     )}
                   </div>
+                </div>
                 </button>
                 <Button
                   variant="ghost"

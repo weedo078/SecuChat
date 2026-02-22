@@ -643,7 +643,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       storageService.clearEncryptionPassphrase();
       return false;
     }
-  }, [handleIncomingMessage, settings]);
+  }, [handleIncomingMessage]);
 
   // Load active chat messages when changed
   useEffect(() => {
