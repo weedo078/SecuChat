@@ -5,7 +5,6 @@ import { existsSync, mkdirSync, cpSync } from 'fs';
 import net from 'net';
 import { WebSocketServer, WebSocket } from 'ws';
 import { autoUpdater } from 'electron-updater';
-import { log as electronLog } from 'electron-log';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
