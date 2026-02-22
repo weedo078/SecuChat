@@ -270,12 +270,48 @@ class SAMService {
    * Connect to a remote I2P peer via STREAM CONNECT
    * IMPORTANT: SAM requires a separate socket for STREAM CONNECT
    * We create a new WebSocket, do HELLO + SESSION ID=xxx, then STREAM CONNECT
+   * 
+   * Implements retry logic for LeaseSet lookup failures - peer may need time
+   * to publish their LeaseSet after starting i2pd
    */
-  async connectTo(destination: string): Promise<SAMStream> {
+  async connectTo(destination: string, maxRetries = 3): Promise<SAMStream> {
     if (!this.sessionNickname) {
       throw new Error('No session created. Call createSession first.');
     }
 
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await this.attemptStreamConnect(destination);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        // Check if it's a LeaseSet not found error
+        const errorMessage = lastError.message;
+        const isLeaseSetError = errorMessage.includes('LeaseSet not found') || 
+                                errorMessage.includes('CANT_REACH_PEER');
+        
+        if (isLeaseSetError && attempt < maxRetries) {
+          // Wait before retry with exponential backoff
+          const delay = Math.min(10000 * attempt, 30000);
+          logger.log(`[SAM] Peer not reachable (attempt ${attempt}/${maxRetries}), waiting ${delay}ms for LeaseSet propagation...`);
+          await new Promise(r => setTimeout(r, delay));
+          continue;
+        }
+        
+        // If not a LeaseSet error or last attempt, throw
+        throw lastError;
+      }
+    }
+    
+    throw lastError || new Error('STREAM CONNECT failed after retries');
+  }
+
+  /**
+   * Single attempt to connect to a peer
+   */
+  private async attemptStreamConnect(destination: string): Promise<SAMStream> {
     // Create a new socket for this stream connection
     const streamSocket = new WebSocket(`ws://${this.config.host}:${this.config.port}`);
     
@@ -330,8 +366,7 @@ class SAMService {
         stream.connected = false;
       };
 
-      // SAM v3.1: HELLO on new socket, then immediately STREAM CONNECT
-      // There is NO "attach to session" step — the session ID is passed in STREAM CONNECT itself
+      // SAM v3.1: HELLO on new socket
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('HELLO timeout')), 10000);
 
