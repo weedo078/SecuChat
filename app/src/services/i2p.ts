@@ -252,6 +252,18 @@ class I2PService {
     } catch (error) {
       console.error('[I2P] Failed to connect to peer:', error);
       peer.status = 'disconnected';
+      
+      // Provide user-friendly error message
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (errorMessage.includes('LeaseSet not found') || errorMessage.includes('CANT_REACH_PEER')) {
+        throw new Error(
+          'Peer nicht erreichbar. Mögliche Ursachen:\n' +
+          '• Der andere Nutzer ist offline\n' +
+          '• i2pd baut noch Verbindungen auf (1-3 Min warten)\n' +
+          '• Falsche I2P-Adresse im Kontakt\n' +
+          '• Firewall blockiert Verbindung'
+        );
+      }
       throw error;
     }
 

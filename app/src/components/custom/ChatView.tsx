@@ -55,7 +55,14 @@ export function ChatView() {
   const handleSend = async () => {
     if (!messageText.trim()) return;
     
-    await sendMessage(messageText.trim());
+    try {
+      await sendMessage(messageText.trim());
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
+      toast.error('Fehler beim Senden', {
+        description: errorMsg,
+      });
+    }
     setMessageText('');
   };
 
