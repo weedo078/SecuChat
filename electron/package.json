@@ -89,7 +89,8 @@
           ]
         }
       ],
-      "category": "Network;Chat;"
+      "category": "Network;Chat;",
+      "icon": "../app/dist"
     }
   },
   "devDependencies": {
