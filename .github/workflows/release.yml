@@ -9,10 +9,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Linux x64 (Unraid self-hosted) ──────────────────────────────────────────
+  # ── Linux x64 ────────────────────────────────────────────────────────────────
   build-linux-x64:
     name: Build Linux x64
-    runs-on: [self-hosted, unraid]
+    runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
@@ -43,33 +43,7 @@ jobs:
             electron/release/*.deb
           retention-days: 7
 
-  # ── Linux ARM64 (OCI runners — aktivieren wenn Runner verbunden) ─────────────
-  # build-linux-arm64:
-  #   name: Build Linux ARM64
-  #   runs-on: [self-hosted, linux, arm64]
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '20'
-  #     - name: Build app
-  #       working-directory: ./app
-  #       run: npm ci && npm run build
-  #     - name: Install electron deps
-  #       working-directory: ./electron
-  #       run: npm ci
-  #     - name: Build Electron (Linux ARM64)
-  #       working-directory: ./electron
-  #       run: npm run dist:linux -- --arm64
-  #       env:
-  #         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-  #     - uses: actions/upload-artifact@v4
-  #       with:
-  #         name: linux-arm64
-  #         path: electron/release/*.AppImage
-  #         retention-days: 7
-
-  # ── Windows x64 (GitHub-hosted) ──────────────────────────────────────────────
+  # ── Windows x64 ──────────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows x64
     runs-on: windows-latest
@@ -101,34 +75,11 @@ jobs:
           path: electron/release/*.exe
           retention-days: 7
 
-  # ── Android (Vorbereitet, noch nicht aktiv) ───────────────────────────────────
-  # build-android:
-  #   name: Build Android
-  #   runs-on: [self-hosted, unraid]
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: actions/setup-java@v4
-  #       with:
-  #         distribution: 'temurin'
-  #         java-version: '17'
-  #     - uses: android-actions/setup-android@v3
-  #     - uses: actions/setup-node@v4
-  #       with:
-  #         node-version: '20'
-  #     - name: Build
-  #       working-directory: ./app
-  #       run: npm ci && npm run build:android
-  #     - uses: actions/upload-artifact@v4
-  #       with:
-  #         name: android
-  #         path: app/android/app/build/outputs/apk/release/*.apk
-  #         retention-days: 7
-
   # ── GitHub Release ────────────────────────────────────────────────────────────
   release:
     name: Create GitHub Release
     needs: [build-linux-x64, build-windows]
-    runs-on: [self-hosted, unraid]
+    runs-on: ubuntu-latest
     permissions:
       contents: write
 
