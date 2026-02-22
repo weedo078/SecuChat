@@ -1,6 +1,6 @@
 {
   "name": "securechat",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "description": "Privacy-focused messaging with PGP + I2P",
   "homepage": "https://github.com/weedo078/SecuChat",
   "repository": {
@@ -31,12 +31,16 @@
       {
         "from": "../app/dist",
         "to": "app",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       },
       {
         "from": "../resources/i2pd",
         "to": "i2pd",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "publish": {
