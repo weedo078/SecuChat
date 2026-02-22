@@ -644,6 +644,32 @@ Alle Änderungen wurden verifiziert:
 
 ---
 
+## v0.0.12+ Fix: Kontakt-Teilen auf .secuchat-Datei umgestellt
+
+### Problem
+Der Kontakt-Teilen-Dialog zeigte weiterhin QR-Codes an, obwohl auf das `.secuchat`-Dateiformat umgestellt wurde.
+
+### Änderungen
+
+**`app/src/components/custom/QRCodeShare.tsx`:**
+- QR-Code-Anzeige vollständig entfernt
+- Download-Button für `.secuchat`-Datei hinzugefügt
+- Copy-Button kopiert jetzt die JSON-Verbindungsdaten
+- Import-Tab unterstützt jetzt:
+  - Direkte Texteingabe von Verbindungsdaten
+  - `.secuchat`-Dateien
+  - `.json`-Dateien
+  - QR-Code-Scannen (legacy)
+
+**`app/src/components/custom/Sidebar.tsx`:**
+- Icon von `QrCode` auf `Share2` geändert
+- Tooltip/ARIA-Label von "QR-Code anzeigen" auf "Kontakt teilen" geändert
+
+### Ergebnis
+Kontakte werden jetzt ausschließlich über `.secuchat`-Dateien geteilt - keine QR-Codes mehr im UI.
+
+---
+
 ## 🎯 Ergebnis
 
 Die SecuChat App ist jetzt:

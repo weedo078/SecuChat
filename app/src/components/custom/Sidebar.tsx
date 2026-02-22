@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MessageSquare, Settings, Plus, Search, QrCode, UserPlus } from 'lucide-react';
+import { MessageSquare, Settings, Plus, Search, Share2, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -133,9 +133,9 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
               variant="ghost" 
               size="icon" 
               onClick={onShowQR}
-              aria-label="QR-Code anzeigen"
+              aria-label="Kontakt teilen"
             >
-              <QrCode className="h-5 w-5" aria-hidden="true" />
+              <Share2 className="h-5 w-5" aria-hidden="true" />
             </Button>
           </div>
         </div>
