@@ -1,0 +1,76 @@
+name: Version Bump
+
+on:
+  push:
+    branches: [main]
+
+# Prevent concurrent version bumps
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Bump patch version & tag
+    runs-on: ubuntu-latest
+    # Skip if this is the version bump commit itself
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # Use a PAT so the pushed tag triggers release.yml
+          # (GITHUB_TOKEN pushes don't trigger other workflows)
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Get current version
+        id: current
+        run: |
+          VERSION=$(node -p "require('./electron/package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Bump patch version
+        id: new
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          IFS='.' read -r major minor patch <<< "$CURRENT"
+          patch=$((patch + 1))
+          NEW="$major.$minor.$patch"
+          echo "version=$NEW" >> $GITHUB_OUTPUT
+          echo "New version: $NEW"
+
+      - name: Update package.json files
+        run: |
+          V="${{ steps.new.outputs.version }}"
+
+          # electron/package.json
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('electron/package.json', 'utf8'));
+            p.version = '$V';
+            fs.writeFileSync('electron/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          # app/package.json
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('app/package.json', 'utf8'));
+            p.version = '$V';
+            fs.writeFileSync('app/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+      - name: Commit, tag & push
+        run: |
+          V="${{ steps.new.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add electron/package.json app/package.json
+          git commit -m "chore: bump version to v$V [skip ci]"
+          git tag "v$V"
+          git push
+          git push --tags
