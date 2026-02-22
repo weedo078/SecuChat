@@ -85,11 +85,18 @@ export class CryptoService {
    */
   async encryptMessage(message: string, recipientPublicKey: string): Promise<string> {
     try {
-      const publicKey = await openpgp.readKey({ armoredKey: recipientPublicKey });
-      
+      const recipientKey = await openpgp.readKey({ armoredKey: recipientPublicKey });
+
+      // Encrypt for both recipient AND sender so the sender can read their own messages later
+      const encryptionKeys: openpgp.PublicKey[] = [recipientKey];
+      if (this.userKeyPair?.publicKey) {
+        const senderKey = await openpgp.readKey({ armoredKey: this.userKeyPair.publicKey });
+        encryptionKeys.push(senderKey);
+      }
+
       const encrypted = await openpgp.encrypt({
         message: await openpgp.createMessage({ text: message }),
-        encryptionKeys: publicKey,
+        encryptionKeys,
         format: 'armored',
       });
 

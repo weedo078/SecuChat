@@ -400,11 +400,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!contact) return;
 
     try {
-      // Encrypt message if we have the contact's PGP key
-      let encryptedContent = '';
-      if (contact.pgpPublicKey) {
-        encryptedContent = await cryptoService.encryptMessage(content, contact.pgpPublicKey);
+      // Encrypt message — require PGP key for sending
+      if (!contact.pgpPublicKey) {
+        console.error('[Send] Contact has no PGP public key — cannot send encrypted message');
+        return;
       }
+      const encryptedContent = await cryptoService.encryptMessage(content, contact.pgpPublicKey);
 
       // Create message
       const sequenceNumber = await storageService.getLastMessageSequence(activeChat.id);
@@ -413,7 +414,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         chatId: activeChat.id,
         senderId: user.id,
         recipientId: contact.id,
-        encryptedContent: encryptedContent || content,
+        encryptedContent,
         decryptedContent: content,
         timestamp: new Date().toISOString(),
         sequenceNumber: sequenceNumber + 1,

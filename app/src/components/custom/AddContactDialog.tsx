@@ -40,7 +40,7 @@ interface ContactDataV1 {
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
   const { user, i2pStatus } = useApp();
-  const [activeTab, setActiveTab] = useState(initialTab);
+  const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   useEffect(() => {
     if (isOpen) setActiveTab(initialTab);
