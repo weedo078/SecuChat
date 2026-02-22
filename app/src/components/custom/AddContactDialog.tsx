@@ -1,11 +1,9 @@
 import { useState, useRef } from 'react';
-import { QrCode, Upload, Camera, Globe, Shield, AlertTriangle, Check, Download, UserPlus } from 'lucide-react';
+import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
-import QRCode from 'qrcode';
-import jsQR from 'jsqr';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
 import { storageService } from '@/services/storage';
@@ -18,23 +16,18 @@ interface AddContactDialogProps {
   onContactAdded?: (contact: Contact) => void;
 }
 
-/**
- * QR code contact data — lightweight version for QR codes.
- * PGP key is omitted (too large for QR) and exchanged via file or I2P.
- */
-interface ContactQRData {
+interface ContactData {
   v: '2';
-  t: 'sc';               // securechat
-  n: string;              // username
-  i: string;              // i2pAddress
-  f: string;              // pgpFingerprint
-  /** Full PGP key — only present in file exports, not QR codes */
-  k?: string;             // pgpPublicKey (optional)
-  ts?: number;            // timestamp
+  t: 'sc';
+  n: string;
+  i: string;
+  f: string;
+  k?: string;
+  ts?: number;
 }
 
 /** Legacy format for backwards compatibility */
-interface ContactQRDataV1 {
+interface ContactDataV1 {
   version: '1.0';
   type: 'securechat-contact';
   username: string;
@@ -46,114 +39,33 @@ interface ContactQRDataV1 {
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContactDialogProps) {
   const { user, i2pStatus } = useApp();
-  const [activeTab, setActiveTab] = useState('scan');
-  
-  // QR Code states
-  const [myQRCode, setMyQRCode] = useState<string | null>(null);
-  const [showMyQR, setShowMyQR] = useState(false);
-  const [scannedContact, setScannedContact] = useState<ContactQRData | null>(null);
-  const [scanError, setScanError] = useState<string | null>(null);
-  const [isGeneratingQR, setIsGeneratingQR] = useState(false);
-  
-  // File import states
+  const [activeTab, setActiveTab] = useState('import');
+
+  const [importedContact, setImportedContact] = useState<ContactData | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
-  
-  // Add contact states
   const [isAddingContact, setIsAddingContact] = useState(false);
-  
-  // Manual input
+
   const [manualName, setManualName] = useState('');
   const [manualI2p, setManualI2p] = useState('');
   const [manualPgp, setManualPgp] = useState('');
-  
+  const [manualError, setManualError] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
 
-  // Generate my QR code — compact format (no PGP key, too large)
-  const generateMyQR = async () => {
-    if (!user) return;
-    setIsGeneratingQR(true);
-    try {
-      const contactData: ContactQRData = {
-        v: '2',
-        t: 'sc',
-        n: user.username,
-        i: user.i2pAddress,
-        f: user.fingerprint,
-      };
+  // ── Parse ──────────────────────────────────────────────────────────────────
 
-      const dataUrl = await QRCode.toDataURL(JSON.stringify(contactData), {
-        width: 400,
-        margin: 2,
-        errorCorrectionLevel: 'M',
-      });
-      setMyQRCode(dataUrl);
-      setShowMyQR(true);
-    } catch (error) {
-      console.error('Failed to generate QR:', error);
-    } finally {
-      setIsGeneratingQR(false);
-    }
-  };
-
-  // Handle file upload
-  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    console.log('[Import] File selected:', file.name, 'type:', file.type, 'size:', file.size);
-    setIsImporting(true);
-    setScanError(null);
-
-    try {
-      const name = file.name.toLowerCase();
-      const isJson = file.type === 'application/json' || name.endsWith('.json') || name.endsWith('.secuchat');
-      console.log('[Import] isJson:', isJson);
-
-      // Try as QR image first (skip for JSON files)
-      if (!isJson) {
-        console.log('[Import] Trying QR image decode...');
-        const qrData = await decodeQRFromImage(file);
-        console.log('[Import] QR decode result:', qrData);
-        if (qrData) {
-          await processScannedQR(qrData);
-          return;
-        }
-      }
-
-      // Try as contact file
-      console.log('[Import] Trying contact file parse...');
-      const contact = await importContactFromFile(file);
-      console.log('[Import] Contact parse result:', contact ? { v: contact.v, t: contact.t, n: contact.n, hasKey: !!contact.k } : null);
-      if (contact) {
-        setScannedContact(contact);
-        return;
-      }
-
-      console.warn('[Import] Failed to parse file as QR or contact JSON');
-      setScanError('Konnte Datei nicht erkennen. Bitte QR-Code Bild oder .json Kontaktdatei verwenden.');
-    } catch (error) {
-      console.error('[Import] Exception:', error);
-      setScanError('Fehler beim Import: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
-    } finally {
-      setIsImporting(false);
-    }
-  };
-
-  // Parse QR/file data — supports v1 and v2 formats
-  const parseContactData = (raw: string): ContactQRData | null => {
+  const parseContactData = (raw: string): ContactData | null => {
     try {
       const data = JSON.parse(raw);
       console.log('[Import] Parsed JSON keys:', Object.keys(data));
-      // v2 compact format
       if (data.v === '2' && data.t === 'sc') {
         console.log('[Import] Recognized as v2 format');
-        return data as ContactQRData;
+        return data as ContactData;
       }
-      // v1 legacy format → convert to v2
       if (data.version === '1.0' && data.type === 'securechat-contact') {
         console.log('[Import] Recognized as v1 format, converting...');
-        const legacy = data as ContactQRDataV1;
+        const legacy = data as ContactDataV1;
         return {
           v: '2',
           t: 'sc',
@@ -172,92 +84,79 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     }
   };
 
-  // Decode QR from image
-  const decodeQRFromImage = (file: File): Promise<ContactQRData | null> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const img = new Image();
-        img.onload = () => {
-          const canvas = document.createElement('canvas');
-          canvas.width = img.width;
-          canvas.height = img.height;
-          const ctx = canvas.getContext('2d');
-          if (!ctx) {
-            resolve(null);
-            return;
-          }
-          ctx.drawImage(img, 0, 0);
-          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-          const code = jsQR(imageData.data, canvas.width, canvas.height);
-          resolve(code ? parseContactData(code.data) : null);
-        };
-        img.onerror = () => resolve(null);
-        img.src = e.target?.result as string;
-      };
-      reader.readAsDataURL(file);
-    });
+  // ── Import ─────────────────────────────────────────────────────────────────
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    console.log('[Import] File selected:', file.name, 'type:', file.type, 'size:', file.size);
+    setIsImporting(true);
+    setImportError(null);
+
+    try {
+      const contact = await new Promise<ContactData | null>((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(parseContactData(e.target?.result as string));
+        reader.onerror = () => resolve(null);
+        reader.readAsText(file);
+      });
+
+      console.log('[Import] Contact parse result:', contact
+        ? { v: contact.v, t: contact.t, n: contact.n, hasKey: !!contact.k }
+        : null);
+
+      if (contact) {
+        setImportedContact(contact);
+      } else {
+        console.warn('[Import] Failed to parse file');
+        setImportError('Ungültige Datei. Bitte eine .secuchat Kontaktdatei importieren.');
+      }
+    } catch (error) {
+      console.error('[Import] Exception:', error);
+      setImportError('Fehler beim Import: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
+    } finally {
+      setIsImporting(false);
+      // Reset input so same file can be selected again
+      event.target.value = '';
+    }
   };
 
-  // Import contact from JSON file
-  const importContactFromFile = (file: File): Promise<ContactQRData | null> => {
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        resolve(parseContactData(e.target?.result as string));
-      };
-      reader.onerror = () => resolve(null);
-      reader.readAsText(file);
-    });
-  };
-
-  // Process scanned QR data
-  const processScannedQR = async (qrData: ContactQRData) => {
-    setScanError(null);
-    setScannedContact(qrData);
-  };
-
-  // Add scanned contact
-  const addContact = async () => {
-    if (!scannedContact) return;
-
+  const addImportedContact = async () => {
+    if (!importedContact) return;
     setIsAddingContact(true);
     try {
-      // Validate PGP key if present
-      if (scannedContact.k) {
-        console.log('[Import] Validating PGP key, length:', scannedContact.k.length, 'starts with:', scannedContact.k.slice(0, 30));
-        const validation = await cryptoService.validatePublicKey(scannedContact.k);
+      if (importedContact.k) {
+        console.log('[Import] Validating PGP key, length:', importedContact.k.length, 'starts with:', importedContact.k.slice(0, 30));
+        const validation = await cryptoService.validatePublicKey(importedContact.k);
         console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
-          setScanError('Ungültiger PGP Public Key');
+          setImportError('Ungültiger PGP Public Key in der Kontaktdatei');
           return;
         }
       } else {
-        console.log('[Import] No PGP key in contact data, skipping validation');
+        console.log('[Import] No PGP key in contact data');
       }
 
-      // Create contact
       const contact: Contact = {
         id: crypto.randomUUID(),
-        name: scannedContact.n,
-        pgpPublicKey: scannedContact.k || '',  // May be empty from QR (key exchanged later)
-        fingerprint: scannedContact.f,
-        p2pIdentifier: scannedContact.i,
-        i2pAddress: scannedContact.i,
+        name: importedContact.n,
+        pgpPublicKey: importedContact.k || '',
+        fingerprint: importedContact.f,
+        p2pIdentifier: importedContact.i,
+        i2pAddress: importedContact.i,
         status: 'unknown',
       };
 
-      // Save contact
       await storageService.saveContact(contact);
 
-      // Try to connect via I2P
-      if (i2pStatus?.samConnected && scannedContact.i) {
+      if (i2pStatus?.samConnected && importedContact.i) {
         try {
-          await i2pService.connectToPeer(scannedContact.i);
+          await i2pService.connectToPeer(importedContact.i);
           contact.status = 'online';
           await storageService.saveContact(contact);
         } catch {
-          // I2P connection failed, but contact is saved
+          // I2P not ready, contact is saved anyway
         }
       }
 
@@ -268,57 +167,11 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     }
   };
 
-  // Add contact manually
-  const addManualContact = async () => {
-    if (!manualName || !manualI2p || !manualPgp) {
-      setScanError('Alle Felder sind erforderlich');
-      return;
-    }
+  // ── Export ─────────────────────────────────────────────────────────────────
 
-    setIsAddingContact(true);
-    try {
-      // Validate PGP key
-      const validation = await cryptoService.validatePublicKey(manualPgp);
-      if (!validation.valid) {
-        setScanError('Ungültiger PGP Public Key');
-        return;
-      }
-
-      const contact: Contact = {
-        id: crypto.randomUUID(),
-        name: manualName,
-        pgpPublicKey: manualPgp,
-        fingerprint: validation.fingerprint!,
-        p2pIdentifier: manualI2p,
-        i2pAddress: manualI2p,
-        status: 'unknown',
-      };
-
-      await storageService.saveContact(contact);
-      
-      // Try to connect via I2P
-      if (i2pStatus?.samConnected) {
-        try {
-          await i2pService.connectToPeer(manualI2p);
-          contact.status = 'online';
-          await storageService.saveContact(contact);
-        } catch {
-          // I2P connection failed, but contact is saved
-        }
-      }
-
-      onContactAdded?.(contact);
-      resetAndClose();
-    } finally {
-      setIsAddingContact(false);
-    }
-  };
-
-  // Export my contact as file (includes full PGP key)
   const exportContactFile = () => {
     if (!user) return;
-
-    const contactData: ContactQRData = {
+    const contactData: ContactData = {
       v: '2',
       t: 'sc',
       n: user.username,
@@ -327,7 +180,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
       k: user.pgpPublicKey,
       ts: Date.now(),
     };
-
     const blob = new Blob([JSON.stringify(contactData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -337,39 +189,63 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     URL.revokeObjectURL(url);
   };
 
-  // Reset state and close
+  // ── Manual ─────────────────────────────────────────────────────────────────
+
+  const addManualContact = async () => {
+    if (!manualName || !manualI2p || !manualPgp) {
+      setManualError('Alle Felder sind erforderlich');
+      return;
+    }
+    setIsAddingContact(true);
+    try {
+      const validation = await cryptoService.validatePublicKey(manualPgp);
+      if (!validation.valid) {
+        setManualError('Ungültiger PGP Public Key');
+        return;
+      }
+      const contact: Contact = {
+        id: crypto.randomUUID(),
+        name: manualName,
+        pgpPublicKey: manualPgp,
+        fingerprint: validation.fingerprint!,
+        p2pIdentifier: manualI2p,
+        i2pAddress: manualI2p,
+        status: 'unknown',
+      };
+      await storageService.saveContact(contact);
+      if (i2pStatus?.samConnected) {
+        try {
+          await i2pService.connectToPeer(manualI2p);
+          contact.status = 'online';
+          await storageService.saveContact(contact);
+        } catch { /* I2P not ready */ }
+      }
+      onContactAdded?.(contact);
+      resetAndClose();
+    } finally {
+      setIsAddingContact(false);
+    }
+  };
+
+  // ── Reset ──────────────────────────────────────────────────────────────────
+
   const resetAndClose = () => {
-    setMyQRCode(null);
-    setShowMyQR(false);
-    setScannedContact(null);
-    setScanError(null);
+    setImportedContact(null);
+    setImportError(null);
+    setManualError(null);
     setManualName('');
     setManualI2p('');
     setManualPgp('');
-    setActiveTab('scan');
+    setActiveTab('import');
     setIsAddingContact(false);
     onClose();
   };
 
-  // Get anonymity level display
-  const getAnonymityDisplay = () => {
-    if (i2pStatus?.samConnected) {
-      return {
-        icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />,
-        text: 'Anonym (I2P)',
-        color: 'text-green-500',
-        description: 'Ihre IP-Adresse ist durch I2P verborgen',
-      };
-    }
-    return {
-      icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />,
-      text: 'Nicht verbunden',
-      color: 'text-red-500',
-      description: 'i2pd nicht verbunden - Kontakt wird gespeichert, aber nicht erreichbar',
-    };
-  };
+  // ── Anonymity display ──────────────────────────────────────────────────────
 
-  const anonymity = getAnonymityDisplay();
+  const anonymity = i2pStatus?.samConnected
+    ? { icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />, text: 'Anonym (I2P)', color: 'text-green-500', description: 'Ihre IP-Adresse ist durch I2P verborgen' }
+    : { icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />, text: 'Nicht verbunden', color: 'text-red-500', description: 'i2pd nicht verbunden — Kontakt wird gespeichert, aber nicht erreichbar' };
 
   return (
     <Dialog open={isOpen} onOpenChange={resetAndClose}>
@@ -377,12 +253,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
         <DialogHeader>
           <DialogTitle>Kontakt hinzufügen</DialogTitle>
           <DialogDescription>
-            Fügen Sie einen Kontakt über I2P hinzu.
+            Kontakt über .secuchat Datei oder manuell hinzufügen.
           </DialogDescription>
         </DialogHeader>
 
-        {/* Anonymity Warning */}
-        <div className={`p-3 rounded-lg bg-muted flex items-start gap-2`}>
+        {/* Anonymity status */}
+        <div className="p-3 rounded-lg bg-muted flex items-start gap-2">
           {anonymity.icon}
           <div>
             <p className={`text-sm font-medium ${anonymity.color}`}>{anonymity.text}</p>
@@ -390,29 +266,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
           </div>
         </div>
 
-        {/* i2pd not connected warning */}
-        {!i2pStatus?.samConnected && (
-          <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
-            <p className="text-sm text-red-500 font-medium flex items-center gap-2">
-              <AlertTriangle className="h-4 w-4" aria-hidden="true" />
-              i2pd nicht verbunden
-            </p>
-            <p className="text-xs text-muted-foreground mt-1">
-              Der Kontakt wird gespeichert, aber Sie können erst kommunizieren, 
-              wenn i2pd läuft.
-            </p>
-          </div>
-        )}
-
         <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="scan">
-              <Camera className="h-4 w-4 mr-2" aria-hidden="true" />
-              Scannen
+            <TabsTrigger value="import">
+              <Upload className="h-4 w-4 mr-2" aria-hidden="true" />
+              Importieren
             </TabsTrigger>
-            <TabsTrigger value="myqr">
-              <QrCode className="h-4 w-4 mr-2" aria-hidden="true" />
-              Mein QR
+            <TabsTrigger value="share">
+              <FileDown className="h-4 w-4 mr-2" aria-hidden="true" />
+              Meine Datei
             </TabsTrigger>
             <TabsTrigger value="manual">
               <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
@@ -420,54 +282,30 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
             </TabsTrigger>
           </TabsList>
 
-          {/* Scan Tab */}
-          <TabsContent value="scan" className="space-y-4">
-            {!scannedContact ? (
+          {/* ── Import Tab ── */}
+          <TabsContent value="import" className="space-y-4">
+            {!importedContact ? (
               <>
-                <div className="space-y-3">
-                  {/* Camera option */}
-                  <button
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors flex items-center gap-3"
-                    aria-label="Kamera zum Scannen verwenden"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-                      <Camera className="h-5 w-5 text-primary" aria-hidden="true" />
-                    </div>
-                    <div className="text-left">
-                      <p className="font-medium">Kamera verwenden</p>
-                      <p className="text-sm text-muted-foreground">QR-Code direkt scannen</p>
-                    </div>
-                  </button>
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  className="w-full p-6 rounded-lg border-2 border-dashed border-border hover:border-primary hover:bg-accent transition-colors flex flex-col items-center gap-3"
+                  aria-label=".secuchat Kontaktdatei importieren"
+                >
+                  <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                    <Upload className="h-6 w-6 text-primary" aria-hidden="true" />
+                  </div>
+                  <div className="text-center">
+                    <p className="font-medium">Kontaktdatei öffnen</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      .secuchat Datei vom Kontakt importieren
+                    </p>
+                  </div>
+                </button>
 
-                  {/* File upload */}
-                  <button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="w-full p-4 rounded-lg border border-border hover:bg-accent transition-colors flex items-center gap-3"
-                    aria-label="QR-Code aus Datei importieren"
-                  >
-                    <div className="w-10 h-10 rounded-full bg-secondary flex items-center justify-center">
-                      <Upload className="h-5 w-5" aria-hidden="true" />
-                    </div>
-                    <div className="text-left">
-                      <p className="font-medium">Datei importieren</p>
-                      <p className="text-sm text-muted-foreground">.secuchat Kontaktdatei oder QR-Code Bild</p>
-                    </div>
-                  </button>
-                </div>
-
-                <input
-                  ref={cameraInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                />
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept="image/*,.json,.secuchat"
+                  accept=".secuchat,.json"
                   className="hidden"
                   onChange={handleFileUpload}
                 />
@@ -475,57 +313,48 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                 {isImporting && (
                   <div className="text-center py-4">
                     <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">Verarbeite...</p>
+                    <p className="text-sm text-muted-foreground">Lese Datei...</p>
                   </div>
                 )}
 
-                {scanError && (
+                {importError && (
                   <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
-                    {scanError}
+                    {importError}
                   </div>
                 )}
               </>
             ) : (
               <div className="space-y-4">
                 <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
-                  <div className="flex items-center gap-2 mb-2">
+                  <div className="flex items-center gap-2 mb-3">
                     <Check className="h-5 w-5 text-green-500" aria-hidden="true" />
-                    <p className="font-medium text-green-500">Kontakt gefunden!</p>
+                    <p className="font-medium text-green-500">Kontakt erkannt</p>
                   </div>
-                  <div className="space-y-1 text-sm">
-                    <p><span className="text-muted-foreground">Name:</span> {scannedContact.n}</p>
-                    <p><span className="text-muted-foreground">I2P:</span> {scannedContact.i.slice(0, 30)}...</p>
-                    <p><span className="text-muted-foreground">PGP:</span> {scannedContact.f.slice(0, 16)}...</p>
-                    {!scannedContact.k && (
-                      <p className="text-xs text-yellow-500">PGP-Key wird beim ersten Kontakt ausgetauscht</p>
+                  <div className="space-y-1.5 text-sm">
+                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.n}</span></p>
+                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.i.slice(0, 40)}…</p>
+                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.f.slice(0, 16)}…</p>
+                    {!importedContact.k && (
+                      <p className="text-xs text-yellow-500 mt-2">Kein PGP-Key in der Datei — verschlüsselte Kommunikation erst nach Schlüsselaustausch möglich.</p>
                     )}
                   </div>
                 </div>
 
+                {importError && (
+                  <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
+                    {importError}
+                  </div>
+                )}
+
                 <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
-                    className="flex-1" 
-                    onClick={() => setScannedContact(null)}
-                    disabled={isAddingContact}
-                  >
+                  <Button variant="outline" className="flex-1" onClick={() => { setImportedContact(null); setImportError(null); }} disabled={isAddingContact}>
                     Zurück
                   </Button>
-                  <Button 
-                    className="flex-1" 
-                    onClick={addContact}
-                    disabled={isAddingContact}
-                  >
+                  <Button className="flex-1" onClick={addImportedContact} disabled={isAddingContact}>
                     {isAddingContact ? (
-                      <>
-                        <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                        Wird hinzugefügt...
-                      </>
+                      <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Wird hinzugefügt…</>
                     ) : (
-                      <>
-                        <UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />
-                        Hinzufügen
-                      </>
+                      <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />Hinzufügen</>
                     )}
                   </Button>
                 </div>
@@ -533,60 +362,31 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
             )}
           </TabsContent>
 
-          {/* My QR Tab */}
-          <TabsContent value="myqr" className="space-y-4">
-            {!showMyQR ? (
-              <div className="text-center py-8">
-                <QrCode className="h-16 w-16 mx-auto mb-4 text-muted-foreground" aria-hidden="true" />
-                <p className="text-muted-foreground mb-4">
-                  Generieren Sie einen QR-Code mit Ihrer I2P-Adresse und Ihrem PGP-Key.
-                </p>
-                <Button onClick={generateMyQR} disabled={isGeneratingQR}>
-                  {isGeneratingQR ? (
-                    <>
-                      <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                      Generiere...
-                    </>
-                  ) : (
-                    <>
-                      <QrCode className="h-4 w-4 mr-2" aria-hidden="true" />
-                      QR-Code generieren
-                    </>
-                  )}
-                </Button>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  {myQRCode && (
-                    <img 
-                      src={myQRCode} 
-                      alt="Mein QR-Code" 
-                      className="w-64 h-64 rounded-lg border border-border"
-                    />
-                  )}
-                </div>
-                
-                <div className="flex gap-2">
-                  <Button variant="outline" className="flex-1" onClick={() => setShowMyQR(false)}>
-                    Neu generieren
-                  </Button>
-                  <Button variant="outline" className="flex-1" onClick={exportContactFile}>
-                    <Download className="h-4 w-4 mr-2" aria-hidden="true" />
-                    .secuchat speichern
-                  </Button>
+          {/* ── Share Tab ── */}
+          <TabsContent value="share" className="space-y-4">
+            {user ? (
+              <>
+                <div className="p-4 rounded-lg border border-border space-y-2 text-sm">
+                  <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{user.username}</span></p>
+                  <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{user.i2pAddress?.slice(0, 40)}…</p>
+                  <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{user.fingerprint?.slice(0, 16)}…</p>
                 </div>
 
-                <div className="p-3 rounded-lg bg-muted text-sm">
-                  <p className="text-muted-foreground">
-                    Zeigen Sie diesen QR-Code anderen, damit Sie Ihnen eine Kontaktanfrage senden können.
-                  </p>
-                </div>
-              </div>
+                <Button className="w-full" onClick={exportContactFile}>
+                  <Download className="h-4 w-4 mr-2" aria-hidden="true" />
+                  {user.username}.secuchat speichern
+                </Button>
+
+                <p className="text-xs text-muted-foreground text-center">
+                  Schick diese Datei deinem Kontakt — er kann sie direkt importieren.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">Kein Profil gefunden.</p>
             )}
           </TabsContent>
 
-          {/* Manual Tab */}
+          {/* ── Manual Tab ── */}
           <TabsContent value="manual" className="space-y-4">
             <div className="space-y-3">
               <div>
@@ -615,28 +415,22 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
                   onChange={(e) => setManualPgp(e.target.value)}
                 />
               </div>
-              <Button 
-                className="w-full" 
+              <Button
+                className="w-full"
                 onClick={addManualContact}
                 disabled={!manualName || !manualI2p || !manualPgp || isAddingContact}
               >
                 {isAddingContact ? (
-                  <>
-                    <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                    Wird hinzugefügt...
-                  </>
+                  <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Wird hinzugefügt…</>
                 ) : (
-                  <>
-                    <UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />
-                    Kontakt hinzufügen
-                  </>
+                  <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />Kontakt hinzufügen</>
                 )}
               </Button>
             </div>
 
-            {scanError && (
+            {manualError && (
               <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
-                {scanError}
+                {manualError}
               </div>
             )}
           </TabsContent>
