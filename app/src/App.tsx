@@ -5,7 +5,7 @@ import { Header } from '@/components/custom/Header';
 import { Sidebar } from '@/components/custom/Sidebar';
 import { ChatView } from '@/components/custom/ChatView';
 import { ContactManager } from '@/components/custom/ContactManager';
-import { QRCodeShare } from '@/components/custom/QRCodeShare';
+import { AddContactDialog } from '@/components/custom/AddContactDialog';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
 import { UnlockDialog } from '@/components/custom/UnlockDialog';
@@ -15,7 +15,7 @@ function App() {
   const { user, initialize, isLoading, isLocked, unlockApp } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showContactManager, setShowContactManager] = useState(false);
-  const [showQRCode, setShowQRCode] = useState(false);
+  const [showShareContact, setShowShareContact] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [unlockDismissed, setUnlockDismissed] = useState(false);
 
@@ -71,7 +71,7 @@ function App() {
         <div className="hidden lg:block w-80 shrink-0">
           <Sidebar 
             onAddContact={() => setShowContactManager(true)}
-            onShowQR={() => setShowQRCode(true)}
+            onShareContact={() => setShowShareContact(true)}
             onSettingsClick={() => setShowSettings(true)}
           />
         </div>
@@ -84,9 +84,9 @@ function App() {
                 setSidebarOpen(false);
                 setShowContactManager(true);
               }}
-              onShowQR={() => {
+              onShareContact={() => {
                 setSidebarOpen(false);
-                setShowQRCode(true);
+                setShowShareContact(true);
               }}
               onSettingsClick={() => {
                 setSidebarOpen(false);
@@ -105,9 +105,10 @@ function App() {
         isOpen={showContactManager} 
         onClose={() => setShowContactManager(false)} 
       />
-      <QRCodeShare 
-        isOpen={showQRCode} 
-        onClose={() => setShowQRCode(false)} 
+      <AddContactDialog
+        isOpen={showShareContact}
+        onClose={() => setShowShareContact(false)}
+        initialTab="share"
       />
       <Settings 
         isOpen={showSettings} 

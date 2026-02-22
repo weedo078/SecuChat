@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -14,6 +14,7 @@ interface AddContactDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onContactAdded?: (contact: Contact) => void;
+  initialTab?: 'import' | 'share' | 'manual';
 }
 
 interface ContactData {
@@ -37,9 +38,13 @@ interface ContactDataV1 {
   timestamp: number;
 }
 
-export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContactDialogProps) {
+export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
   const { user, i2pStatus } = useApp();
-  const [activeTab, setActiveTab] = useState('import');
+  const [activeTab, setActiveTab] = useState(initialTab);
+
+  useEffect(() => {
+    if (isOpen) setActiveTab(initialTab);
+  }, [isOpen, initialTab]);
 
   const [importedContact, setImportedContact] = useState<ContactData | null>(null);
   const [importError, setImportError] = useState<string | null>(null);

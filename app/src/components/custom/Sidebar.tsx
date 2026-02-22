@@ -18,11 +18,11 @@ import {
 
 interface SidebarProps {
   onAddContact: () => void;
-  onShowQR: () => void;
+  onShareContact: () => void;
   onSettingsClick: () => void;
 }
 
-export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProps) {
+export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: SidebarProps) {
   const { chats, activeChat, setActiveChat, contacts, createChat, user } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewChatDialog, setShowNewChatDialog] = useState(false);
@@ -132,7 +132,7 @@ export function Sidebar({ onAddContact, onShowQR, onSettingsClick }: SidebarProp
             <Button 
               variant="ghost" 
               size="icon" 
-              onClick={onShowQR}
+              onClick={onShareContact}
               aria-label="Kontakt teilen"
             >
               <Share2 className="h-5 w-5" aria-hidden="true" />
