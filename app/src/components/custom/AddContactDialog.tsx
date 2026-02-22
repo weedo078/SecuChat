@@ -175,16 +175,22 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       };
 
       // Use addContact from AppContext to update both storage AND React state
+      console.log('[AddContact] Saving contact to storage:', contact.name);
       await addContact(contact);
 
       if (i2pStatus?.samConnected && importedContact.network.i2pAddress) {
+        console.log('[AddContact] I2P connected, attempting peer connection to:', importedContact.network.i2pAddress.slice(0, 20) + '...');
         try {
           await i2pService.connectToPeer(importedContact.network.i2pAddress);
+          console.log('[AddContact] Peer connected successfully, updating status to online');
           const onlineContact = { ...contact, status: 'online' as const };
           await updateContact(onlineContact);
-        } catch {
+        } catch (err) {
+          console.warn('[AddContact] I2P peer connection failed:', err);
           // I2P not ready, contact is saved anyway
         }
+      } else {
+        console.log('[AddContact] I2P not connected, skipping peer connection');
       }
 
       onContactAdded?.(contact);
