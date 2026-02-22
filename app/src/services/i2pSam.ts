@@ -54,38 +54,66 @@ class SAMService {
 
   /**
    * Check if SAM proxy is reachable
+   * Uses multiple attempts for Electron where i2pd may still be starting
    */
-  async isAvailable(config?: SAMConfig): Promise<boolean> {
+  async isAvailable(config?: SAMConfig, maxAttempts = 3): Promise<boolean> {
     const c = config || this.config;
     if (!c.enabled) return false;
 
-    try {
-      return await new Promise<boolean>((resolve) => {
-        const ws = new WebSocket(`ws://${c.host}:${c.port}`);
-        const timeout = setTimeout(() => { ws.close(); resolve(false); }, 3000);
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const available = await new Promise<boolean>((resolve) => {
+          const ws = new WebSocket(`ws://${c.host}:${c.port}`);
+          // Longer timeout for first start (i2pd can take 10-30s on first run)
+          const timeout = setTimeout(() => { 
+            try { ws.close(); } catch { /* ignore close errors */ }
+            resolve(false); 
+          }, 5000);
 
-        ws.onopen = () => {
-          clearTimeout(timeout);
-          // Send HELLO to verify SAM is behind the proxy
-          ws.send('HELLO VERSION MIN=3.1 MAX=3.1\n');
-        };
+          ws.onopen = () => {
+            clearTimeout(timeout);
+            // Send HELLO to verify SAM is behind the proxy
+            ws.send('HELLO VERSION MIN=3.1 MAX=3.1\n');
+          };
 
-        ws.onmessage = (ev) => {
-          clearTimeout(timeout);
-          const ok = typeof ev.data === 'string' && ev.data.includes('RESULT=OK');
-          ws.close();
-          resolve(ok);
-        };
+          ws.onmessage = (ev) => {
+            clearTimeout(timeout);
+            const ok = typeof ev.data === 'string' && ev.data.includes('RESULT=OK');
+            try { ws.close(); } catch { /* ignore close errors */ }
+            resolve(ok);
+          };
 
-        ws.onerror = () => { clearTimeout(timeout); resolve(false); };
-      });
-    } catch {
-      return false;
+          ws.onerror = () => { 
+            clearTimeout(timeout); 
+            try { ws.close(); } catch { /* ignore close errors */ }
+            resolve(false); 
+          };
+          
+          ws.onclose = () => {
+            clearTimeout(timeout);
+            resolve(false);
+          };
+        });
+        
+        if (available) return true;
+        
+        // Wait before retry with exponential backoff
+        if (attempt < maxAttempts) {
+          const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
+          await new Promise(r => setTimeout(r, delay));
+        }
+      } catch {
+        // Continue to next attempt - ignore errors during availability check
+        void 0;
+      }
     }
+    
+    return false;
   }
 
   /**
    * Connect to SAM via WebSocket proxy and perform HELLO handshake
+   * Uses longer timeout for Electron first start
    */
   async connect(config: SAMConfig): Promise<boolean> {
     this.config = config;
@@ -98,7 +126,11 @@ class SAMService {
       this.socket = new WebSocket(`ws://${config.host}:${config.port}`);
 
       const connected = await new Promise<boolean>((resolve) => {
-        const timeout = setTimeout(() => { resolve(false); }, 10000);
+        // Longer timeout for Electron (15s on first start)
+        const timeout = setTimeout(() => { 
+          logger.warn('[SAM] WebSocket connection timeout');
+          resolve(false); 
+        }, 15000);
 
         this.socket!.onopen = () => {
           clearTimeout(timeout);
@@ -108,7 +140,11 @@ class SAMService {
           resolve(true);
         };
 
-        this.socket!.onerror = () => { clearTimeout(timeout); resolve(false); };
+        this.socket!.onerror = (err) => { 
+          clearTimeout(timeout); 
+          logger.error('[SAM] WebSocket error:', err);
+          resolve(false); 
+        };
       });
 
       if (!connected) {
@@ -124,11 +160,33 @@ class SAMService {
         this.helloCompleted = false;
         this.attemptReconnect();
       };
+      
+      this.socket!.onerror = (err) => {
+        logger.error('[SAM] WebSocket error:', err);
+      };
 
-      // Perform SAM HELLO handshake
-      const helloResp = await this.sendRaw('HELLO VERSION MIN=3.1 MAX=3.1');
+      // Perform SAM HELLO handshake with retry
+      let helloResp = '';
+      let helloAttempts = 0;
+      const maxHelloAttempts = 3;
+      
+      while (helloAttempts < maxHelloAttempts) {
+        helloAttempts++;
+        try {
+          helloResp = await this.sendRaw('HELLO VERSION MIN=3.1 MAX=3.1');
+          if (helloResp.includes('RESULT=OK')) {
+            break;
+          }
+        } catch (err) {
+          logger.warn(`[SAM] HELLO attempt ${helloAttempts} failed:`, err);
+          if (helloAttempts < maxHelloAttempts) {
+            await new Promise(r => setTimeout(r, 1000));
+          }
+        }
+      }
+      
       if (!helloResp.includes('RESULT=OK')) {
-        console.error('[SAM] HELLO failed:', helloResp);
+        console.error('[SAM] HELLO failed after', maxHelloAttempts, 'attempts:', helloResp);
         this.disconnect();
         return false;
       }
@@ -380,17 +438,21 @@ class SAMService {
         resolve(response);
       };
 
-      // SESSION CREATE can take longer while i2pd builds its first tunnels
-      const isSlowCommand = command.startsWith('SESSION ') || command.startsWith('DEST ');
+      // SESSION CREATE and DEST can take longer while i2pd builds its first tunnels
+      // HELLO can also be slow on first connection
+      const isSlowCommand = command.startsWith('SESSION ') || command.startsWith('DEST ') || command.startsWith('HELLO ');
+      const isVerySlowCommand = command.startsWith('SESSION ') || command.startsWith('DEST ');
+      const timeoutMs = isVerySlowCommand ? 60000 : (isSlowCommand ? 30000 : 10000);
+      
       const timeout = setTimeout(() => {
         // Remove this resolver from the queue
         const idx = this.pendingResolvers.indexOf(wrappedResolve);
         if (idx !== -1) this.pendingResolvers.splice(idx, 1);
         reject(new Error(`SAM command timeout: ${command.split(' ').slice(0, 2).join(' ')}`));
-      }, isSlowCommand ? 30000 : 10000);
+      }, timeoutMs);
 
       this.pendingResolvers.push(wrappedResolve);
-      this.socket.send(command);
+      this.socket.send(command.endsWith('\n') ? command : command + '\n');
     });
   }
 

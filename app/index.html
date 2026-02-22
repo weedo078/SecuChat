@@ -27,9 +27,9 @@
     
     <title>SecureChat</title>
     
-    <!-- Service Worker Registration -->
+    <!-- Service Worker Registration (only for http/https, not file://) -->
     <script>
-      if ('serviceWorker' in navigator) {
+      if ('serviceWorker' in navigator && location.protocol !== 'file:') {
         window.addEventListener('load', () => {
           navigator.serviceWorker.register('/sw.js')
             .then((registration) => {
@@ -39,6 +39,8 @@
               console.log('[PWA] Service Worker registration failed:', error);
             });
         });
+      } else if (location.protocol === 'file:') {
+        console.log('[PWA] Service Worker disabled for file:// protocol');
       }
     </script>
     
