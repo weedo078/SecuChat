@@ -8,27 +8,28 @@
  *   1. HELLO VERSION → HELLO REPLY RESULT=OK
  *   2. DEST GENERATE  → DEST REPLY PUB=... PRIV=...
  *   3. SESSION CREATE → SESSION STATUS RESULT=OK DESTINATION=...
- *   4. STREAM CONNECT / STREAM ACCEPT
+ *   4. STREAM CONNECT / STREAM ACCEPT (on separate sockets)
  *
  * Default proxy port: 7657 (the proxy forwards to SAM on 7656)
  */
 
 export interface SAMConfig {
   host: string;
-  port: number;      // WebSocket proxy port (default 7657)
+  port: number;
   enabled: boolean;
 }
 
 export interface SAMSession {
   id: string;
-  destination: string;   // Base64 public destination
-  privateKey: string;    // Base64 private key
+  destination: string;
+  privateKey: string;
 }
 
 export interface SAMStream {
   id: number;
   peerDestination: string;
   connected: boolean;
+  socket?: WebSocket;
 }
 
 import { logger } from '@/utils/logger';
@@ -42,8 +43,8 @@ class SAMService {
   private isConnected = false;
   private helloCompleted = false;
   private nextStreamId = 1;
+  private sessionNickname: string | null = null;
 
-  // Sequential command queue: SAM responses are order-matched
   private pendingResolvers: ResponseResolver[] = [];
   private messageHandlers: ((from: string, data: string) => void)[] = [];
   private streamHandlers: ((stream: SAMStream) => void)[] = [];
@@ -253,38 +254,146 @@ class SAMService {
       };
     }
 
-      logger.log('[SAM] Session created:', nickname);
+    this.sessionNickname = nickname;
+    logger.log('[SAM] Session created:', nickname);
   }
 
   /**
    * Connect to a remote I2P peer via STREAM CONNECT
-   * NOTE: STREAM CONNECT requires its own SAM connection (separate socket)
-   * For simplicity, we reuse the main socket which works for sequential ops.
+   * IMPORTANT: SAM requires a separate socket for STREAM CONNECT
+   * We create a new WebSocket, do HELLO + SESSION ID=xxx, then STREAM CONNECT
    */
-  async connectTo(destination: string, nickname: string): Promise<SAMStream> {
-    this.requireConnected();
-
-    const resp = await this.sendRaw(
-      `STREAM CONNECT ID=${nickname} DESTINATION=${destination} SILENT=false`
-    );
-
-    if (!resp.includes('RESULT=OK')) {
-      throw new Error(`STREAM CONNECT failed: ${resp}`);
+  async connectTo(destination: string): Promise<SAMStream> {
+    if (!this.sessionNickname) {
+      throw new Error('No session created. Call createSession first.');
     }
 
+    // Create a new socket for this stream connection
+    const streamSocket = new WebSocket(`ws://${this.config.host}:${this.config.port}`);
+    
     const streamId = this.nextStreamId++;
     const stream: SAMStream = {
       id: streamId,
       peerDestination: destination,
-      connected: true,
+      connected: false,
+      socket: streamSocket,
     };
     this.streams.set(streamId, stream);
-    this.streamHandlers.forEach(h => h(stream));
-    return stream;
+
+    try {
+      // Wait for connection
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Stream socket timeout')), 10000);
+        
+        streamSocket.onopen = () => {
+          clearTimeout(timeout);
+          resolve();
+        };
+        
+        streamSocket.onerror = () => {
+          clearTimeout(timeout);
+          reject(new Error('Stream socket error'));
+        };
+      });
+
+      // Set up message handler for this socket
+      streamSocket.onmessage = (ev) => {
+        const data = ev.data as string;
+        
+        // Check for connection confirmation
+        if (data.includes('STREAM STATUS') && data.includes('RESULT=OK')) {
+          stream.connected = true;
+          this.streamHandlers.forEach(h => h(stream));
+        }
+        
+        // Forward data to message handlers
+        if (!data.startsWith('HELLO ') && !data.startsWith('SESSION ') && !data.startsWith('STREAM ')) {
+          this.messageHandlers.forEach(h => h(destination, data));
+        }
+      };
+
+      streamSocket.onclose = () => {
+        stream.connected = false;
+        this.streams.delete(streamId);
+      };
+
+      streamSocket.onerror = (err) => {
+        logger.error('[SAM] Stream socket error:', err);
+        stream.connected = false;
+      };
+
+      // Do HELLO handshake on new socket
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('HELLO timeout')), 10000);
+        
+        const onMessage = (ev: MessageEvent) => {
+          if (typeof ev.data === 'string' && ev.data.includes('RESULT=OK')) {
+            streamSocket.removeEventListener('message', onMessage);
+            clearTimeout(timeout);
+            resolve();
+          }
+        };
+        
+        streamSocket.addEventListener('message', onMessage);
+        streamSocket.send('HELLO VERSION MIN=3.1 MAX=3.1\n');
+      });
+
+      // Attach to existing session
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('SESSION timeout')), 10000);
+        
+        const onMessage = (ev: MessageEvent) => {
+          if (typeof ev.data === 'string' && ev.data.includes('SESSION STATUS')) {
+            streamSocket.removeEventListener('message', onMessage);
+            if (ev.data.includes('RESULT=OK')) {
+              clearTimeout(timeout);
+              resolve();
+            } else {
+              clearTimeout(timeout);
+              reject(new Error(`SESSION failed: ${ev.data}`));
+            }
+          }
+        };
+        
+        streamSocket.addEventListener('message', onMessage);
+        streamSocket.send(`SESSION ID=${this.sessionNickname}\n`);
+      });
+
+      // Now do STREAM CONNECT
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('STREAM CONNECT timeout')), 30000);
+        
+        const onMessage = (ev: MessageEvent) => {
+          if (typeof ev.data === 'string' && ev.data.includes('STREAM STATUS')) {
+            streamSocket.removeEventListener('message', onMessage);
+            if (ev.data.includes('RESULT=OK')) {
+              stream.connected = true;
+              clearTimeout(timeout);
+              resolve();
+            } else {
+              clearTimeout(timeout);
+              reject(new Error(`STREAM CONNECT failed: ${ev.data}`));
+            }
+          }
+        };
+        
+        streamSocket.addEventListener('message', onMessage);
+        streamSocket.send(`STREAM CONNECT ID=${this.sessionNickname} DESTINATION=${destination} SILENT=false\n`);
+      });
+
+      logger.log('[SAM] Stream connected:', streamId);
+      return stream;
+
+    } catch (error) {
+      streamSocket.close();
+      this.streams.delete(streamId);
+      throw error;
+    }
   }
 
   /**
    * Accept incoming connections
+   * This runs on the main session socket
    */
   async accept(nickname: string): Promise<void> {
     this.requireConnected();
@@ -307,14 +416,13 @@ class SAMService {
    */
   async send(streamId: number, data: string): Promise<void> {
     const stream = this.streams.get(streamId);
-    if (!stream?.connected) {
-      throw new Error('Stream not connected');
+
+    if (!stream?.socket || stream.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('Stream socket not open');
     }
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      throw new Error('Socket not open');
-    }
-    // After STREAM CONNECT, the socket becomes a raw data pipe
-    this.socket.send(data);
+    
+    // Send data directly over the stream socket
+    stream.socket.send(data);
   }
 
   /**
@@ -378,19 +486,27 @@ class SAMService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    this.streams.forEach(s => { s.connected = false; });
+    
+    // Close all stream sockets
+    this.streams.forEach(stream => {
+      stream.connected = false;
+      stream.socket?.close();
+    });
     this.streams.clear();
+    
     // Reject all pending resolvers before clearing
     this.pendingResolvers.forEach(resolver => {
       resolver('ERROR RESULT=DISCONNECTED');
     });
     this.pendingResolvers = [];
+    
     this.socket?.close();
     this.socket = null;
     this.isConnected = false;
     this.helloCompleted = false;
     this.isReconnecting = false;
     this.session = null;
+    this.sessionNickname = null;
   }
 
   /**

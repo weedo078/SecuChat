@@ -245,7 +245,7 @@ class I2PService {
     this.peers.set(b32Address, peer);
 
     try {
-      const stream = await samService.connectTo(b32Address, 'securechat');
+      const stream = await samService.connectTo(b32Address);
       peer.samStreamId = stream.id;
       peer.status = 'connected';
       peer.lastSeen = Date.now();
