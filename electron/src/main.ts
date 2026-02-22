@@ -244,17 +244,21 @@ function createWindow() {
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
-  // Start i2pd (non-blocking — app still opens if i2pd fails)
+  // Start i2pd first (SAM proxy needs it)
   const i2pdOk = await startI2pd();
   if (!i2pdOk) {
     console.warn('[Main] i2pd not running. I2P features will be unavailable.');
   }
 
-  // Start inline SAM proxy
-  try {
-    await startSamProxy();
-  } catch (err) {
-    console.error('[Main] SAM proxy failed to start:', err);
+  // Start inline SAM proxy only after i2pd is ready
+  if (i2pdOk) {
+    try {
+      // Give i2pd a moment to fully initialize SAM interface
+      await new Promise(r => setTimeout(r, 1000));
+      await startSamProxy();
+    } catch (err) {
+      console.error('[Main] SAM proxy failed to start:', err);
+    }
   }
 
   createWindow();
