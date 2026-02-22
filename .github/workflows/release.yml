@@ -6,8 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to release (e.g. v0.0.6)'
+        description: 'Tag to release (e.g. v0.0.7)'
         required: true
+
+env:
+  I2PD_VERSION: '2.59.0'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -28,6 +31,14 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Download i2pd (Linux x64)
+        run: |
+          curl -L -o i2pd.deb \
+            "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1noble1_amd64.deb"
+          dpkg-deb -x i2pd.deb /tmp/i2pd_extract
+          cp /tmp/i2pd_extract/usr/sbin/i2pd electron/resources/i2pd/linux/i2pd
+          chmod +x electron/resources/i2pd/linux/i2pd
+
       - name: Build app
         working-directory: ./app
         run: npm ci && npm run build
@@ -39,8 +50,6 @@ jobs:
       - name: Build Electron (Linux x64)
         working-directory: ./electron
         run: npm run dist:linux -- --x64
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -64,6 +73,14 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Download i2pd (Windows x64)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
+          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
+          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
+          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
+
       - name: Build app
         working-directory: ./app
         run: npm ci && npm run build
@@ -75,8 +92,6 @@ jobs:
       - name: Build Electron (Windows)
         working-directory: ./electron
         run: npm run dist:win
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@v4
         with:
