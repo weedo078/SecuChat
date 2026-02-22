@@ -24,7 +24,7 @@
     "appId": "com.secuchat.app",
     "productName": "SecuChat",
     "directories": {
-      "output": "dist-electron"
+      "output": "release"
     },
     "files": [
       "dist/**/*",
