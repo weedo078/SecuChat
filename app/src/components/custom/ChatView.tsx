@@ -56,12 +56,7 @@ export function ChatView() {
     if (!messageText.trim()) return;
     
     try {
-      const success = await sendMessage(messageText.trim());
-      if (!success) {
-        toast.error('Nachricht konnte nicht gesendet werden', {
-          description: 'Der Empfänger ist möglicherweise offline oder die I2P-Verbindung ist instabil.',
-        });
-      }
+      await sendMessage(messageText.trim());
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
       toast.error('Fehler beim Senden', {

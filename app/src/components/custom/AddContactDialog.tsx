@@ -16,7 +16,27 @@ interface AddContactDialogProps {
   initialTab?: 'import' | 'share' | 'manual';
 }
 
+/** New format (v1.0) */
 interface ContactData {
+  version: '1.0';
+  metadata: {
+    timestamp: string;
+    username: string;
+    deviceId: string;
+  };
+  keys: {
+    pgpPublicKey: string;
+    fingerprint: string;
+  };
+  network: {
+    p2pIdentifier: string;
+    protocol: string;
+    i2pAddress: string;
+  };
+}
+
+/** Legacy format (v2 compact) for backwards compatibility */
+interface ContactDataLegacy {
   v: '2';
   t: 'sc';
   n: string;
@@ -24,17 +44,6 @@ interface ContactData {
   f: string;
   k?: string;
   ts?: number;
-}
-
-/** Legacy format for backwards compatibility */
-interface ContactDataV1 {
-  version: '1.0';
-  type: 'securechat-contact';
-  username: string;
-  i2pAddress: string;
-  pgpPublicKey: string;
-  pgpFingerprint: string;
-  timestamp: number;
 }
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
@@ -63,23 +72,36 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     try {
       const data = JSON.parse(raw);
       console.log('[Import] Parsed JSON keys:', Object.keys(data));
-      if (data.v === '2' && data.t === 'sc') {
-        console.log('[Import] Recognized as v2 format');
+      
+      // New format (v1.0)
+      if (data.version === '1.0' && data.metadata && data.keys && data.network) {
+        console.log('[Import] Recognized as v1.0 format');
         return data as ContactData;
       }
-      if (data.version === '1.0' && data.type === 'securechat-contact') {
-        console.log('[Import] Recognized as v1 format, converting...');
-        const legacy = data as ContactDataV1;
+      
+      // Legacy compact format (v2)
+      if (data.v === '2' && data.t === 'sc') {
+        console.log('[Import] Recognized as legacy v2 format, converting...');
+        const legacy = data as ContactDataLegacy;
         return {
-          v: '2',
-          t: 'sc',
-          n: legacy.username,
-          i: legacy.i2pAddress,
-          f: legacy.pgpFingerprint,
-          k: legacy.pgpPublicKey,
-          ts: legacy.timestamp,
+          version: '1.0',
+          metadata: {
+            timestamp: new Date(legacy.ts || Date.now()).toISOString(),
+            username: legacy.n,
+            deviceId: '',
+          },
+          keys: {
+            pgpPublicKey: legacy.k || '',
+            fingerprint: legacy.f,
+          },
+          network: {
+            p2pIdentifier: '',
+            protocol: legacy.i ? 'i2p-webrtc' : 'webrtc',
+            i2pAddress: legacy.i,
+          },
         };
       }
+      
       console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
       return null;
     } catch (e) {
@@ -107,7 +129,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       });
 
       console.log('[Import] Contact parse result:', contact
-        ? { v: contact.v, t: contact.t, n: contact.n, hasKey: !!contact.k }
+        ? { version: contact.version, username: contact.metadata.username, hasKey: !!contact.keys.pgpPublicKey }
         : null);
 
       if (contact) {
@@ -130,9 +152,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     if (!importedContact) return;
     setIsAddingContact(true);
     try {
-      if (importedContact.k) {
-        console.log('[Import] Validating PGP key, length:', importedContact.k.length, 'starts with:', importedContact.k.slice(0, 30));
-        const validation = await cryptoService.validatePublicKey(importedContact.k);
+      if (importedContact.keys.pgpPublicKey) {
+        console.log('[Import] Validating PGP key, length:', importedContact.keys.pgpPublicKey.length, 'starts with:', importedContact.keys.pgpPublicKey.slice(0, 30));
+        const validation = await cryptoService.validatePublicKey(importedContact.keys.pgpPublicKey);
         console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
           setImportError('Ungültiger PGP Public Key in der Kontaktdatei');
@@ -144,20 +166,20 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
       const contact: Contact = {
         id: crypto.randomUUID(),
-        name: importedContact.n,
-        pgpPublicKey: importedContact.k || '',
-        fingerprint: importedContact.f,
-        p2pIdentifier: importedContact.i,
-        i2pAddress: importedContact.i,
+        name: importedContact.metadata.username,
+        pgpPublicKey: importedContact.keys.pgpPublicKey || '',
+        fingerprint: importedContact.keys.fingerprint,
+        p2pIdentifier: importedContact.network.p2pIdentifier || importedContact.network.i2pAddress,
+        i2pAddress: importedContact.network.i2pAddress,
         status: 'unknown',
       };
 
       // Use addContact from AppContext to update both storage AND React state
       await addContact(contact);
 
-      if (i2pStatus?.samConnected && importedContact.i) {
+      if (i2pStatus?.samConnected && importedContact.network.i2pAddress) {
         try {
-          await i2pService.connectToPeer(importedContact.i);
+          await i2pService.connectToPeer(importedContact.network.i2pAddress);
           const onlineContact = { ...contact, status: 'online' as const };
           await updateContact(onlineContact);
         } catch {
@@ -176,14 +198,23 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   const exportContactFile = () => {
     if (!user) return;
-    const contactData: ContactData = {
-      v: '2',
-      t: 'sc',
-      n: user.username,
-      i: user.i2pAddress,
-      f: user.fingerprint,
-      k: user.pgpPublicKey,
-      ts: Date.now(),
+    // Use new format (v1.0) as defined in crypto.ts
+    const contactData = {
+      version: '1.0',
+      metadata: {
+        timestamp: new Date().toISOString(),
+        username: user.username,
+        deviceId: user.deviceId,
+      },
+      keys: {
+        pgpPublicKey: user.pgpPublicKey,
+        fingerprint: user.fingerprint,
+      },
+      network: {
+        p2pIdentifier: user.id,
+        protocol: user.i2pAddress ? 'i2p-webrtc' : 'webrtc',
+        i2pAddress: user.i2pAddress,
+      },
     };
     const blob = new Blob([JSON.stringify(contactData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -335,10 +366,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                     <p className="font-medium text-green-500">Kontakt erkannt</p>
                   </div>
                   <div className="space-y-1.5 text-sm">
-                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.n}</span></p>
-                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.i.slice(0, 40)}…</p>
-                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.f.slice(0, 16)}…</p>
-                    {!importedContact.k && (
+                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.metadata.username}</span></p>
+                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.network.i2pAddress.slice(0, 40)}…</p>
+                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.keys.fingerprint.slice(0, 16)}…</p>
+                    {!importedContact.keys.pgpPublicKey && (
                       <p className="text-xs text-yellow-500 mt-2">Kein PGP-Key in der Datei — verschlüsselte Kommunikation erst nach Schlüsselaustausch möglich.</p>
                     )}
                   </div>

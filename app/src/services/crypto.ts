@@ -268,29 +268,49 @@ export class CryptoService {
 
   /**
    * Import connection file data
+   * Supports both new format (v1.0) and legacy QR code format (v2)
    */
   importConnectionFile(jsonData: string): { success: boolean; contact?: Partial<Contact>; error?: string } {
     try {
       const data = JSON.parse(jsonData);
       
-      if (data.version !== '1.0') {
-        return { success: false, error: 'Unsupported connection file version' };
+      // New format (v1.0)
+      if (data.version === '1.0') {
+        if (!data.keys?.pgpPublicKey || !data.keys?.fingerprint) {
+          return { success: false, error: 'Invalid connection file: missing key data' };
+        }
+
+        return {
+          success: true,
+          contact: {
+            name: data.metadata?.username || 'Unknown',
+            pgpPublicKey: data.keys.pgpPublicKey,
+            fingerprint: data.keys.fingerprint,
+            p2pIdentifier: data.network?.p2pIdentifier || '',
+            i2pAddress: data.network?.i2pAddress,
+          },
+        };
+      }
+      
+      // Legacy QR code format (v2) - compact format
+      if (data.v === '2' && data.t === 'sc') {
+        if (!data.k || !data.f) {
+          return { success: false, error: 'Invalid legacy connection file: missing key data' };
+        }
+
+        return {
+          success: true,
+          contact: {
+            name: data.n || 'Unknown',
+            pgpPublicKey: data.k,
+            fingerprint: data.f,
+            p2pIdentifier: '',
+            i2pAddress: data.i,
+          },
+        };
       }
 
-      if (!data.keys?.pgpPublicKey || !data.keys?.fingerprint) {
-        return { success: false, error: 'Invalid connection file: missing key data' };
-      }
-
-      return {
-        success: true,
-        contact: {
-          name: data.metadata?.username || 'Unknown',
-          pgpPublicKey: data.keys.pgpPublicKey,
-          fingerprint: data.keys.fingerprint,
-          p2pIdentifier: data.network?.p2pIdentifier || '',
-          i2pAddress: data.network?.i2pAddress,
-        },
-      };
+      return { success: false, error: 'Unsupported connection file version. Expected v1.0 or legacy v2 format.' };
     } catch {
       return { success: false, error: 'Invalid JSON format' };
     }
