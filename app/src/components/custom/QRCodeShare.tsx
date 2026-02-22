@@ -1,10 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Copy, Check, Download, Camera, X, Upload } from 'lucide-react';
+import { Copy, Check, Download, Camera, X, Upload, Share2, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApp } from '@/contexts/AppContext';
 import { cryptoService } from '@/services/crypto';
-import * as QRCodeLib from 'qrcode';
 import jsQR from 'jsqr';
 import {
   Dialog,
@@ -21,56 +20,27 @@ interface QRCodeShareProps {
 
 export function QRCodeShare({ isOpen, onClose }: QRCodeShareProps) {
   const { user } = useApp();
-  const [qrCodeData, setQrCodeData] = useState('');
   const [copied, setCopied] = useState(false);
-
-  useEffect(() => {
-    if (isOpen && user) {
-      // Compact QR data — no PGP key (too large for QR)
-      const qrData = JSON.stringify({
-        v: '2',
-        t: 'sc',
-        n: user.username,
-        i: user.i2pAddress,
-        f: user.fingerprint,
-      });
-      QRCodeLib.toDataURL(qrData, {
-        width: 300,
-        margin: 2,
-        color: {
-          dark: '#000000',
-          light: '#ffffff',
-        },
-      }).then(url => {
-        setQrCodeData(url);
-      });
-    }
-  }, [isOpen, user]);
 
   const handleCopy = async () => {
     if (user) {
-      // Full contact data with PGP key for clipboard
-      const fullData = JSON.stringify({
-        v: '2',
-        t: 'sc',
-        n: user.username,
-        i: user.i2pAddress,
-        f: user.fingerprint,
-        k: user.pgpPublicKey,
-        ts: Date.now(),
-      }, null, 2);
-      await navigator.clipboard.writeText(fullData);
+      const connectionData = cryptoService.exportConnectionFile(user);
+      await navigator.clipboard.writeText(connectionData);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     }
   };
 
   const handleDownload = () => {
-    if (qrCodeData) {
+    if (user) {
+      const connectionData = cryptoService.exportConnectionFile(user);
+      const blob = new Blob([connectionData], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
-      link.href = qrCodeData;
-      link.download = `securechat-qr-${user?.username}.png`;
+      link.href = url;
+      link.download = `${user.username}.secuchat`;
       link.click();
+      URL.revokeObjectURL(url);
     }
   };
 
@@ -80,27 +50,40 @@ export function QRCodeShare({ isOpen, onClose }: QRCodeShareProps) {
         <DialogHeader>
           <DialogTitle>Kontakt teilen</DialogTitle>
           <DialogDescription>
-            Teilen Sie Ihren Kontakt über QR-Code oder Verbindungsdatei.
+            Teilen Sie Ihren Kontakt über eine .secuchat-Datei oder Verbindungsdaten.
           </DialogDescription>
         </DialogHeader>
 
         <Tabs defaultValue="share" className="mt-4">
           <TabsList className="grid w-full grid-cols-2">
-            <TabsTrigger value="share">Teilen</TabsTrigger>
-            <TabsTrigger value="scan">Scannen</TabsTrigger>
+            <TabsTrigger value="share">
+              <Share2 className="h-4 w-4 mr-2" />
+              Teilen
+            </TabsTrigger>
+            <TabsTrigger value="scan">
+              <UserPlus className="h-4 w-4 mr-2" />
+              Hinzufügen
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="share" className="space-y-4">
-            {qrCodeData && (
-              <div className="flex flex-col items-center">
-                <div className="p-4 bg-white rounded-lg">
-                  <img src={qrCodeData} alt="QR Code" className="w-64 h-64" />
+            <div className="p-4 bg-muted rounded-lg">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
+                  <Share2 className="h-5 w-5 text-primary" />
                 </div>
-                <p className="text-sm text-muted-foreground mt-2 text-center">
-                  Scannen Sie diesen Code, um den Kontakt hinzuzufügen
-                </p>
+                <div>
+                  <p className="font-medium">Kontaktdatei</p>
+                  <p className="text-xs text-muted-foreground">
+                    {user?.username}.secuchat
+                  </p>
+                </div>
               </div>
-            )}
+              <p className="text-sm text-muted-foreground">
+                Laden Sie Ihre Kontaktdatei herunter und senden Sie sie an Freunde. 
+                Diese können Sie dann importieren, um mit Ihnen zu chatten.
+              </p>
+            </div>
 
             <div className="flex gap-2">
               <Button variant="outline" className="flex-1" onClick={handleCopy}>
@@ -116,9 +99,9 @@ export function QRCodeShare({ isOpen, onClose }: QRCodeShareProps) {
                   </>
                 )}
               </Button>
-              <Button variant="outline" className="flex-1" onClick={handleDownload}>
+              <Button variant="default" className="flex-1" onClick={handleDownload}>
                 <Download className="h-4 w-4 mr-2" />
-                Herunterladen
+                .secuchat herunterladen
               </Button>
             </div>
 
@@ -155,6 +138,7 @@ function QRScanner() {
   const { addContact } = useApp();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [scannedData, setScannedData] = useState<Record<string, string> | null>(null);
+  const [importText, setImportText] = useState('');
 
   const stopCamera = useCallback(() => {
     if (videoRef.current?.srcObject) {
@@ -228,6 +212,24 @@ function QRScanner() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    // Check if it's a .secuchat file or JSON file
+    if (file.name.endsWith('.secuchat') || file.name.endsWith('.json')) {
+      try {
+        const text = await file.text();
+        const result = cryptoService.importConnectionFile(text);
+        if (result.success && result.contact) {
+          setScannedData(result.contact);
+          setShowAddDialog(true);
+        } else {
+          setError(result.error || 'Ungültige Kontaktdatei');
+        }
+      } catch {
+        setError('Fehler beim Lesen der Datei');
+      }
+      return;
+    }
+
+    // Try to read as QR code image
     const reader = new FileReader();
     reader.onload = async (event) => {
       const img = new Image();
@@ -263,6 +265,24 @@ function QRScanner() {
     reader.readAsDataURL(file);
   };
 
+  const handleImportText = () => {
+    if (!importText.trim()) return;
+    
+    try {
+      const result = cryptoService.importConnectionFile(importText.trim());
+      if (result.success && result.contact) {
+        setScannedData(result.contact);
+        setShowAddDialog(true);
+        setImportText('');
+        setError('');
+      } else {
+        setError(result.error || 'Ungültige Verbindungsdaten');
+      }
+    } catch {
+      setError('Fehler beim Importieren');
+    }
+  };
+
   const handleAddContact = async () => {
     if (scannedData) {
       const contact = {
@@ -282,6 +302,52 @@ function QRScanner() {
 
   return (
     <div className="space-y-4">
+      {/* Text Import */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium">Verbindungsdaten einfügen</label>
+        <textarea
+          className="w-full h-24 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
+          placeholder='{"version": "1.0", ...}'
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+        />
+        <Button 
+          onClick={handleImportText} 
+          disabled={!importText.trim()}
+          className="w-full"
+          variant="outline"
+        >
+          <Upload className="h-4 w-4 mr-2" />
+          Aus Text importieren
+        </Button>
+      </div>
+
+      <div className="relative">
+        <div className="absolute inset-0 flex items-center">
+          <span className="w-full border-t" />
+        </div>
+        <div className="relative flex justify-center text-xs uppercase">
+          <span className="bg-background px-2 text-muted-foreground">
+            Oder
+          </span>
+        </div>
+      </div>
+
+      {/* File Upload */}
+      <div className="relative">
+        <input
+          type="file"
+          accept=".secuchat,.json,image/*"
+          onChange={handleFileUpload}
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
+        <Button variant="outline" className="w-full">
+          <Upload className="h-4 w-4 mr-2" />
+          .secuchat-Datei hochladen
+        </Button>
+      </div>
+
+      {/* QR Scanner */}
       {isScanning ? (
         <div className="relative">
           <video
@@ -301,25 +367,10 @@ function QRScanner() {
           </Button>
         </div>
       ) : (
-        <div className="flex flex-col gap-4">
-          <Button onClick={() => setIsScanning(true)} className="w-full">
-            <Camera className="h-4 w-4 mr-2" />
-            Kamera starten
-          </Button>
-          
-          <div className="relative">
-            <input
-              type="file"
-              accept="image/*"
-              onChange={handleFileUpload}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-            />
-            <Button variant="outline" className="w-full">
-              <Upload className="h-4 w-4 mr-2" />
-              Bild hochladen
-            </Button>
-          </div>
-        </div>
+        <Button onClick={() => setIsScanning(true)} variant="outline" className="w-full">
+          <Camera className="h-4 w-4 mr-2" />
+          QR-Code scannen
+        </Button>
       )}
 
       {error && (
@@ -340,6 +391,11 @@ function QRScanner() {
               <p className="text-xs text-muted-foreground font-mono mt-1">
                 {scannedData.fingerprint}
               </p>
+              {scannedData.i2pAddress && (
+                <p className="text-xs text-muted-foreground font-mono mt-1 truncate">
+                  {scannedData.i2pAddress}
+                </p>
+              )}
             </div>
           )}
           <div className="flex gap-2 mt-4">
