@@ -101,15 +101,19 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     const file = event.target.files?.[0];
     if (!file) return;
 
+    console.log('[Import] File selected:', file.name, 'type:', file.type, 'size:', file.size);
     setIsImporting(true);
     setScanError(null);
 
     try {
       const isJson = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+      console.log('[Import] isJson:', isJson);
 
       // Try as QR image first (skip for JSON files)
       if (!isJson) {
+        console.log('[Import] Trying QR image decode...');
         const qrData = await decodeQRFromImage(file);
+        console.log('[Import] QR decode result:', qrData);
         if (qrData) {
           await processScannedQR(qrData);
           return;
@@ -117,14 +121,18 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
       }
 
       // Try as contact file
+      console.log('[Import] Trying contact file parse...');
       const contact = await importContactFromFile(file);
+      console.log('[Import] Contact parse result:', contact ? { v: contact.v, t: contact.t, n: contact.n, hasKey: !!contact.k } : null);
       if (contact) {
         setScannedContact(contact);
         return;
       }
 
+      console.warn('[Import] Failed to parse file as QR or contact JSON');
       setScanError('Konnte Datei nicht erkennen. Bitte QR-Code Bild oder .json Kontaktdatei verwenden.');
     } catch (error) {
+      console.error('[Import] Exception:', error);
       setScanError('Fehler beim Import: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
     } finally {
       setIsImporting(false);
@@ -135,12 +143,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
   const parseContactData = (raw: string): ContactQRData | null => {
     try {
       const data = JSON.parse(raw);
+      console.log('[Import] Parsed JSON keys:', Object.keys(data));
       // v2 compact format
       if (data.v === '2' && data.t === 'sc') {
+        console.log('[Import] Recognized as v2 format');
         return data as ContactQRData;
       }
       // v1 legacy format → convert to v2
       if (data.version === '1.0' && data.type === 'securechat-contact') {
+        console.log('[Import] Recognized as v1 format, converting...');
         const legacy = data as ContactQRDataV1;
         return {
           v: '2',
@@ -152,8 +163,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
           ts: legacy.timestamp,
         };
       }
+      console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
       return null;
-    } catch {
+    } catch (e) {
+      console.error('[Import] JSON parse error:', e);
       return null;
     }
   };
@@ -211,11 +224,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     try {
       // Validate PGP key if present
       if (scannedContact.k) {
+        console.log('[Import] Validating PGP key, length:', scannedContact.k.length, 'starts with:', scannedContact.k.slice(0, 30));
         const validation = await cryptoService.validatePublicKey(scannedContact.k);
+        console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
           setScanError('Ungültiger PGP Public Key');
           return;
         }
+      } else {
+        console.log('[Import] No PGP key in contact data, skipping validation');
       }
 
       // Create contact
