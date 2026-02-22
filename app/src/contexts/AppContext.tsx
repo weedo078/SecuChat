@@ -143,18 +143,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
       
       // Load user
       const savedUser = await storageService.getUser();
+      let needsUnlock = false;
       if (savedUser) {
         setUser(savedUser);
-        
-        // Load key pair if exists
-        if (savedUser.pgpPrivateKey) {
+
+        // Check if private keys are still encrypted (base64 blob vs PGP armored text)
+        // When encryptionPassphrase is not set, getUser() returns encrypted data as-is
+        const keysEncrypted = savedUser.pgpPrivateKey &&
+          !savedUser.pgpPrivateKey.startsWith('-----BEGIN PGP');
+
+        if (keysEncrypted) {
+          // Keys are encrypted in storage — need passphrase to unlock
+          needsUnlock = true;
+          setIsLocked(true);
+        } else if (savedUser.pgpPrivateKey) {
+          // Keys are plaintext (freshly created with passphrase still in memory)
           try {
             await cryptoService.importKeyPair(
               savedUser.pgpPrivateKey,
               savedUser.pgpPublicKey,
-              '' // Will need passphrase
+              '' // PGP key passphrase not needed when key is already decrypted by OpenPGP.js
             );
             setEncryptionState('encrypted');
+            setIsAuthenticated(true);
           } catch (error) {
             console.error('Error loading key pair:', error);
           }
@@ -188,7 +199,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Register I2P listeners and start initialization in the background.
       // We do NOT await i2p init here — the app loads immediately and I2P
       // connects whenever it's ready (status updates via onStatusChange).
-      if (savedUser?.i2pAddress && savedUser.i2pPublicKey && savedUser.i2pPrivateKey) {
+      // Skip I2P init if keys are still encrypted (wait for unlock).
+      if (!needsUnlock && savedUser?.i2pAddress && savedUser.i2pPublicKey && savedUser.i2pPrivateKey) {
         await i2pService.restoreIdentity(
           savedUser.i2pPublicKey,
           savedUser.i2pPrivateKey,
@@ -503,22 +515,73 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const unlockApp = useCallback(async (passphrase: string): Promise<boolean> => {
-    if (!user?.pgpPrivateKey) return false;
-    
     try {
-      // Set encryption passphrase for storage
+      // Set encryption passphrase so storage can decrypt private keys
       storageService.setEncryptionPassphrase(passphrase);
-      
-      await cryptoService.importKeyPair(user.pgpPrivateKey, user.pgpPublicKey, passphrase);
+
+      // Re-read user from storage — now decrypted with the passphrase
+      const decryptedUser = await storageService.getUser();
+      if (!decryptedUser?.pgpPrivateKey) {
+        storageService.clearEncryptionPassphrase();
+        return false;
+      }
+
+      // Import the now-decrypted PGP key pair
+      await cryptoService.importKeyPair(
+        decryptedUser.pgpPrivateKey,
+        decryptedUser.pgpPublicKey,
+        passphrase
+      );
+
+      // Update user state with decrypted data
+      setUser(decryptedUser);
       setIsLocked(false);
       setIsAuthenticated(true);
       setEncryptionState('encrypted');
+
+      // Initialize I2P now that keys are decrypted
+      if (decryptedUser.i2pAddress && decryptedUser.i2pPublicKey && decryptedUser.i2pPrivateKey) {
+        await i2pService.restoreIdentity(
+          decryptedUser.i2pPublicKey,
+          decryptedUser.i2pPrivateKey,
+          decryptedUser.i2pSamDestination
+        );
+
+        // Register I2P listeners
+        if (listenersRegisteredRef.current) {
+          i2pService.offMessage(handleIncomingMessage);
+          i2pService.offStatusChange(setI2pStatus);
+        }
+        i2pService.onMessage(handleIncomingMessage);
+        i2pService.onStatusChange(setI2pStatus);
+        listenersRegisteredRef.current = true;
+
+        // Start I2P connection in background
+        const savedSettings = await storageService.getSettings();
+        const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
+        i2pService.initialize(i2pSettings.sam).then((status) => {
+          setI2pStatus(status);
+          if (status.newDestinationGenerated) {
+            const identity = i2pService.getIdentity();
+            if (identity?.samDestination) {
+              const updatedUser = { ...decryptedUser, i2pSamDestination: identity.samDestination };
+              storageService.saveUser(updatedUser).catch(console.error);
+              setUser(updatedUser);
+            }
+          }
+        }).catch((err) => {
+          console.error('[AppContext] I2P init failed:', err);
+          setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
+        });
+      }
+
       return true;
     } catch (error) {
       console.error('Error unlocking app:', error);
+      storageService.clearEncryptionPassphrase();
       return false;
     }
-  }, [user]);
+  }, [handleIncomingMessage, settings]);
 
   // Load active chat messages when changed
   useEffect(() => {
