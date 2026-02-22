@@ -363,6 +363,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(timer);
   }, [user, i2pStatus, settings.i2p.sam]);
 
+  // When I2P connects, try to reach all known contacts and update their status
+  useEffect(() => {
+    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+    contacts.forEach(async (contact) => {
+      if (!contact.i2pAddress) return;
+      try {
+        await i2pService.connectToPeer(contact.i2pAddress);
+        const updated = { ...contact, status: 'online' as const };
+        await storageService.saveContact(updated);
+        setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+        setChats(prev => prev.map(ch =>
+          ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+        ));
+      } catch {
+        // Peer not reachable — leave as-is
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
+  }, [i2pStatus?.samConnected]);
+
   // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
     if (isLocked) {

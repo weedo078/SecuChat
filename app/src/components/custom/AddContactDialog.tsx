@@ -38,7 +38,7 @@ interface ContactDataV1 {
 }
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
-  const { user, i2pStatus, addContact } = useApp();
+  const { user, i2pStatus, addContact, updateContact } = useApp();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   useEffect(() => {
@@ -158,6 +158,8 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       if (i2pStatus?.samConnected && importedContact.i) {
         try {
           await i2pService.connectToPeer(importedContact.i);
+          const onlineContact = { ...contact, status: 'online' as const };
+          await updateContact(onlineContact);
         } catch {
           // I2P not ready, contact is saved anyway
         }
@@ -219,6 +221,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       if (i2pStatus?.samConnected) {
         try {
           await i2pService.connectToPeer(manualI2p);
+          await updateContact({ ...contact, status: 'online' as const });
         } catch { /* I2P not ready */ }
       }
       onContactAdded?.(contact);

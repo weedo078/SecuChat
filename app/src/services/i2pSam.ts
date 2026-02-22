@@ -45,11 +45,16 @@ class SAMService {
   private nextStreamId = 1;
   private sessionNickname: string | null = null;
 
+  // Stored to auto-restore session after reconnect
+  private lastSessionNickname: string | null = null;
+  private lastSessionPrivateKey: string | undefined = undefined;
+
   private pendingResolvers: ResponseResolver[] = [];
   private messageHandlers: ((from: string, data: string) => void)[] = [];
   private streamHandlers: ((stream: SAMStream) => void)[] = [];
+  private reconnectHandlers: (() => void)[] = [];
   private reconnectAttempts = 0;
-  private maxReconnectAttempts = 3;
+  private maxReconnectAttempts = 5;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isReconnecting = false;
 
@@ -255,6 +260,9 @@ class SAMService {
     }
 
     this.sessionNickname = nickname;
+    // Remember for auto-restore after reconnect
+    this.lastSessionNickname = nickname;
+    this.lastSessionPrivateKey = privateKey;
     logger.log('[SAM] Session created:', nickname);
   }
 
@@ -471,11 +479,16 @@ class SAMService {
     this.streamHandlers.push(handler);
   }
 
+  /** Called after session is restored following a reconnect */
+  onReconnect(handler: () => void): void {
+    this.reconnectHandlers.push(handler);
+  }
+
   /**
    * Check connection status
    */
   isSAMConnected(): boolean {
-    return this.isConnected && this.helloCompleted;
+    return this.isConnected && this.helloCompleted && this.sessionNickname !== null;
   }
 
   /**
@@ -626,12 +639,20 @@ class SAMService {
     const jitter = Math.random() * 1000;
     const delay = baseDelay + jitter;
     logger.log(`[SAM] Reconnecting in ${Math.round(delay / 1000)}s... (attempt ${this.reconnectAttempts})`);
-    this.reconnectTimer = setTimeout(() => {
-      this.connect(this.config)
-        .catch(() => {})
-        .finally(() => {
-          this.isReconnecting = false;
-        });
+    this.reconnectTimer = setTimeout(async () => {
+      try {
+        const ok = await this.connect(this.config);
+        if (ok && this.lastSessionNickname) {
+          // Restore the session that was lost when the connection dropped
+          await this.createSession(this.lastSessionNickname, this.lastSessionPrivateKey);
+          logger.log('[SAM] Session restored after reconnect');
+          this.reconnectHandlers.forEach(h => h());
+        }
+      } catch (err) {
+        logger.warn('[SAM] Reconnect/session restore failed:', err);
+      } finally {
+        this.isReconnecting = false;
+      }
     }, delay);
   }
 }

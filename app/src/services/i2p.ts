@@ -384,6 +384,18 @@ class I2PService {
     samService.onStream((stream) => {
       logger.log('[I2P] New incoming stream:', stream.id);
     });
+
+    // When SAM auto-reconnects and restores the session, update our status
+    samService.onReconnect(() => {
+      logger.log('[I2P] SAM session restored after reconnect');
+      this.currentStatus = {
+        ...this.currentStatus,
+        samConnected: true,
+        samAvailable: true,
+        error: undefined,
+      };
+      this.notifyStatusChange();
+    });
   }
 
   private notifyStatusChange(): void {
