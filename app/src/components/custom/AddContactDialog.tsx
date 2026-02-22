@@ -407,20 +407,41 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
           <TabsContent value="share" className="space-y-4">
             {user ? (
               <>
+                {/* I2P address guard */}
+                {!user.i2pSamDestination ? (
+                  <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm space-y-1" role="alert">
+                    <p className="font-medium text-destructive">Export nicht möglich — I2P noch nie verbunden</p>
+                    <p className="text-destructive/80 text-xs">
+                      Deine I2P-Adresse wird erst vergeben wenn du dich <strong>einmalig mit I2P verbindest</strong>.
+                      Verbinde dich zuerst (Einstellungen → I2P → Verbinden) und exportiere danach die Datei.
+                    </p>
+                  </div>
+                ) : !i2pStatus?.samConnected ? (
+                  <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm space-y-1" role="status">
+                    <p className="font-medium text-yellow-600 dark:text-yellow-400">I2P aktuell nicht verbunden</p>
+                    <p className="text-yellow-600/80 dark:text-yellow-400/80 text-xs">
+                      Die gespeicherte Adresse aus der letzten Session wird exportiert.
+                      Für die aktuellste Adresse verbinde dich zuerst mit I2P.
+                    </p>
+                  </div>
+                ) : null}
+
                 <div className="p-4 rounded-lg border border-border space-y-2 text-sm">
                   <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{user.username}</span></p>
                   <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{user.i2pAddress?.slice(0, 40)}…</p>
                   <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{user.fingerprint?.slice(0, 16)}…</p>
                 </div>
 
-                <Button className="w-full" onClick={exportContactFile}>
+                <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pSamDestination}>
                   <Download className="h-4 w-4 mr-2" aria-hidden="true" />
                   {user.username}.secuchat speichern
                 </Button>
 
-                <p className="text-xs text-muted-foreground text-center">
-                  Schick diese Datei deinem Kontakt — er kann sie direkt importieren.
-                </p>
+                {user.i2pSamDestination && (
+                  <p className="text-xs text-muted-foreground text-center">
+                    Schick diese Datei deinem Kontakt — er kann sie direkt importieren.
+                  </p>
+                )}
               </>
             ) : (
               <p className="text-sm text-muted-foreground text-center py-8">Kein Profil gefunden.</p>
