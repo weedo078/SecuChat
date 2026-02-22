@@ -99,6 +99,15 @@ const defaultSecuritySettings: SecuritySettings = {
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
+// In Electron, the bundled SAM proxy always runs on port 7657 — force enabled.
+const isElectron = typeof window !== 'undefined' &&
+  !!(window as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
+
+function effectiveSamConfig(sam: AppSettings['i2p']['sam']): AppSettings['i2p']['sam'] {
+  if (isElectron) return { ...sam, enabled: true };
+  return sam;
+}
+
 export function AppProvider({ children }: { children: ReactNode }) {
   // Refs for tracking listener registration state
   const listenersRegisteredRef = useRef(false);
@@ -221,7 +230,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // Fire-and-forget: I2P connects in background, UI updates via setI2pStatus
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(i2pSettings.sam).then((status) => {
+        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
           setI2pStatus(status);
           if (status.newDestinationGenerated && savedUser) {
             const identity = i2pService.getIdentity();
@@ -344,9 +353,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // Auto-retry I2P connection every 30 s when not connected
   useEffect(() => {
-    if (!user || i2pStatus?.samConnected || !settings.i2p.sam.enabled) return;
+    const samCfg = effectiveSamConfig(settings.i2p.sam);
+    if (!user || i2pStatus?.samConnected || !samCfg.enabled) return;
     const timer = setTimeout(() => {
-      i2pService.initialize(settings.i2p.sam).then(setI2pStatus).catch((err) => {
+      i2pService.initialize(samCfg).then(setI2pStatus).catch((err) => {
         setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
       });
     }, 30000);
@@ -591,7 +601,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // Start I2P connection in background
         const savedSettings = await storageService.getSettings();
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(i2pSettings.sam).then((status) => {
+        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
           setI2pStatus(status);
           if (status.newDestinationGenerated) {
             const identity = i2pService.getIdentity();
