@@ -12,6 +12,7 @@ const incomingMessageSchema = z.object({
   id: z.string().uuid(),
   chatId: z.string().uuid(),
   senderId: z.string().uuid(),
+  senderFingerprint: z.string().optional(), // used to find local contact/chat
   encryptedContent: z.string().min(1),
   timestamp: z.string().datetime(),
   sequenceNumber: z.number().int().nonnegative(),
@@ -260,9 +261,37 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       const validatedData = validationResult.data;
 
+      // ── Find local contact & chat (Bug 3: sender's chatId/senderId are their local UUIDs)
+      // Match by senderFingerprint → contact → local chat
+      let localContact: Contact | null = null;
+      let localChat: Chat | null = null;
+
+      if (validatedData.senderFingerprint) {
+        localContact = await storageService.getContactByFingerprint(validatedData.senderFingerprint);
+      }
+
+      if (localContact) {
+        localChat = await storageService.getChatByContactId(localContact.id);
+
+        // Bug 6: Auto-create chat if contact exists but no chat yet
+        if (!localChat) {
+          localChat = {
+            id: crypto.randomUUID(),
+            contactId: localContact.id,
+            contact: localContact,
+            unreadCount: 0,
+          };
+          await storageService.saveChat(localChat);
+          setChats(prev => [...prev, localChat!]);
+        }
+      }
+
+      // Use local chatId (or fall back to sender's chatId if we couldn't resolve)
+      const localChatId = localChat?.id ?? validatedData.chatId;
+
       const message: Message = {
         id: validatedData.id,
-        chatId: validatedData.chatId,
+        chatId: localChatId,
         senderId: validatedData.senderId,
         recipientId: user?.id || '',
         encryptedContent: validatedData.encryptedContent,
@@ -282,25 +311,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
           message.decryptedContent = '[Entschlüsselung fehlgeschlagen]';
         }
       } else {
-        message.decryptedContent = message.encryptedContent;
+        // Bug 5: show placeholder, not raw PGP ciphertext
+        message.decryptedContent = '[Verschlüsselt]';
       }
 
       // Save message to storage
       await storageService.saveMessage(message);
 
-      // Update or create chat
-      const chat = await storageService.getChat(message.chatId);
-      if (chat) {
-        chat.lastMessageTimestamp = message.timestamp;
-        chat.unreadCount = (chat.unreadCount || 0) + 1;
-        await storageService.saveChat(chat);
-        setChats(prev => prev.map(c =>
-          c.id === chat!.id ? { ...c, lastMessageTimestamp: message.timestamp, unreadCount: chat!.unreadCount } : c
-        ));
+      // Update chat unread count & timestamp
+      if (localChat) {
+        const updatedChat = {
+          ...localChat,
+          lastMessageTimestamp: message.timestamp,
+          unreadCount: (localChat.unreadCount || 0) + 1,
+        };
+        await storageService.saveChat(updatedChat);
+        setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
       }
 
-      // If message is for active chat, add to messages list
-      if (activeChat?.id === message.chatId) {
+      // Add to active chat messages if it's open
+      if (activeChat?.id === localChatId) {
         setMessages(prev => [...prev, message]);
       }
     } catch (error) {
@@ -400,10 +430,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (!contact) return;
 
     try {
-      // Encrypt message — require PGP key for sending
+      // Require PGP key — no plaintext fallback (Bug 2 fix)
       if (!contact.pgpPublicKey) {
-        console.error('[Send] Contact has no PGP public key — cannot send encrypted message');
-        return;
+        throw new Error('Kontakt hat keinen PGP-Schlüssel. Bitte Kontaktdatei erneut importieren.');
       }
       const encryptedContent = await cryptoService.encryptMessage(content, contact.pgpPublicKey);
 
@@ -434,6 +463,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
           id: message.id,
           chatId: message.chatId,
           senderId: message.senderId,
+          // senderFingerprint lets recipient map this message to their local contact/chat (Bug 3 fix)
+          senderFingerprint: user.fingerprint,
           encryptedContent: message.encryptedContent,
           timestamp: message.timestamp,
           sequenceNumber: message.sequenceNumber,

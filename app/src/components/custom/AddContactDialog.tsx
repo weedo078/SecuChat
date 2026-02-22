@@ -6,7 +6,6 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
-import { storageService } from '@/services/storage';
 import { cryptoService } from '@/services/crypto';
 import type { Contact } from '@/types';
 
@@ -39,7 +38,7 @@ interface ContactDataV1 {
 }
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
-  const { user, i2pStatus } = useApp();
+  const { user, i2pStatus, addContact } = useApp();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
   useEffect(() => {
@@ -153,13 +152,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         status: 'unknown',
       };
 
-      await storageService.saveContact(contact);
+      // Use addContact from AppContext to update both storage AND React state
+      await addContact(contact);
 
       if (i2pStatus?.samConnected && importedContact.i) {
         try {
           await i2pService.connectToPeer(importedContact.i);
-          contact.status = 'online';
-          await storageService.saveContact(contact);
         } catch {
           // I2P not ready, contact is saved anyway
         }
@@ -217,12 +215,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         i2pAddress: manualI2p,
         status: 'unknown',
       };
-      await storageService.saveContact(contact);
+      await addContact(contact);
       if (i2pStatus?.samConnected) {
         try {
           await i2pService.connectToPeer(manualI2p);
-          contact.status = 'online';
-          await storageService.saveContact(contact);
         } catch { /* I2P not ready */ }
       }
       onContactAdded?.(contact);
