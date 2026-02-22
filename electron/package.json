@@ -28,8 +28,16 @@
     },
     "files": [
       "dist/**/*",
-      "../app/dist/**/*",
-      "../resources/i2pd/**/*"
+      {
+        "from": "../app/dist",
+        "to": "app",
+        "filter": ["**/*"]
+      },
+      {
+        "from": "../resources/i2pd",
+        "to": "i2pd",
+        "filter": ["**/*"]
+      }
     ],
     "publish": {
       "provider": "github",
