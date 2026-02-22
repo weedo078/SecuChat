@@ -34,9 +34,11 @@ jobs:
       - name: Download i2pd (Linux x64)
         run: |
           curl -L -o i2pd.deb \
-            "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1noble1_amd64.deb"
+            "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1_amd64.deb"
           dpkg-deb -x i2pd.deb /tmp/i2pd_extract
-          cp /tmp/i2pd_extract/usr/sbin/i2pd electron/resources/i2pd/linux/i2pd
+          I2PD_BIN=$(find /tmp/i2pd_extract -name "i2pd" -type f | head -1)
+          echo "Found i2pd at: $I2PD_BIN"
+          cp "$I2PD_BIN" electron/resources/i2pd/linux/i2pd
           chmod +x electron/resources/i2pd/linux/i2pd
 
       - name: Build app

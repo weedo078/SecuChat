@@ -16,8 +16,8 @@
     "build": "tsc",
     "dev": "tsc && electron dist/main.js",
     "dist": "npm run build && electron-builder",
-    "dist:linux": "npm run build && electron-builder --linux",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:linux": "npm run build && electron-builder --linux --publish never",
+    "dist:win": "npm run build && electron-builder --win --publish never"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
