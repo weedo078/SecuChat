@@ -232,10 +232,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
         i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
           setI2pStatus(status);
-          if (status.newDestinationGenerated && savedUser) {
+          if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
-            if (identity?.samDestination) {
-              const updatedUser = { ...savedUser, i2pSamDestination: identity.samDestination };
+            let updatedUser = { ...savedUser };
+            // Always persist the SAM private key when a new destination was generated
+            if (status.newDestinationGenerated && identity?.samDestination) {
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
+            // Sync the real SAM b32 address into the user record.
+            // Addresses stored during onboarding may be the Ed25519 b32 (wrong)
+            // if SAM wasn't connected at that time. Correct it now so exported
+            // contact files carry the reachable I2P address.
+            if (status.address && status.address !== savedUser.i2pAddress) {
+              console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
+              updatedUser = { ...updatedUser, i2pAddress: status.address };
+            }
+            if (updatedUser !== savedUser) {
               storageService.saveUser(updatedUser).catch(console.error);
               setUser(updatedUser);
             }
@@ -623,10 +635,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
         i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
           setI2pStatus(status);
-          if (status.newDestinationGenerated) {
+          if (status.samConnected) {
             const identity = i2pService.getIdentity();
-            if (identity?.samDestination) {
-              const updatedUser = { ...decryptedUser, i2pSamDestination: identity.samDestination };
+            let updatedUser = { ...decryptedUser };
+            if (status.newDestinationGenerated && identity?.samDestination) {
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
+            if (status.address && status.address !== decryptedUser.i2pAddress) {
+              console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
+              updatedUser = { ...updatedUser, i2pAddress: status.address };
+            }
+            if (updatedUser !== decryptedUser) {
               storageService.saveUser(updatedUser).catch(console.error);
               setUser(updatedUser);
             }
