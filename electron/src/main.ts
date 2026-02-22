@@ -273,22 +273,23 @@ function createWindow() {
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
-  // Start i2pd first (SAM proxy needs it)
-  const i2pdOk = await startI2pd();
-  if (!i2pdOk) {
-    console.warn('[Main] i2pd not running. I2P features will be unavailable.');
-  }
-
-  // Start inline SAM proxy only after i2pd is ready
-  if (i2pdOk) {
-    try {
-      // Give i2pd a moment to fully initialize SAM interface
-      await new Promise(r => setTimeout(r, 1000));
-      await startSamProxy();
-    } catch (err) {
+  // Always start SAM proxy first - it handles i2pd not being ready gracefully.
+  // If i2pd isn't up yet, the TCP connection inside the proxy will fail and the
+  // WebSocket will be closed; the renderer retries every 30s automatically.
+  try {
+    await startSamProxy();
+  } catch (err: any) {
+    if (err?.code === 'EADDRINUSE') {
+      console.warn('[Main] SAM proxy port 7657 already in use (previous instance still running?)');
+    } else {
       console.error('[Main] SAM proxy failed to start:', err);
     }
   }
+
+  // Start i2pd in background - doesn't block the window or the SAM proxy.
+  startI2pd().then(ok => {
+    if (!ok) console.warn('[Main] i2pd not running - I2P features unavailable until it starts.');
+  }).catch(err => console.error('[Main] i2pd startup error:', err));
 
   createWindow();
 
