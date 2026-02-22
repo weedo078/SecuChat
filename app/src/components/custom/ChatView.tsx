@@ -21,6 +21,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogTitle,
 } from '@/components/ui/dialog';
 
 export function ChatView() {
@@ -431,6 +432,7 @@ export function ChatView() {
       {/* Image Viewer Dialog */}
       <Dialog open={!!selectedImage} onOpenChange={() => setSelectedImage(null)}>
         <DialogContent className="max-w-4xl p-0">
+          <DialogTitle className="sr-only">Image viewer</DialogTitle>
           {selectedImage && (
             <div className="relative">
               <img 
