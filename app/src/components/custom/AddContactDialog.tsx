@@ -105,11 +105,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
     setScanError(null);
 
     try {
-      // Try as QR image first
-      const qrData = await decodeQRFromImage(file);
-      if (qrData) {
-        await processScannedQR(qrData);
-        return;
+      const isJson = file.type === 'application/json' || file.name.toLowerCase().endsWith('.json');
+
+      // Try as QR image first (skip for JSON files)
+      if (!isJson) {
+        const qrData = await decodeQRFromImage(file);
+        if (qrData) {
+          await processScannedQR(qrData);
+          return;
+        }
       }
 
       // Try as contact file
@@ -174,6 +178,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded }: AddContact
           const code = jsQR(imageData.data, canvas.width, canvas.height);
           resolve(code ? parseContactData(code.data) : null);
         };
+        img.onerror = () => resolve(null);
         img.src = e.target?.result as string;
       };
       reader.readAsDataURL(file);
