@@ -4,6 +4,8 @@
 
 SecuChat ist ein Desktop-Messaging-App mit Ende-zu-Ende-Verschlüsselung (PGP) und anonymem Routing über das I2P-Netzwerk. Deine Nachrichten sind nur für dich und deinen Gesprächspartner lesbar – niemand sonst kann mitlesen, nicht einmal wir.
 
+> ⚠️ **WICHTIGER HINWEIS:** Diese App befindet sich noch in aktiver Entwicklung und funktioniert derzeit **nicht vollständig**. Die Grundfunktionen sind implementiert, aber es gibt noch Bugs und unvollständige Features. Verwendung auf eigene Gefahr!
+
 ---
 
 ## ✨ Features
