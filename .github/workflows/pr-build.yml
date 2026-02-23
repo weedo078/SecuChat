@@ -1,0 +1,134 @@
+name: PR Build
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  I2PD_VERSION: '2.59.0'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test App
+        working-directory: ./app
+        run: npm ci && npm run lint
+
+      - name: Test Electron
+        working-directory: ./electron
+        run: npm ci && npm run build
+
+  build-windows-pr:
+    name: Build Windows PR
+    needs: [test]
+    runs-on: windows-latest
+    if: github.event.pull_request.draft == false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get next version
+        id: version
+        shell: bash
+        run: |
+          # Get latest tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Latest tag: $LATEST_TAG"
+          
+          # Parse version (remove 'v' prefix)
+          VERSION=${LATEST_TAG#v}
+          MAJOR=$(echo $VERSION | cut -d. -f1)
+          MINOR=$(echo $VERSION | cut -d. -f2)
+          PATCH=$(echo $VERSION | cut -d. -f3)
+          
+          # Increment patch
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          
+          echo "New version: ${NEW_VERSION}-beta"
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download i2pd (Windows x64)
+        shell: pwsh
+        run: |
+          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
+          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
+          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
+          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
+
+      - name: Update package.json version
+        shell: pwsh
+        run: |
+          $packageJson = Get-Content electron/package.json | ConvertFrom-Json
+          $packageJson.version = "${{ steps.version.outputs.version }}"
+          $packageJson | ConvertTo-Json -Depth 10 | Set-Content electron/package.json
+          Write-Host "Updated version to: ${{ steps.version.outputs.version }}"
+
+      - name: Build app
+        working-directory: ./app
+        run: npm ci && npm run build
+
+      - name: Install electron deps
+        working-directory: ./electron
+        run: npm ci
+
+      - name: Build Electron (Windows)
+        working-directory: ./electron
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run dist:win
+
+      - name: Rename artifact with beta suffix
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $files = Get-ChildItem electron/release/*.exe
+          foreach ($file in $files) {
+            $newName = $file.Name -replace "${version}", "${version}-beta"
+            Rename-Item $file.FullName -NewName $newName
+            Write-Host "Renamed: $($file.Name) -> $newName"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SecuChat-PR-${{ github.event.pull_request.number }}-Windows
+          path: electron/release/*.exe
+          retention-days: 7
+
+      - name: Comment PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifactName = 'SecuChat-PR-${{ github.event.pull_request.number }}-Windows';
+            const version = '${{ steps.version.outputs.version }}';
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🪟 **Windows Build fertig!**
+              
+              Version: \`${version}-beta\`
+              
+              Die EXE ist als Artifact verfügbar: \`${artifactName}\`
+              
+              ⬇️ [Hier herunterladen](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
+              
+              > ⚠️ Dies ist ein PR-Build für Testzwecke.`
+            })
