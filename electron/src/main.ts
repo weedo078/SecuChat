@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import { join } from 'path';
 import { autoUpdater } from 'electron-updater';
-import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
+import { startI2pd, stopI2pd, isI2pReady, getI2PManager, diagnoseI2p } from './i2p-manager';
 import { startSamProxy, stopSamProxy } from './sam-proxy';
 
 // ─── State ────────────────────────────────────────────────────────────────────
@@ -106,6 +106,12 @@ app.whenReady().then(async () => {
   const i2pSuccess = await initializeI2P();
 
   if (!i2pSuccess) {
+    // Run diagnostics
+    console.log('[Main] Running I2P diagnostics...');
+    const diagnostics = await diagnoseI2p();
+    console.log('[Main] I2P Diagnostics:');
+    diagnostics.forEach(d => console.log('  -', d));
+    
     const isWindows = process.platform === 'win32';
     let detailMsg = 'SecuChat will start, but I2P connectivity may not work.\n\n';
     
@@ -117,7 +123,9 @@ app.whenReady().then(async () => {
                    'Try:\n' +
                    '1. Add SecuChat to antivirus exclusions\n' +
                    '2. Run as Administrator\n' +
-                   '3. Check Windows Event Viewer for errors';
+                   '3. Check Windows Event Viewer for errors\n\n' +
+                   'Diagnostics (see console for details):\n' +
+                   diagnostics.slice(0, 3).join('\n');
     } else {
       detailMsg += 'Please check the logs or try restarting the application.';
     }

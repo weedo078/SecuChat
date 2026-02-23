@@ -5,7 +5,8 @@
 import { app } from 'electron';
 import { spawn, ChildProcess } from 'child_process';
 import { join, normalize, dirname } from 'path';
-import { existsSync, mkdirSync, copyFileSync, chmodSync, createWriteStream, readdirSync, statSync } from 'fs';
+import { existsSync, mkdirSync, copyFileSync, chmodSync, createWriteStream, readdirSync, statSync, writeFileSync, unlinkSync } from 'fs';
+import { spawnSync } from 'child_process';
 import net from 'net';
 
 // ============================================================================
@@ -428,6 +429,53 @@ export class I2PManager {
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
+
+  /**
+   * Diagnose-Funktion für Windows-Probleme
+   */
+  async diagnose(): Promise<string[]> {
+    const issues: string[] = [];
+    const binaryPath = getI2pdBinaryPath();
+    
+    issues.push(`Platform: ${process.platform}`);
+    issues.push(`Binary path: ${binaryPath}`);
+    issues.push(`Binary exists: ${existsSync(binaryPath)}`);
+    
+    // Check data directory write permissions
+    try {
+      const testFile = join(this.config.dataDir, '.test');
+      writeFileSync(testFile, 'test');
+      unlinkSync(testFile);
+      issues.push(`Data directory writable: YES (${this.config.dataDir})`);
+    } catch (e: any) {
+      issues.push(`Data directory writable: NO - ${e.message}`);
+    }
+    
+    // Check port availability
+    const portOpen = await this.isPortOpen(this.config.samPort);
+    issues.push(`SAM port ${this.config.samPort} available: ${!portOpen ? 'YES' : 'NO (already in use)'}`);
+    
+    // Try to run i2pd --version with visible window to see errors
+    if (process.platform === 'win32') {
+      try {
+        const result = spawnSync(binaryPath, ['--version'], {
+          timeout: 5000,
+          windowsHide: false,  // Show window to see error dialogs
+        });
+        issues.push(`i2pd --version exit code: ${result.status}`);
+        if (result.error) {
+          issues.push(`i2pd --version error: ${result.error.message}`);
+        }
+        if (result.stderr?.toString()) {
+          issues.push(`i2pd --version stderr: ${result.stderr.toString()}`);
+        }
+      } catch (e: any) {
+        issues.push(`i2pd --version failed: ${e.message}`);
+      }
+    }
+    
+    return issues;
+  }
 }
 
 // ============================================================================
@@ -453,4 +501,8 @@ export async function stopI2pd(): Promise<void> {
 
 export async function isI2pReady(): Promise<boolean> {
   return getI2PManager().isReady();
+}
+
+export async function diagnoseI2p(): Promise<string[]> {
+  return getI2PManager().diagnose();
 }
