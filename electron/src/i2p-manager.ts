@@ -75,19 +75,27 @@ function getI2pdBinaryPath(): string {
   const platformDir = platform === 'win32' ? 'win' : 'linux';
   
   const possiblePaths = [
+    // extraResources kopiert nach resources/i2pd/
+    join(process.resourcesPath, 'i2pd', platformDir, binaryName),
+    // Fallback: im app Verzeichnis
     join(appRoot, 'i2pd', platformDir, binaryName),
     join(appRoot, 'i2pd', binaryName),
+    // Development Pfade
     join(__dirname, '../../resources/i2pd', platformDir, binaryName),
     join(__dirname, '../resources/i2pd', platformDir, binaryName),
   ];
   
   for (const path of possiblePaths) {
     const normalizedPath = normalize(path);
+    console.log('[I2P] Checking binary path:', normalizedPath);
     if (existsSync(normalizedPath)) {
+      console.log('[I2P] Found binary at:', normalizedPath);
       return normalizedPath;
     }
   }
   
+  console.error('[I2P] Binary not found in any location');
+  console.error('[I2P] Checked paths:', possiblePaths);
   return normalize(possiblePaths[0]);
 }
 
