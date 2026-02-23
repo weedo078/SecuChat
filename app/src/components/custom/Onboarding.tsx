@@ -123,6 +123,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     if (!keyPair || !i2pIdentity) return;
 
     try {
+      // Initialize database before saving
+      await storageService.init();
+
       const user = {
         id: crypto.randomUUID(),
         username,
@@ -168,8 +171,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       await storageService.saveUser(user);
       setUser(user);
       onComplete();
-    } catch {
-      setError('Fehler beim Speichern');
+    } catch (err) {
+      console.error('[Onboarding] Save error:', err);
+      setError('Fehler beim Speichern: ' + (err instanceof Error ? err.message : 'Unbekannter Fehler'));
     }
   };
 
