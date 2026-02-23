@@ -1,6 +1,7 @@
 {
   "appId": "com.securechat.desktop",
   "productName": "SecuChat",
+  "asar": false,
   "directories": {
     "output": "release",
     "buildResources": "build-assets"
@@ -40,7 +41,6 @@
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "createDesktopShortcut": true,
-    "include": "installer.nsh",
-
+    "include": "installer.nsh"
   }
 }

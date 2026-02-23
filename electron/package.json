@@ -26,22 +26,19 @@
     "directories": {
       "output": "release"
     },
-    "asar": false,
     "files": [
-      "dist/**/*",
+      "dist/**/*"
+    ],
+    "extraResources": [
       {
         "from": "../app/dist",
         "to": "app",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       },
       {
-        "from": "../resources/i2pd",
+        "from": "resources/i2pd",
         "to": "i2pd",
-        "filter": [
-          "**/*"
-        ]
+        "filter": ["**/*"]
       }
     ],
     "publish": {
