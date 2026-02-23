@@ -53,7 +53,7 @@ jobs:
         working-directory: ./electron
         run: npm run dist:linux -- --x64
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-x64
           path: |
@@ -95,7 +95,7 @@ jobs:
         working-directory: ./electron
         run: npm run dist:win
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: windows-x64
           path: electron/release/*.exe
