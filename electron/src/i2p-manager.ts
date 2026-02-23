@@ -344,16 +344,14 @@ export class I2PManager {
         '--logfile', join(this.config.logDir, 'i2pd-internal.log'),
       ];
 
-      const cwd = dirname(binaryPath);
       console.log('[I2P] Spawning process:', binaryPath);
-      console.log('[I2P] Working directory:', cwd);
       console.log('[I2P] Data directory:', this.config.dataDir);
       console.log('[I2P] Arguments:', args.join(' '));
 
       this.process = spawn(binaryPath, args, {
         detached: false,
         windowsHide: true,
-        cwd: cwd,
+        // NOTE: No cwd specified - causes issues on some Windows systems
       });
 
       this.process.on('error', (error) => {
@@ -465,6 +463,9 @@ export class I2PManager {
         issues.push(`i2pd --version exit: ${result.status}`);
         if (result.error) {
           issues.push(`Error: ${result.error.message}`);
+        }
+        if (result.status !== 0) {
+          issues.push(`VC++ Redist needed: https://aka.ms/vs/17/release/vc_redist.x64.exe`);
         }
       } catch (e: any) {
         issues.push(`i2pd --version failed: ${e.message}`);
