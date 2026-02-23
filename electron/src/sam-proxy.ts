@@ -5,8 +5,14 @@
  * WebSocket (Renderer) ←→ SAM Proxy (Main) ←→ TCP (i2pd SAM)
  */
 
-import { WebSocketServer, WebSocket } from 'ws';
+import { WebSocketServer, WebSocket, RawData } from 'ws';
 import * as net from 'net';
+
+// WebSocket readyState Konstanten
+const WS_CONNECTING = 0;
+const WS_OPEN = 1;
+const WS_CLOSING = 2;
+const WS_CLOSED = 3;
 
 // Konfiguration
 const SAM_PROXY_WS_PORT = 7657;
@@ -113,7 +119,7 @@ export async function startSamProxy(): Promise<void> {
        * Sendet Fehlermeldung an WebSocket Client
        */
       const sendError = (error: string, message: string) => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws.readyState === WS_OPEN) {
           try {
             ws.send(JSON.stringify({ error, message }));
           } catch (e) {
@@ -158,7 +164,7 @@ export async function startSamProxy(): Promise<void> {
 
           // Starte Heartbeat
           heartbeatInterval = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
+            if (ws.readyState === WS_OPEN) {
               ws.ping();
             }
           }, WS_HEARTBEAT_INTERVAL);
@@ -173,7 +179,7 @@ export async function startSamProxy(): Promise<void> {
             console.error('[SAM-Proxy] Buffer overflow, closing connection');
             sendError('Buffer overflow', 'Response too large');
             cleanup();
-            if (ws.readyState === WebSocket.OPEN) {
+            if (ws.readyState === WS_OPEN) {
               ws.close(1011, 'Buffer overflow');
             }
             return;
@@ -184,7 +190,7 @@ export async function startSamProxy(): Promise<void> {
           buffer = lines.pop() ?? ''; // Unvollständige Zeile bleibt im Buffer
           
           for (const line of lines) {
-            if (line.trim() && ws.readyState === WebSocket.OPEN) {
+            if (line.trim() && ws.readyState === WS_OPEN) {
               try {
                 ws.send(line);
               } catch (e) {
@@ -210,7 +216,7 @@ export async function startSamProxy(): Promise<void> {
             // Informiere Client
             sendError('SAM_DISCONNECTED', 'Connection to i2pd SAM lost');
             
-            if (ws.readyState === WebSocket.OPEN) {
+            if (ws.readyState === WS_OPEN) {
               ws.close(1011, 'SAM connection lost');
             }
           }
@@ -224,7 +230,7 @@ export async function startSamProxy(): Promise<void> {
         if (tcpRetryCount >= TCP_MAX_RETRIES) {
           console.error(`[SAM-Proxy] Max retries (${TCP_MAX_RETRIES}) exceeded`);
           sendError('SAM_CONNECT_FAILED', `Failed to connect to SAM after ${TCP_MAX_RETRIES} attempts`);
-          if (ws.readyState === WebSocket.OPEN) {
+          if (ws.readyState === WS_OPEN) {
             ws.close(1011, 'SAM connection failed');
           }
           return;
@@ -240,7 +246,7 @@ export async function startSamProxy(): Promise<void> {
 
       // WebSocket Event Handler
       
-      ws.on('message', (data: WebSocket.RawData) => {
+      ws.on('message', (data: RawData) => {
         const msg = data.toString();
         const formattedMsg = msg.endsWith('\n') ? msg : msg + '\n';
         
@@ -264,7 +270,7 @@ export async function startSamProxy(): Promise<void> {
       });
 
       ws.on('ping', () => {
-        if (ws.readyState === WebSocket.OPEN) {
+        if (ws.readyState === WS_OPEN) {
           ws.pong();
         }
       });
