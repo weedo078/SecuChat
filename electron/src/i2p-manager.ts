@@ -140,6 +140,8 @@ export class I2PManager {
    */
   async start(): Promise<boolean> {
     console.log('[I2P] Starting I2P manager...');
+    console.log('[I2P] Platform:', process.platform);
+    console.log('[I2P] User data path:', app.getPath('userData'));
     
     if (await this.isPortOpen(this.config.samPort)) {
       console.log('[I2P] External i2pd detected on SAM port');
@@ -152,13 +154,16 @@ export class I2PManager {
     }
 
     const binaryPath = getI2pdBinaryPath();
+    console.log('[I2P] Binary path:', binaryPath);
     
     if (!existsSync(binaryPath)) {
       console.error('[I2P] Binary not found at:', binaryPath);
       return false;
     }
+    console.log('[I2P] Binary found');
 
     if (!this.setupDataDirectory()) {
+      console.error('[I2P] Failed to setup data directory - check permissions or antivirus');
       return false;
     }
 
@@ -230,6 +235,9 @@ export class I2PManager {
 
   private setupDataDirectory(): boolean {
     try {
+      console.log('[I2P] Setting up data directory:', this.config.dataDir);
+      console.log('[I2P] Log directory:', this.config.logDir);
+      
       const dirs = [
         this.config.dataDir,
         join(this.config.dataDir, 'certificates'),
@@ -237,18 +245,35 @@ export class I2PManager {
       ];
       
       for (const dir of dirs) {
+        console.log('[I2P] Checking directory:', dir);
         if (!existsSync(dir)) {
+          console.log('[I2P] Creating directory:', dir);
           mkdirSync(dir, { recursive: true });
+          // Verify directory was created
+          if (!existsSync(dir)) {
+            console.error('[I2P] Failed to create directory:', dir);
+            return false;
+          }
+          console.log('[I2P] Directory created successfully:', dir);
+        } else {
+          console.log('[I2P] Directory already exists:', dir);
         }
       }
 
       const certsSrc = getI2pdCertsPath();
       const certsDest = join(this.config.dataDir, 'certificates');
       
+      console.log('[I2P] Certificates source:', certsSrc);
+      console.log('[I2P] Certificates destination:', certsDest);
+      
       if (existsSync(certsSrc)) {
+        console.log('[I2P] Copying certificates...');
         this.copyCertificates(certsSrc, certsDest);
+      } else {
+        console.warn('[I2P] Certificates source not found:', certsSrc);
       }
 
+      console.log('[I2P] Data directory setup complete');
       return true;
     } catch (error) {
       console.error('[I2P] Failed to setup data directory:', error);
@@ -318,12 +343,16 @@ export class I2PManager {
         '--logfile', join(this.config.logDir, 'i2pd-internal.log'),
       ];
 
+      const cwd = dirname(binaryPath);
       console.log('[I2P] Spawning process:', binaryPath);
+      console.log('[I2P] Working directory:', cwd);
+      console.log('[I2P] Data directory:', this.config.dataDir);
+      console.log('[I2P] Arguments:', args.join(' '));
 
       this.process = spawn(binaryPath, args, {
         detached: false,
         windowsHide: true,
-        cwd: dirname(binaryPath),
+        cwd: cwd,
       });
 
       this.process.on('error', (error) => {
