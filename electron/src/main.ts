@@ -106,12 +106,27 @@ app.whenReady().then(async () => {
   const i2pSuccess = await initializeI2P();
 
   if (!i2pSuccess) {
+    const isWindows = process.platform === 'win32';
+    let detailMsg = 'SecuChat will start, but I2P connectivity may not work.\n\n';
+    
+    if (isWindows) {
+      detailMsg += 'Possible causes on Windows:\n' +
+                   '• Antivirus software blocking i2pd.exe\n' +
+                   '• Windows Defender preventing execution\n' +
+                   '• Missing write permissions to %appdata%\n\n' +
+                   'Try:\n' +
+                   '1. Add SecuChat to antivirus exclusions\n' +
+                   '2. Run as Administrator\n' +
+                   '3. Check Windows Event Viewer for errors';
+    } else {
+      detailMsg += 'Please check the logs or try restarting the application.';
+    }
+    
     const result = await dialog.showMessageBox({
       type: 'warning',
       title: 'I2P Warning',
       message: 'Could not start I2P daemon',
-      detail: 'SecuChat will start, but I2P connectivity may not work. ' +
-              'Please check the logs or try restarting the application.',
+      detail: detailMsg,
       buttons: ['Continue', 'Exit'],
       defaultId: 0,
     });
