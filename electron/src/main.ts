@@ -18,7 +18,7 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const APP_DIST = app.isPackaged
-  ? join(process.resourcesPath, 'app', 'app')
+  ? join(process.resourcesPath, 'app')
   : join(__dirname, '../../app/dist');
 
 // ─── Window ───────────────────────────────────────────────────────────────────
