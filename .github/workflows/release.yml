@@ -96,14 +96,13 @@ jobs:
 
       - name: Build Electron (Linux arm64)
         working-directory: ./electron
-        run: npm run dist:linux -- --arm64
+        # Note: Only AppImage for arm64, DEB requires fpm which has x86/arm64 issues
+        run: npm run dist:linux -- --arm64 --target AppImage
 
       - uses: actions/upload-artifact@v6
         with:
           name: linux-arm64
-          path: |
-            electron/release/*arm64.AppImage
-            electron/release/*arm64.deb
+          path: electron/release/*arm64.AppImage
           retention-days: 7
 
   # ── Windows x64 ──────────────────────────────────────────────────────────────
