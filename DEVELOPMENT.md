@@ -56,9 +56,9 @@ SecuChat/
 │       └── preload.ts          # Context bridge
 ├── resources/
 │   └── i2pd/
-│       ├── win/i2pd.exe        # Bundled i2pd (Windows)
-│       ├── linux/i2pd          # Bundled i2pd (Linux)
-│       └── certificates/       # I2P network certificates
+│       ├── win/i2pd.exe        # i2pd Binary (CI-downloaded, not in repo)
+│       ├── linux/i2pd          # i2pd Binary (CI-downloaded, not in repo)
+│       └── certificates/       # I2P network certificates (in repo)
 ├── sam-proxy/                  # Standalone SAM proxy (dev use only)
 └── plan/                       # Project docs & architecture notes
 ```
@@ -70,7 +70,7 @@ SecuChat/
 ### Prerequisites
 
 - Node.js 20+
-- i2pd (or use the bundled binary from `resources/i2pd/`)
+- i2pd (für lokale Entwicklung: manuell installieren oder aus CI-Release kopieren)
 
 ### Run with Electron
 
