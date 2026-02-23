@@ -1,256 +1,36 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron';
-import { spawn, ChildProcess } from 'child_process';
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
 import { join } from 'path';
-import { existsSync, mkdirSync, cpSync } from 'fs';
-import net from 'net';
-import { WebSocketServer, WebSocket } from 'ws';
 import { autoUpdater } from 'electron-updater';
+import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
+import { startSamProxy, stopSamProxy } from './sam-proxy';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
-let i2pdProcess: ChildProcess | null = null;
-let samProxyWss: WebSocketServer | null = null;
 let mainWindow: BrowserWindow | null = null;
+let i2pStatus = {
+  isRunning: false,
+  isReady: false,
+  error: null as string | null,
+};
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-// electron-builder (asar:false) places files relative to resources/app/:
-//   dist/**/*            → resources/app/          (main.js, preload.js)
-//   ../app/dist  to:app  → resources/app/app/       (index.html, assets)
-//   ../resources/i2pd to:i2pd → resources/app/i2pd/ (i2pd binary)
-const APP_ROOT = app.isPackaged ? join(process.resourcesPath, 'app') : null;
-
-const I2PD_BINARY = app.isPackaged
-  ? join(APP_ROOT!, 'i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd')
-  : join(__dirname, '../../resources/i2pd', process.platform === 'win32' ? 'win/i2pd.exe' : 'linux/i2pd');
-
-const I2PD_CERTS_SRC = app.isPackaged
-  ? join(APP_ROOT!, 'i2pd', 'certificates')
-  : join(__dirname, '../../resources/i2pd/certificates');
-
 const APP_DIST = app.isPackaged
-  ? join(APP_ROOT!, 'app')
+  ? join(process.resourcesPath, 'app', 'app')
   : join(__dirname, '../../app/dist');
-
-// ─── Utilities ────────────────────────────────────────────────────────────────
-
-function waitForPort(port: number, timeoutMs = 30000): Promise<boolean> {
-  return new Promise((resolve) => {
-    const deadline = Date.now() + timeoutMs;
-    function attempt() {
-      const socket = new net.Socket();
-      socket.setTimeout(1000);
-      socket.on('connect', () => { socket.destroy(); resolve(true); });
-      socket.on('error', () => { socket.destroy(); retry(); });
-      socket.on('timeout', () => { socket.destroy(); retry(); });
-      socket.connect(port, '127.0.0.1');
-    }
-    function retry() {
-      if (Date.now() >= deadline) { resolve(false); return; }
-      setTimeout(attempt, 500);
-    }
-    attempt();
-  });
-}
-
-// ─── i2pd setup ───────────────────────────────────────────────────────────────
-
-function setupI2pdDataDir(dataDir: string) {
-  const certsDir = join(dataDir, 'certificates');
-  if (!existsSync(certsDir) && existsSync(I2PD_CERTS_SRC)) {
-    mkdirSync(dataDir, { recursive: true });
-    cpSync(I2PD_CERTS_SRC, certsDir, { recursive: true });
-    console.log('[Main] Copied i2pd certificates to', certsDir);
-  }
-}
-
-// ─── i2pd ─────────────────────────────────────────────────────────────────────
-
-async function isI2pdRunning(): Promise<boolean> {
-  return new Promise((resolve) => {
-    const socket = new net.Socket();
-    socket.setTimeout(2000);
-    socket.on('connect', () => { socket.destroy(); resolve(true); });
-    socket.on('error', () => resolve(false));
-    socket.on('timeout', () => { socket.destroy(); resolve(false); });
-    socket.connect(7656, '127.0.0.1');
-  });
-}
-
-async function startI2pd(): Promise<boolean> {
-  if (await isI2pdRunning()) {
-    console.log('[Main] i2pd already running (external)');
-    return true;
-  }
-
-  if (!existsSync(I2PD_BINARY)) {
-    console.warn('[Main] No bundled i2pd found at', I2PD_BINARY);
-    console.warn('[Main] Please run i2pd manually: i2pd --sam.enabled=true');
-    return false;
-  }
-
-  const dataDir = join(app.getPath('userData'), 'i2pd');
-  setupI2pdDataDir(dataDir);
-  console.log('[Main] Starting bundled i2pd...');
-
-  i2pdProcess = spawn(I2PD_BINARY, [
-    '--datadir', dataDir,
-    // SAM for SecuChat
-    '--sam.enabled', 'true',
-    '--sam.address', '127.0.0.1',
-    '--sam.port', '7656',
-    // Web console for debugging
-    '--http.enabled', 'true',
-    '--http.address', '127.0.0.1',
-    '--http.port', '7070',
-    // Disable unused services
-    '--httpproxy.enabled', 'false',
-    '--socksproxy.enabled', 'false',
-    '--bob.enabled', 'false',
-    '--i2cp.enabled', 'false',
-    // Network configuration
-    '--upnp.enabled', 'true',
-    '--nat', 'true',
-    // Bandwidth for faster tunnel building
-    '--bandwidth', '256',
-    // Participate in network (helps with connectivity)
-    '--share', '10',
-    // Enable floodfill for better routing (if resources allow)
-    '--floodfill', 'false',
-  ], { detached: false, windowsHide: true });
-
-  i2pdProcess.stdout?.on('data', (d) => console.log('[i2pd]', d.toString().trim()));
-  i2pdProcess.stderr?.on('data', (d) => console.log('[i2pd]', d.toString().trim()));
-  i2pdProcess.on('exit', (code) => {
-    console.log(`[Main] i2pd exited (code ${code})`);
-    i2pdProcess = null;
-  });
-
-  // Wait up to 20s for i2pd to open SAM port (Windows can be slow)
-  const ready = await waitForPort(7656, 20000);
-  console.log('[Main] i2pd SAM port ready:', ready);
-  return ready;
-}
-
-function stopI2pd() {
-  if (i2pdProcess) {
-    console.log('[Main] Stopping i2pd...');
-    i2pdProcess.kill();
-    i2pdProcess = null;
-  }
-}
-
-// ─── SAM Proxy (inline) ───────────────────────────────────────────────────────
-
-const SAM_PROXY_WS_PORT = 7657;
-const SAM_PROXY_SAM_HOST = '127.0.0.1';
-const SAM_PROXY_SAM_PORT = 7656;
-const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10MB
-
-function startSamProxy(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const wss = new WebSocketServer({ port: SAM_PROXY_WS_PORT, host: '127.0.0.1' });
-    samProxyWss = wss;
-
-    wss.on('listening', () => {
-      console.log(`[SAM-Proxy] Listening on ws://127.0.0.1:${SAM_PROXY_WS_PORT}`);
-      resolve();
-    });
-
-    wss.on('error', (err) => {
-      console.error('[SAM-Proxy] Server error:', err.message);
-      reject(err);
-    });
-
-    wss.on('connection', (ws, req) => {
-      console.log(`[SAM-Proxy] Client connected from ${req.socket.remoteAddress}`);
-      const tcp = new net.Socket();
-      let tcpConnected = false;
-      let pendingMessages: string[] = [];
-      let buffer = '';
-
-      tcp.connect(SAM_PROXY_SAM_PORT, SAM_PROXY_SAM_HOST, () => {
-        tcpConnected = true;
-        console.log('[SAM-Proxy] Connected to i2pd SAM');
-        // Flush any messages that arrived while connecting
-        for (const msg of pendingMessages) {
-          tcp.write(msg);
-        }
-        pendingMessages = [];
-      });
-
-      tcp.on('data', (data) => {
-        buffer += data.toString('utf-8');
-        if (buffer.length > MAX_BUFFER_SIZE) {
-          console.error('[SAM-Proxy] Buffer overflow, closing');
-          tcp.destroy();
-          if (ws.readyState === WebSocket.OPEN) { ws.close(); }
-          return;
-        }
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          if (line.trim() && ws.readyState === WebSocket.OPEN) {
-            ws.send(line);
-          }
-        }
-      });
-
-      tcp.on('error', (err) => {
-        console.error('[SAM-Proxy] TCP error:', err.message);
-        tcp.destroy();
-        pendingMessages = [];
-        if (ws.readyState === WebSocket.OPEN) { ws.close(); }
-      });
-
-      tcp.on('close', () => {
-        tcpConnected = false;
-        pendingMessages = [];
-        if (ws.readyState === WebSocket.OPEN) { ws.close(); }
-      });
-
-      ws.on('message', (data) => {
-        const msg = data.toString();
-        const formattedMsg = msg.endsWith('\n') ? msg : msg + '\n';
-        if (!tcpConnected) {
-          // Buffer messages until TCP is connected
-          pendingMessages.push(formattedMsg);
-          return;
-        }
-        tcp.write(formattedMsg);
-      });
-
-      ws.on('close', () => {
-        pendingMessages = [];
-        tcp.destroy();
-      });
-      ws.on('error', () => {
-        pendingMessages = [];
-        tcp.destroy();
-      });
-    });
-  });
-}
-
-function stopSamProxy() {
-  if (samProxyWss) {
-    samProxyWss.close();
-    samProxyWss = null;
-    console.log('[Main] SAM proxy stopped');
-  }
-}
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
-function createWindow() {
+function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     minWidth: 800,
     minHeight: 600,
     title: 'SecuChat',
+    show: false,
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -266,7 +46,11 @@ function createWindow() {
     mainWindow.loadFile(join(APP_DIST, 'index.html'));
   }
 
-  // Open external links in system browser, not in app
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    mainWindow?.webContents.send('i2p:status', i2pStatus);
+  });
+
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: 'deny' };
@@ -275,28 +59,68 @@ function createWindow() {
   mainWindow.on('closed', () => { mainWindow = null; });
 }
 
+// ─── I2P Initialization ───────────────────────────────────────────────────────
+
+async function initializeI2P(): Promise<boolean> {
+  console.log('[Main] Initializing I2P...');
+
+  try {
+    const success = await startI2pd();
+
+    if (success) {
+      i2pStatus.isRunning = true;
+      i2pStatus.isReady = true;
+      console.log('[Main] I2P initialized successfully');
+      return true;
+    } else {
+      i2pStatus.isRunning = false;
+      i2pStatus.isReady = false;
+      i2pStatus.error = 'Failed to start i2pd';
+      console.error('[Main] I2P initialization failed');
+      return false;
+    }
+  } catch (error) {
+    i2pStatus.isRunning = false;
+    i2pStatus.isReady = false;
+    i2pStatus.error = error instanceof Error ? error.message : 'Unknown error';
+    console.error('[Main] I2P initialization error:', error);
+    return false;
+  }
+}
+
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
-  // Always start SAM proxy first - it handles i2pd not being ready gracefully.
-  // If i2pd isn't up yet, the TCP connection inside the proxy will fail and the
-  // WebSocket will be closed; the renderer retries every 30s automatically.
+  // Starte SAM Proxy zuerst (für I2P-Kommunikation)
   try {
     await startSamProxy();
+    console.log('[Main] SAM Proxy started');
   } catch (err: any) {
-    if (err?.code === 'EADDRINUSE') {
-      console.warn('[Main] SAM proxy port 7657 already in use (previous instance still running?)');
-    } else {
-      console.error('[Main] SAM proxy failed to start:', err);
-    }
+    console.error('[Main] SAM Proxy failed to start:', err);
+    // Nicht blockieren - App kann trotzdem ohne I2P laufen
   }
 
-  // Start i2pd in background - doesn't block the window or the SAM proxy.
-  startI2pd().then(ok => {
-    if (!ok) console.warn('[Main] i2pd not running - I2P features unavailable until it starts.');
-  }).catch(err => console.error('[Main] i2pd startup error:', err));
+  // Starte i2pd
+  const i2pSuccess = await initializeI2P();
+
+  if (!i2pSuccess) {
+    const result = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'I2P Warning',
+      message: 'Could not start I2P daemon',
+      detail: 'SecuChat will start, but I2P connectivity may not work. ' +
+              'Please check the logs or try restarting the application.',
+      buttons: ['Continue', 'Exit'],
+      defaultId: 0,
+    });
+
+    if (result.response === 1) {
+      app.quit();
+      return;
+    }
+  }
 
   createWindow();
 
@@ -305,24 +129,24 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on('window-all-closed', () => {
-  stopSamProxy();
-  stopI2pd();
+app.on('window-all-closed', async () => {
+  console.log('[Main] All windows closed');
+  await stopSamProxy();
+  await stopI2pd();
   if (process.platform !== 'darwin') app.quit();
 });
 
-app.on('before-quit', () => {
-  stopSamProxy();
-  stopI2pd();
+app.on('before-quit', async () => {
+  console.log('[Main] Before quit');
+  await stopSamProxy();
+  await stopI2pd();
 });
 
 // ─── Auto-Updater ─────────────────────────────────────────────────────────────
 
-// Configure auto-updater to use GitHub releases
-autoUpdater.autoDownload = false; // We'll ask user first
+autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
 
-// Check for updates (called from renderer)
 function checkForUpdates(): void {
   if (isDev) {
     console.log('[Auto-Update] Skipped in development mode');
@@ -334,7 +158,6 @@ function checkForUpdates(): void {
   });
 }
 
-// Auto-update event handlers
 autoUpdater.on('checking-for-update', () => {
   console.log('[Auto-Update] Checking for update...');
   mainWindow?.webContents.send('update:checking');
@@ -373,7 +196,9 @@ autoUpdater.on('update-downloaded', (info) => {
   });
 });
 
-// IPC handlers for auto-updater
+// ─── IPC ─────────────────────────────────────────────────────────────────────
+
+// Auto-updater IPC
 ipcMain.handle('update:check', () => {
   checkForUpdates();
 });
@@ -394,16 +219,41 @@ ipcMain.handle('update:install', () => {
   autoUpdater.quitAndInstall();
 });
 
-// ─── IPC ─────────────────────────────────────────────────────────────────────
-
+// I2P IPC
 ipcMain.handle('i2p:status', async () => ({
-  i2pdRunning: await isI2pdRunning(),
-  samProxyRunning: samProxyWss !== null,
+  ...i2pStatus,
+  isReady: await isI2pReady(),
+  samInfo: getI2PManager().getSamInfo(),
 }));
+
+ipcMain.handle('i2p:restart', async () => {
+  console.log('[Main] Restarting I2P...');
+  await stopI2pd();
+  const success = await initializeI2P();
+  mainWindow?.webContents.send('i2p:status', i2pStatus);
+  return success;
+});
 
 // Check for updates on startup (after 10s delay)
 app.whenReady().then(() => {
   setTimeout(() => {
     checkForUpdates();
   }, 10000);
+});
+
+// ─── Error Handling ───────────────────────────────────────────────────────────
+
+process.on('uncaughtException', (error) => {
+  console.error('[Main] Uncaught exception:', error);
+  stopI2pd().finally(() => {
+    dialog.showErrorBox(
+      'Fatal Error',
+      `An unexpected error occurred:\n${error.message}\n\nThe application will now exit.`
+    );
+    app.quit();
+  });
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Main] Unhandled rejection at:', promise, 'reason:', reason);
 });
