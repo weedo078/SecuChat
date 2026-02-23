@@ -35,7 +35,8 @@
     "target": [
       { "target": "nsis", "arch": ["x64"] }
     ],
-    "icon": "build-assets/icon.png"
+    "icon": "build-assets/icon.png",
+    "artifactName": "${productName}.Setup.${version}.${ext}"
   },
   "nsis": {
     "oneClick": false,

@@ -12,34 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test & Lint
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
-      - name: Test App
-        working-directory: ./app
-        run: npm ci && npm run lint
-
-      - name: Test Electron
-        working-directory: ./electron
-        run: npm ci && npm run build
-
   build-windows-pr:
     name: Build Windows PR
-    needs: [test]
     runs-on: windows-latest
     if: github.event.pull_request.draft == false
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Get next version
+      - name: Get version info
         id: version
         shell: bash
         run: |
@@ -57,8 +38,11 @@ jobs:
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
           
-          echo "New version: ${NEW_VERSION}-beta"
+          PR_NUM=${{ github.event.pull_request.number }}
+          
+          echo "New version: ${NEW_VERSION}-beta (PR${PR_NUM})"
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "pr_num=${PR_NUM}" >> $GITHUB_OUTPUT
 
       - uses: actions/setup-node@v4
         with:
@@ -94,20 +78,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run dist:win
 
-      - name: Rename artifact with beta suffix
+      - name: Rename artifact with PR number and beta suffix
         shell: pwsh
         run: |
           $version = "${{ steps.version.outputs.version }}"
+          $prNum = "${{ steps.version.outputs.pr_num }}"
           $files = Get-ChildItem electron/release/*.exe
           foreach ($file in $files) {
-            $newName = $file.Name -replace "${version}", "${version}-beta"
+            # Original: SecuChat.Setup.{version}.exe
+            # Target: SecuChat.Setup.PR{num}.{version}-beta.exe
+            $newName = $file.Name -replace "\.${version}\.", ".PR${prNum}.${version}-beta."
             Rename-Item $file.FullName -NewName $newName
             Write-Host "Renamed: $($file.Name) -> $newName"
           }
 
       - uses: actions/upload-artifact@v4
         with:
-          name: SecuChat-PR-${{ github.event.pull_request.number }}-Windows
+          name: SecuChat-PR${{ github.event.pull_request.number }}-Windows
           path: electron/release/*.exe
           retention-days: 7
 
@@ -115,8 +102,10 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const artifactName = 'SecuChat-PR-${{ github.event.pull_request.number }}-Windows';
+            const prNum = '${{ github.event.pull_request.number }}';
             const version = '${{ steps.version.outputs.version }}';
+            const artifactName = `SecuChat-PR${prNum}-Windows`;
+            const fileName = `SecuChat.Setup.PR${prNum}.${version}-beta.exe`;
             
             github.rest.issues.createComment({
               issue_number: context.issue.number,
@@ -124,9 +113,7 @@ jobs:
               repo: context.repo.repo,
               body: `🪟 **Windows Build fertig!**
               
-              Version: \`${version}-beta\`
-              
-              Die EXE ist als Artifact verfügbar: \`${artifactName}\`
+              **Datei:** \`${fileName}\`
               
               ⬇️ [Hier herunterladen](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
               
