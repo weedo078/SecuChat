@@ -259,7 +259,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
       
     } catch (error) {
-      console.error('Error initializing app:', error);
+      console.error('[AppContext] Error initializing app:', error);
+      if (error instanceof Error) {
+        console.error('[AppContext] Error details:', error.name, error.message, error.stack);
+      }
+      // Even on error, allow the app to proceed to onboarding
     } finally {
       setIsLoading(false);
     }
