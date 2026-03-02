@@ -58,10 +58,83 @@ async function decryptData(encryptedBase64: string, passphrase: string): Promise
   return new TextDecoder().decode(decrypted);
 }
 
+/**
+ * localStorage-based fallback storage for environments where IndexedDB is unavailable
+ * (e.g. file:// protocol in some browsers).
+ */
+class LocalStorageFallback {
+  private prefix = 'secuchat_';
+
+  private key(store: string): string {
+    return `${this.prefix}${store}`;
+  }
+
+  private load(store: string): Record<string, unknown> {
+    try {
+      const raw = localStorage.getItem(this.key(store));
+      return raw ? JSON.parse(raw) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private save(store: string, data: Record<string, unknown>): void {
+    localStorage.setItem(this.key(store), JSON.stringify(data));
+  }
+
+  put(store: string, keyField: string, value: Record<string, unknown>): void {
+    const data = this.load(store);
+    const id = value[keyField] as string;
+    data[id] = value;
+    this.save(store, data);
+  }
+
+  get(store: string, id: string): unknown | null {
+    const data = this.load(store);
+    return data[id] ?? null;
+  }
+
+  getAll(store: string): unknown[] {
+    return Object.values(this.load(store));
+  }
+
+  remove(store: string, id: string): void {
+    const data = this.load(store);
+    delete data[id];
+    this.save(store, data);
+  }
+
+  clear(store: string): void {
+    localStorage.removeItem(this.key(store));
+  }
+
+  getByIndex(store: string, field: string, value: string): unknown | null {
+    const all = this.getAll(store) as Record<string, unknown>[];
+    return all.find(item => item[field] === value) ?? null;
+  }
+}
+
+/** Key field for each object store */
+const STORE_KEY_FIELDS: Record<string, string> = {
+  user: 'id',
+  contacts: 'id',
+  chats: 'id',
+  messages: 'id',
+  settings: 'key',
+  devices: 'deviceId',
+};
+
 export class StorageService {
   private static instance: StorageService;
   private db: IDBDatabase | null = null;
+  private fallback: LocalStorageFallback | null = null;
   private encryptionPassphrase: string | null = null;
+  private _usingFallback = false;
+
+  /** True when IndexedDB was unavailable and localStorage fallback is active */
+  get usingFallback(): boolean {
+    return this._usingFallback;
+  }
 
   static getInstance(): StorageService {
     if (!StorageService.instance) {
@@ -92,15 +165,58 @@ export class StorageService {
   }
 
   /**
-   * Initialize the database
+   * Initialize the database.
+   * Attempts IndexedDB first; falls back to localStorage if IndexedDB is
+   * unavailable (common on file:// protocol).
    */
   async init(): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
+    // Detect environments where IndexedDB is known to be broken
+    const isFileProtocol = typeof location !== 'undefined' && location.protocol === 'file:';
 
-      request.onerror = () => reject(request.error);
+    try {
+      if (typeof indexedDB === 'undefined') {
+        throw new Error('IndexedDB API not available');
+      }
+      await this.initIndexedDB();
+      console.log('[Storage] IndexedDB initialized successfully');
+    } catch (error) {
+      console.warn('[Storage] IndexedDB init failed, falling back to localStorage:', error);
+      if (isFileProtocol) {
+        console.info('[Storage] Running on file:// protocol — IndexedDB may not be fully supported. Using localStorage fallback.');
+      }
+      this.initLocalStorageFallback();
+    }
+  }
+
+  private async initIndexedDB(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let request: IDBOpenDBRequest;
+      try {
+        request = indexedDB.open(DB_NAME, DB_VERSION);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+
+      // Timeout — some browsers hang silently on file://
+      const timeout = setTimeout(() => {
+        reject(new Error('IndexedDB open timed out'));
+      }, 5000);
+
+      request.onerror = () => {
+        clearTimeout(timeout);
+        reject(request.error);
+      };
       request.onsuccess = () => {
+        clearTimeout(timeout);
         this.db = request.result;
+
+        // Handle unexpected close (e.g. storage cleared by browser)
+        this.db.onclose = () => {
+          console.warn('[Storage] IndexedDB connection closed unexpectedly');
+          this.db = null;
+        };
+
         resolve();
       };
 
@@ -143,11 +259,21 @@ export class StorageService {
           deviceStore.createIndex('i2pAddress', 'i2pAddress', { unique: true });
         }
       };
+
+      request.onblocked = () => {
+        console.warn('[Storage] IndexedDB open blocked — another connection may be open');
+      };
     });
   }
 
+  private initLocalStorageFallback(): void {
+    this.fallback = new LocalStorageFallback();
+    this._usingFallback = true;
+    console.log('[Storage] localStorage fallback initialized');
+  }
+
   /**
-   * Get a store reference
+   * Get a store reference (IndexedDB mode only)
    */
   private getStore(storeName: string, mode: IDBTransactionMode = 'readonly'): IDBObjectStore {
     if (!this.db) {
@@ -155,6 +281,88 @@ export class StorageService {
     }
     const transaction = this.db.transaction(storeName, mode);
     return transaction.objectStore(storeName);
+  }
+
+  /** Helper: put a record (works with both backends) */
+  private async putRecord(storeName: string, value: Record<string, unknown>): Promise<void> {
+    if (this.fallback) {
+      this.fallback.put(storeName, STORE_KEY_FIELDS[storeName], value);
+      return;
+    }
+    const store = this.getStore(storeName, 'readwrite');
+    return new Promise((resolve, reject) => {
+      const request = store.put(value);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Helper: get a single record by key */
+  private async getRecord(storeName: string, key: string): Promise<unknown | null> {
+    if (this.fallback) {
+      return this.fallback.get(storeName, key);
+    }
+    const store = this.getStore(storeName);
+    return new Promise((resolve, reject) => {
+      const request = store.get(key);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Helper: get all records from a store */
+  private async getAllRecords(storeName: string): Promise<unknown[]> {
+    if (this.fallback) {
+      return this.fallback.getAll(storeName);
+    }
+    const store = this.getStore(storeName);
+    return new Promise((resolve, reject) => {
+      const request = store.getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Helper: delete a record by key */
+  private async deleteRecord(storeName: string, key: string): Promise<void> {
+    if (this.fallback) {
+      this.fallback.remove(storeName, key);
+      return;
+    }
+    const store = this.getStore(storeName, 'readwrite');
+    return new Promise((resolve, reject) => {
+      const request = store.delete(key);
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Helper: clear an entire store */
+  private async clearStore(storeName: string): Promise<void> {
+    if (this.fallback) {
+      this.fallback.clear(storeName);
+      return;
+    }
+    const store = this.getStore(storeName, 'readwrite');
+    return new Promise((resolve, reject) => {
+      const request = store.clear();
+      request.onsuccess = () => resolve();
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  /** Helper: get a record by index field value */
+  private async getByIndex(storeName: string, field: string, value: string): Promise<unknown | null> {
+    if (this.fallback) {
+      return this.fallback.getByIndex(storeName, field, value);
+    }
+    const store = this.getStore(storeName);
+    return new Promise((resolve, reject) => {
+      const index = store.index(field);
+      const request = index.get(value);
+      request.onsuccess = () => resolve(request.result ?? null);
+      request.onerror = () => reject(request.error);
+    });
   }
 
   // User operations
@@ -170,173 +378,96 @@ export class StorageService {
         userToStore.i2pPrivateKey = await encryptData(user.i2pPrivateKey, this.encryptionPassphrase);
       }
     }
-    const store = this.getStore('user', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put(userToStore);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('user', userToStore as unknown as Record<string, unknown>);
   }
 
   async getUser(): Promise<User | null> {
-    const store = this.getStore('user');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = async () => {
-        const users = request.result;
-        if (users.length === 0) {
-          resolve(null);
-          return;
+    const users = await this.getAllRecords('user') as User[];
+    if (users.length === 0) return null;
+    let user = users[0];
+    // Decrypt sensitive fields if passphrase is set
+    if (this.encryptionPassphrase && (user.pgpPrivateKey || user.i2pPrivateKey)) {
+      try {
+        user = { ...user };
+        if (user.pgpPrivateKey) {
+          user.pgpPrivateKey = await decryptData(user.pgpPrivateKey, this.encryptionPassphrase);
         }
-        let user = users[0] as User;
-        // Decrypt sensitive fields if passphrase is set
-        if (this.encryptionPassphrase && (user.pgpPrivateKey || user.i2pPrivateKey)) {
-          try {
-            user = { ...user };
-            if (user.pgpPrivateKey) {
-              user.pgpPrivateKey = await decryptData(user.pgpPrivateKey, this.encryptionPassphrase);
-            }
-            if (user.i2pPrivateKey) {
-              user.i2pPrivateKey = await decryptData(user.i2pPrivateKey, this.encryptionPassphrase);
-            }
-          } catch (error) {
-            console.error('Failed to decrypt user data:', error);
-            // Return user without decrypted keys if decryption fails
-          }
+        if (user.i2pPrivateKey) {
+          user.i2pPrivateKey = await decryptData(user.i2pPrivateKey, this.encryptionPassphrase);
         }
-        resolve(user);
-      };
-      request.onerror = () => reject(request.error);
-    });
+      } catch (error) {
+        console.error('Failed to decrypt user data:', error);
+      }
+    }
+    return user;
   }
 
   async deleteUser(): Promise<void> {
-    const store = this.getStore('user', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.clear();
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.clearStore('user');
   }
 
   // Contact operations
   async saveContact(contact: Contact): Promise<void> {
-    const store = this.getStore('contacts', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put(contact);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('contacts', contact as unknown as Record<string, unknown>);
   }
 
   async getContact(id: string): Promise<Contact | null> {
-    const store = this.getStore('contacts');
-    return new Promise((resolve, reject) => {
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getRecord('contacts', id) as Contact | null;
   }
 
   async getContactByFingerprint(fingerprint: string): Promise<Contact | null> {
-    const store = this.getStore('contacts');
-    return new Promise((resolve, reject) => {
-      const index = store.index('fingerprint');
-      const request = index.get(fingerprint);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getByIndex('contacts', 'fingerprint', fingerprint) as Contact | null;
   }
 
   async getAllContacts(): Promise<Contact[]> {
-    const store = this.getStore('contacts');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getAllRecords('contacts') as Contact[];
   }
 
   async deleteContact(id: string): Promise<void> {
-    const store = this.getStore('contacts', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.delete(id);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.deleteRecord('contacts', id);
   }
 
   // Chat operations
   async saveChat(chat: Chat): Promise<void> {
-    const store = this.getStore('chats', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put(chat);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('chats', chat as unknown as Record<string, unknown>);
   }
 
   async getChat(id: string): Promise<Chat | null> {
-    const store = this.getStore('chats');
-    return new Promise((resolve, reject) => {
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getRecord('chats', id) as Chat | null;
   }
 
   async getChatByContactId(contactId: string): Promise<Chat | null> {
-    const store = this.getStore('chats');
-    return new Promise((resolve, reject) => {
-      const index = store.index('contactId');
-      const request = index.get(contactId);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getByIndex('chats', 'contactId', contactId) as Chat | null;
   }
 
   async getAllChats(): Promise<Chat[]> {
-    const store = this.getStore('chats');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getAllRecords('chats') as Chat[];
   }
 
   async deleteChat(id: string): Promise<void> {
-    const store = this.getStore('chats', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.delete(id);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.deleteRecord('chats', id);
   }
 
   // Message operations
   async saveMessage(message: Message): Promise<void> {
-    const store = this.getStore('messages', 'readwrite');
     // IMPORTANT: Never store decryptedContent in database for security
-    // decryptedContent is kept in memory only
     const messageToStore = { ...message };
     delete (messageToStore as { decryptedContent?: string }).decryptedContent;
-    return new Promise((resolve, reject) => {
-      const request = store.put(messageToStore);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('messages', messageToStore as unknown as Record<string, unknown>);
   }
 
   async getMessage(id: string): Promise<Message | null> {
-    const store = this.getStore('messages');
-    return new Promise((resolve, reject) => {
-      const request = store.get(id);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getRecord('messages', id) as Message | null;
   }
 
   async getMessagesByChat(chatId: string, limit: number = 100, offset: number = 0): Promise<Message[]> {
+    if (this.fallback) {
+      const all = await this.getAllRecords('messages') as Message[];
+      const filtered = all
+        .filter(m => m.chatId === chatId)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      return filtered.slice(offset, offset + limit);
+    }
     const store = this.getStore('messages');
     return new Promise((resolve, reject) => {
       const index = store.index('timestamp');
@@ -365,6 +496,12 @@ export class StorageService {
   }
 
   async getMessagesByChatId(chatId: string): Promise<Message[]> {
+    if (this.fallback) {
+      const all = await this.getAllRecords('messages') as Message[];
+      return all
+        .filter(m => m.chatId === chatId)
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    }
     const store = this.getStore('messages');
     return new Promise((resolve, reject) => {
       const index = store.index('chatId');
@@ -385,25 +522,13 @@ export class StorageService {
   }
 
   async getAllMessages(): Promise<Message[]> {
-    const store = this.getStore('messages');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => {
-        const messages = request.result as Message[];
-        messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-        resolve(messages);
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const messages = await this.getAllRecords('messages') as Message[];
+    messages.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+    return messages;
   }
 
   async deleteMessage(id: string): Promise<void> {
-    const store = this.getStore('messages', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.delete(id);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.deleteRecord('messages', id);
   }
 
   async deleteMessagesByChat(chatId: string): Promise<void> {
@@ -415,104 +540,48 @@ export class StorageService {
 
   // Settings operations
   async saveSettings(settings: AppSettings): Promise<void> {
-    const store = this.getStore('settings', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put({ key: 'appSettings', ...settings });
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('settings', { key: 'appSettings', ...settings } as unknown as Record<string, unknown>);
   }
 
   async getSettings(): Promise<AppSettings | null> {
-    const store = this.getStore('settings');
-    return new Promise((resolve, reject) => {
-      const request = store.get('appSettings');
-      request.onsuccess = () => {
-        const result = request.result;
-        if (result) {
-          const settings = { ...result };
-          delete settings.key;
-          resolve(settings as AppSettings);
-        } else {
-          resolve(null);
-        }
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const result = await this.getRecord('settings', 'appSettings') as Record<string, unknown> | null;
+    if (!result) return null;
+    const settings = { ...result };
+    delete settings.key;
+    return settings as unknown as AppSettings;
   }
 
   async saveSecuritySettings(settings: SecuritySettings): Promise<void> {
-    const store = this.getStore('settings', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put({ key: 'securitySettings', ...settings });
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('settings', { key: 'securitySettings', ...settings } as unknown as Record<string, unknown>);
   }
 
   async getSecuritySettings(): Promise<SecuritySettings | null> {
-    const store = this.getStore('settings');
-    return new Promise((resolve, reject) => {
-      const request = store.get('securitySettings');
-      request.onsuccess = () => {
-        const result = request.result;
-        if (result) {
-          const settings = { ...result };
-          delete settings.key;
-          resolve(settings as SecuritySettings);
-        } else {
-          resolve(null);
-        }
-      };
-      request.onerror = () => reject(request.error);
-    });
+    const result = await this.getRecord('settings', 'securitySettings') as Record<string, unknown> | null;
+    if (!result) return null;
+    const settings = { ...result };
+    delete settings.key;
+    return settings as unknown as SecuritySettings;
   }
 
   // Device operations (multi-device sync)
   async saveDevice(device: DeviceInfo): Promise<void> {
-    const store = this.getStore('devices', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.put(device);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.putRecord('devices', device as unknown as Record<string, unknown>);
   }
 
   async getDevice(deviceId: string): Promise<DeviceInfo | null> {
-    const store = this.getStore('devices');
-    return new Promise((resolve, reject) => {
-      const request = store.get(deviceId);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getRecord('devices', deviceId) as DeviceInfo | null;
   }
 
   async getDeviceByI2PAddress(i2pAddress: string): Promise<DeviceInfo | null> {
-    const store = this.getStore('devices');
-    return new Promise((resolve, reject) => {
-      const index = store.index('i2pAddress');
-      const request = index.get(i2pAddress);
-      request.onsuccess = () => resolve(request.result || null);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getByIndex('devices', 'i2pAddress', i2pAddress) as DeviceInfo | null;
   }
 
   async getAllDevices(): Promise<DeviceInfo[]> {
-    const store = this.getStore('devices');
-    return new Promise((resolve, reject) => {
-      const request = store.getAll();
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error);
-    });
+    return await this.getAllRecords('devices') as DeviceInfo[];
   }
 
   async deleteDevice(deviceId: string): Promise<void> {
-    const store = this.getStore('devices', 'readwrite');
-    return new Promise((resolve, reject) => {
-      const request = store.delete(deviceId);
-      request.onsuccess = () => resolve();
-      request.onerror = () => reject(request.error);
-    });
+    await this.deleteRecord('devices', deviceId);
   }
 
   // Backup and restore
@@ -593,12 +662,7 @@ export class StorageService {
   async clearAllData(): Promise<void> {
     const stores = ['user', 'contacts', 'chats', 'messages', 'settings', 'devices'];
     for (const storeName of stores) {
-      const store = this.getStore(storeName, 'readwrite');
-      await new Promise<void>((resolve, reject) => {
-        const request = store.clear();
-        request.onsuccess = () => resolve();
-        request.onerror = () => reject(request.error);
-      });
+      await this.clearStore(storeName);
     }
   }
 }

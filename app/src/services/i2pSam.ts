@@ -446,6 +446,11 @@ class SAMService {
   /**
    * Send data over a stream
    */
+  isStreamOpen(streamId: number): boolean {
+    const stream = this.streams.get(streamId);
+    return !!(stream?.socket && stream.socket.readyState === WebSocket.OPEN);
+  }
+
   async send(streamId: number, data: string): Promise<void> {
     const stream = this.streams.get(streamId);
 
