@@ -293,7 +293,9 @@ class I2PService {
   async sendMessage(to: string, message: any): Promise<boolean> {
     const peer = this.peers.get(to);
 
-    if (!peer || peer.status !== 'connected' || !peer.samStreamId) {
+    // Check if stream socket is actually still open
+    const streamStillOpen = peer?.samStreamId != null && samService.isStreamOpen(peer.samStreamId);
+    if (!peer || peer.status !== 'connected' || !peer.samStreamId || !streamStillOpen) {
       // Try to connect first
       try {
         await this.connectToPeer(to);
@@ -313,9 +315,21 @@ class I2PService {
       await samService.send(peer.samStreamId, JSON.stringify(message));
       return true;
     } catch (error) {
-      console.error('[I2P] Failed to send message:', error);
+      console.warn('[I2P] Send failed, attempting reconnect:', error);
       peer.status = 'disconnected';
-      return false;
+      // Try reconnect + resend once
+      try {
+        await this.connectToPeer(to);
+        const reconnectedPeer = this.peers.get(to);
+        if (!reconnectedPeer?.samStreamId) {
+          throw new Error('Peer nicht verbunden nach Reconnect');
+        }
+        await samService.send(reconnectedPeer.samStreamId, JSON.stringify(message));
+        return true;
+      } catch (retryError) {
+        console.error('[I2P] Failed to send message after reconnect:', retryError);
+        return false;
+      }
     }
   }
 
