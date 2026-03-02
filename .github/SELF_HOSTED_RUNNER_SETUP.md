@@ -1,169 +1,169 @@
 # Self-Hosted GitHub Actions Runner Setup
 
-## Übersicht
+## Overview
 
-Dieses Projekt verwendet **self-hosted GitHub Actions Runner** für die Electron Builds. 
-Diese Anleitung erklärt die Einrichtung.
+This project uses **self-hosted GitHub Actions runners** for Electron builds. 
+This guide explains the setup.
 
-## Warum Self-Hosted?
+## Why Self-Hosted?
 
-- **Electron ARM64 Builds**: GitHub-hosted runner haben keine ARM64 Unterstützung für Linux
-- **Wine für Windows Builds**: Eigene Konfiguration für Windows-Builds auf Linux
-- **Performance**: Schnellere Builds durch dedizierte Hardware
-- **Kosten**: Keine Limits bei GitHub Actions Minuten
+- **Electron ARM64 builds**: GitHub-hosted runners have no ARM64 support for Linux
+- **Wine for Windows builds**: Custom configuration for Windows builds on Linux
+- **Performance**: Faster builds through dedicated hardware
+- **Cost**: No limits on GitHub Actions minutes
 
-## Sicherheitshinweise
+## Security Notes
 
-⚠️ **WICHTIG**: Self-hosted Runner haben Zugriff auf:
-- Repository-Code
-- Secrets (wenn konfiguriert)
-- Die komplette Build-Umgebung
+⚠️ **IMPORTANT**: Self-hosted runners have access to:
+- Repository code
+- Secrets (if configured)
+- The complete build environment
 
-**Empfohlene Sicherheitsmaßnahmen:**
-1. Runner nur für **public Repositories** oder **vertrauenswürdige Contributor** verwenden
-2. Für PRs von Forks: `runs-on: ubuntu-latest` statt `runs-on: self-hosted`
-3. Secrets nur in spezifischen Jobs verfügbar machen
-4. Runner regelmäßig aktualisieren
+**Recommended security measures:**
+1. Only use runners for **public repositories** or **trusted contributors**
+2. For PRs from forks: `runs-on: ubuntu-latest` instead of `runs-on: self-hosted`
+3. Only make secrets available in specific jobs
+4. Regularly update runners
 
-## Einrichtung
+## Setup
 
-### 1. Runner aus anderem Projekt registrieren
+### 1. Register runner from another project
 
-Falls du bereits einen Runner in einem anderen Projekt hast, kannst du ihn **mehreren Repositories zuweisen**:
+If you already have a runner in another project, you can **assign it to multiple repositories**:
 
 ```bash
-# Auf dem Runner-Server
+# On the runner server
 sudo ./svc.sh stop
 
-# Neuen Runner für dieses Repo hinzufügen
-./config.sh --url https://github.com/DEIN_USERNAME/SecuChat --token GITHUB_TOKEN
+# Add new runner for this repo
+./config.sh --url https://github.com/YOUR_USERNAME/SecuChat --token GITHUB_TOKEN
 
-# Service neu starten
+# Restart service
 sudo ./svc.sh start
 ```
 
-### 2. Neuen Runner einrichten (ARM64 Server)
+### 2. Set up new runner (ARM64 server)
 
-Auf deinem ARM64 Server (z.B. Oracle Cloud):
+On your ARM64 server (e.g., Oracle Cloud):
 
 ```bash
-# 1. GitHub Runner herunterladen
+# 1. Download GitHub runner
 cd ~
 mkdir actions-runner && cd actions-runner
 
-# ARM64 Version
+# ARM64 version
 RUNNER_VERSION="2.311.0"
 curl -o actions-runner-linux-arm64.tar.gz \
   -L https://github.com/actions/runner/releases/download/v${RUNNER_VERSION}/actions-runner-linux-arm64-${RUNNER_VERSION}.tar.gz
 
-# Entpacken
+# Extract
 tar xzf ./actions-runner-linux-arm64.tar.gz
 
-# 2. Konfigurieren
-./config.sh --url https://github.com/DEIN_USERNAME/SecuChat --token GITHUB_TOKEN
+# 2. Configure
+./config.sh --url https://github.com/YOUR_USERNAME/SecuChat --token GITHUB_TOKEN
 
-# 3. Als Systemd Service installieren
+# 3. Install as systemd service
 sudo ./svc.sh install
 sudo ./svc.sh start
 
-# 4. Status prüfen
+# 4. Check status
 sudo ./svc.sh status
 ```
 
-### 3. Erforderliche Dependencies
+### 3. Required dependencies
 
 ```bash
 # Node.js 20
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
-# Build-Tools
+# Build tools
 sudo apt-get update
 sudo apt-get install -y build-essential python3 git
 
-# Für Electron Windows Builds (Wine)
+# For Electron Windows builds (Wine)
 sudo dpkg --add-architecture i386
 sudo apt-get update
 sudo apt-get install -y wine64 wine32
 
-# Für Electron Linux Builds
+# For Electron Linux builds
 sudo apt-get install -y libarchive-tools rpm
 
-# Für Android (später)
+# For Android (later)
 # sudo apt-get install -y openjdk-17-jdk android-sdk
 ```
 
-### 4. Labels konfigurieren
+### 4. Configure labels
 
-Um spezifische Runner zuzuweisen, kannst du Labels verwenden:
+To assign specific runners, you can use labels:
 
 ```bash
-# Beim Konfigurieren Labels setzen
-./config.sh --url https://github.com/DEIN_USERNAME/SecuChat \
+# Set labels during configuration
+./config.sh --url https://github.com/YOUR_USERNAME/SecuChat \
   --token GITHUB_TOKEN \
   --labels self-hosted,linux,arm64,electron-builder
 ```
 
-Dann im Workflow:
+Then in the workflow:
 ```yaml
 runs-on: [self-hosted, linux, arm64]
 ```
 
-## Mehrere Repositories
+## Multiple Repositories
 
-Ein Runner kann **mehreren Repositories** gleichzeitig dienen:
+A runner can serve **multiple repositories** simultaneously:
 
 ```bash
-# Bestehenden Runner stoppen
+# Stop existing runner
 sudo ./svc.sh stop
 
-# Zusätzliches Repo hinzufügen
-./config.sh --url https://github.com/DEIN_USERNAME/ANDERES_REPO --token TOKEN
+# Add additional repo
+./config.sh --url https://github.com/YOUR_USERNAME/OTHER_REPO --token TOKEN
 
-# Service neu starten
+# Restart service
 sudo ./svc.sh start
 ```
 
-Oder einen **neuen Runner** im selben Ordner erstellen:
+Or create a **new runner** in the same folder:
 
 ```bash
 mkdir ../actions-runner-secuchat && cd ../actions-runner-secuchat
 curl -o actions-runner-linux-arm64.tar.gz -L https://github.com/.../actions-runner-linux-arm64-...
 tar xzf ./actions-runner-linux-arm64.tar.gz
-./config.sh --url https://github.com/DEIN_USERNAME/SecuChat --token TOKEN
+./config.sh --url https://github.com/YOUR_USERNAME/SecuChat --token TOKEN
 sudo ./svc.sh install
 sudo ./svc.sh start
 ```
 
 ## Troubleshooting
 
-### Runner erscheint nicht in GitHub
+### Runner doesn't appear in GitHub
 
-1. Token prüfen: Muss `repo` Scope haben
-2. Registrierung prüfen: `./config.sh` ohne Fehler durchlaufen?
-3. Service läuft? `sudo ./svc.sh status`
+1. Check token: Must have `repo` scope
+2. Check registration: Did `./config.sh` complete without errors?
+3. Is service running? `sudo ./svc.sh status`
 
-### Builds dauern ewig
+### Builds take forever
 
-- ARM64 + Wine ist langsam - normal!
-- Für schnellere Windows-Builds: x86_64 Runner hinzufügen
-- Caching aktivieren (siehe unten)
+- ARM64 + Wine is slow - normal!
+- For faster Windows builds: add x86_64 runner
+- Enable caching (see below)
 
 ### Out of Memory
 
 ```bash
-# Swap hinzufügen
+# Add swap
 sudo fallocate -l 4G /swapfile
 sudo chmod 600 /swapfile
 sudo mkswap /swapfile
 sudo swapon /swapfile
 ```
 
-## Optimierungen
+## Optimizations
 
 ### Caching
 
-Der Workflow verwendet bereits `actions/setup-node` mit Caching. Für noch schnellere Builds:
+The workflow already uses `actions/setup-node` with caching. For even faster builds:
 
 ```yaml
 - name: Cache Electron builds
@@ -175,33 +175,33 @@ Der Workflow verwendet bereits `actions/setup-node` mit Caching. Für noch schne
     key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
 ```
 
-### Parallelisierung
+### Parallelization
 
-Die Workflows sind bereits parallelisiert:
-- Linux ARM64 und Windows können gleichzeitig bauen
-- macOS läuft auf GitHub-hosted (kein self-hosted nötig)
+Workflows are already parallelized:
+- Linux ARM64 and Windows can build simultaneously
+- macOS runs on GitHub-hosted (no self-hosted needed)
 
 ## Monitoring
 
-### Runner Logs
+### Runner logs
 
 ```bash
-# Service Logs
+# Service logs
 sudo journalctl -u actions.runner.* -f
 
-# Runner Logs
+# Runner logs
 cd ~/actions-runner/_diag
 cat Runner_*.log | tail -100
 ```
 
 ### GitHub Actions Dashboard
 
-- Gehe zu: Repository → Actions → Runners
-- Hier siehst du alle self-hosted Runner und deren Status
+- Go to: Repository → Actions → Runners
+- Here you can see all self-hosted runners and their status
 
-## Alternative: Matrix Builds
+## Alternative: Matrix builds
 
-Wenn du später mehrere Runner hast:
+If you have multiple runners later:
 
 ```yaml
 strategy:

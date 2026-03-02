@@ -1,155 +1,155 @@
-# I2P-Konnektivitäts-Fixes - Änderungsdokumentation
+# I2P Connectivity Fixes - Changelog
 
-**Datum:** 2026-02-23  
-**Autor:** Kimi Agent Swarm  
-**Scope:** I2P-Manager Integration für SecuChat
-
----
-
-## Übersicht
-
-Diese Änderungen beheben kritische I2P-Konnektivitätsprobleme in SecuChat durch eine robuste, modulare I2P-Verwaltung.
+**Date:** 2026-02-23  
+**Author:** Kimi Agent Swarm  
+**Scope:** I2P Manager Integration for SecuChat
 
 ---
 
-## Neue Dateien
+## Overview
 
-### 1. `electron/src/i2p-manager.ts` (NEU)
-**Beschreibung:** Vollständige I2P-Verwaltungsklasse  
-**Funktionen:**
-- Robuste Pfad-Auflösung für verschiedene Umgebungen (Dev/Production)
-- Automatische Zertifikatskopierung beim ersten Start
-- Linux: Automatische `chmod +x` für i2pd-Binary
-- Erhöhtes Timeout (45s statt 20s) für langsamer Systeme
-- Datei-basiertes Logging (`~/.config/SecuChat/logs/i2pd.log`)
-- Graceful shutdown mit SIGTERM → SIGKILL Fallback
-- Port-Prüfung mit konfigurierbaren Intervallen
+These changes fix critical I2P connectivity issues in SecuChat through a robust, modular I2P management system.
 
-**Exporte:**
-- `I2PManager` - Klasse für erweiterte Nutzung
-- `startI2pd()` - Startet i2pd und wartet auf SAM-Port
-- `stopI2pd()` - Stoppt i2pd-Prozess
-- `isI2pReady()` - Prüft SAM-Port-Verfügbarkeit
-- `getI2PManager()` - Singleton-Accessor
+---
 
-### 2. `electron/scripts/setup-i2pd.sh` (NEU)
-**Beschreibung:** Linux Setup-Skript für i2pd  
-**Funktionen:**
-- Download der i2pd-Binary falls nicht vorhanden
-- Überprüfung der Systemarchitektur
-- Setzen der korrekten Berechtigungen
-- Optionale systemd-Service-Erstellung
+## New Files
 
-**Verwendung:**
+### 1. `electron/src/i2p-manager.ts` (NEW)
+**Description:** Complete I2P management class  
+**Functions:**
+- Robust path resolution for various environments (Dev/Production)
+- Automatic certificate copying on first start
+- Linux: Automatic `chmod +x` for i2pd binary
+- Increased timeout (45s instead of 20s) for slower systems
+- File-based logging (`~/.config/SecuChat/logs/i2pd.log`)
+- Graceful shutdown with SIGTERM → SIGKILL fallback
+- Port checking with configurable intervals
+
+**Exports:**
+- `I2PManager` - Class for advanced usage
+- `startI2pd()` - Starts i2pd and waits for SAM port
+- `stopI2pd()` - Stops i2pd process
+- `isI2pReady()` - Checks SAM port availability
+- `getI2PManager()` - Singleton accessor
+
+### 2. `electron/scripts/setup-i2pd.sh` (NEW)
+**Description:** Linux setup script for i2pd  
+**Functions:**
+- Downloads i2pd binary if not present
+- Checks system architecture
+- Sets correct permissions
+- Optional systemd service creation
+
+**Usage:**
 ```bash
 chmod +x scripts/setup-i2pd.sh
 ./scripts/setup-i2pd.sh --download --create-service
 ```
 
-### 3. `electron/scripts/setup-i2pd.ps1` (NEU)
-**Beschreibung:** Windows PowerShell Setup-Skript  
-**Funktionen:**
-- Automatischer Download der i2pd-Binary
-- Architektur-Erkennung (x64/x86)
-- Firewall-Regel-Erstellung
-- Visual C++ Redistributables-Prüfung
+### 3. `electron/scripts/setup-i2pd.ps1` (NEW)
+**Description:** Windows PowerShell setup script  
+**Functions:**
+- Automatic download of i2pd binary
+- Architecture detection (x64/x86)
+- Firewall rule creation
+- Visual C++ Redistributables check
 
-**Verwendung:**
+**Usage:**
 ```powershell
 Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
 .\scripts\setup-i2pd.ps1 -Download -Verify
 ```
 
-### 4. `electron/scripts/after-install.sh` (NEU)
-**Beschreibung:** Post-Install Script für Linux DEB-Pakete  
-**Funktion:** Setzt Berechtigungen nach Installation
+### 4. `electron/scripts/after-install.sh` (NEW)
+**Description:** Post-install script for Linux DEB packages  
+**Function:** Sets permissions after installation
 
-### 5. `electron/scripts/after-remove.sh` (NEU)
-**Beschreibung:** Post-Remove Script für Linux DEB-Pakete  
-**Funktion:** Bereinigt beim Deinstallieren
+### 5. `electron/scripts/after-remove.sh` (NEW)
+**Description:** Post-remove script for Linux DEB packages  
+**Function:** Cleanup on uninstall
 
 ---
 
-## Geänderte Dateien
+## Modified Files
 
-### 1. `electron/src/main.ts` (ÜBERSCHRIEBEN)
-**Änderungen:**
-- Entfernt: Inline I2PD-Start-Logik
-- Entfernt: Inline SAM-Proxy (WebSocketServer)
-- Entfernt: `APP_ROOT` Konstante mit Non-Null Assertion
-- Entfernt: `waitForPort`, `setupI2pdDataDir`, `isI2pdRunning` Funktionen
-- Entfernt: `startI2pd`, `stopI2pd` Funktionen (jetzt aus i2p-manager)
-- Entfernt: `startSamProxy`, `stopSamProxy` Funktionen
+### 1. `electron/src/main.ts` (OVERWRITTEN)
+**Changes:**
+- Removed: Inline I2PD start logic
+- Removed: Inline SAM proxy (WebSocketServer)
+- Removed: `APP_ROOT` constant with Non-Null Assertion
+- Removed: `waitForPort`, `setupI2pdDataDir`, `isI2pdRunning` functions
+- Removed: `startI2pd`, `stopI2pd` functions (now from i2p-manager)
+- Removed: `startSamProxy`, `stopSamProxy` functions
 
-**Neu:**
-- Importiert I2P-Funktionen aus `./i2p-manager`
-- `initializeI2P()` - Wrapper mit Status-Verwaltung
-- Dialog-Warnung wenn I2P nicht startet (Continue/Exit)
-- `i2p:restart` IPC-Handler
-- `i2p:status` IPC-Handler gibt SAM-Info zurück
-- Error Handling für uncaughtException/unhandledRejection
+**New:**
+- Imports I2P functions from `./i2p-manager`
+- `initializeI2P()` - Wrapper with status management
+- Dialog warning if I2P doesn't start (Continue/Exit)
+- `i2p:restart` IPC handler
+- `i2p:status` IPC handler returns SAM info
+- Error handling for uncaughtException/unhandledRejection
 
 **I2P IPC Channels:**
-- `i2p:status` - Gibt aktuellen I2P-Status zurück
-- `i2p:restart` - Startet i2pd neu
+- `i2p:status` - Returns current I2P status
+- `i2p:restart` - Restarts i2pd
 
-### 2. `electron/electron-builder.json` (AKTUALISIERT)
-**Änderungen:**
+### 2. `electron/electron-builder.json` (UPDATED)
+**Changes:**
 ```json
 {
-  "asar": false,  // NEU: Wichtig für Binary-Zugriff
+  "asar": false,  // NEW: Important for binary access
   ...
   "nsis": {
     ...
-    "include": "installer.nsh"  // KORRIGIERT: Fehlendes Komma behoben
+    "include": "installer.nsh"  // FIXED: Missing comma corrected
   }
 }
 ```
 
-**Begründung für `asar: false`:**
-Die i2pd-Binary muss direkt aus dem Dateisystem ausführbar sein. ASAR-Archivierung blockiert den Zugriff auf native Binaries.
+**Reason for `asar: false`:**
+The i2pd binary must be directly executable from the filesystem. ASAR archiving blocks access to native binaries.
 
 ---
 
-## Behobene Probleme
+## Fixed Issues
 
-| Priorität | Problem | Status |
+| Priority | Issue | Status |
 |-----------|---------|--------|
-| 🔴 Kritisch | `APP_ROOT` nicht definiert | ✅ Gelöst durch `getAppRoot()` Funktion |
-| 🔴 Kritisch | Zertifikate werden nicht kopiert | ✅ Gelöst durch `copyCertificates()` |
-| 🔴 Kritisch | Linux Executable-Berechtigungen | ✅ Gelöst durch `ensureExecutable()` |
-| 🟠 Hoch | Timeout zu kurz (20s) | ✅ Erhöht auf 45s |
-| 🟠 Hoch | Fehlende Fehlerbehandlung | ✅ Vollständige try-catch Blocks |
-| 🟡 Mittel | Keine Protokollierung | ✅ Log-Dateien in `~/.config/SecuChat/logs/` |
-| 🟡 Mittel | Keine Port-Konflikt-Prüfung | ✅ Port-Prüfung vor Start |
-| 🟡 Mittel | Syntaxfehler in electron-builder.json | ✅ Korrigiert |
+| 🔴 Critical | `APP_ROOT` undefined | ✅ Solved via `getAppRoot()` function |
+| 🔴 Critical | Certificates not copied | ✅ Solved via `copyCertificates()` |
+| 🔴 Critical | Linux executable permissions | ✅ Solved via `ensureExecutable()` |
+| 🟠 High | Timeout too short (20s) | ✅ Increased to 45s |
+| 🟠 High | Missing error handling | ✅ Complete try-catch blocks |
+| 🟡 Medium | No logging | ✅ Log files in `~/.config/SecuChat/logs/` |
+| 🟡 Medium | No port conflict check | ✅ Port check before start |
+| 🟡 Medium | Syntax error in electron-builder.json | ✅ Corrected |
 
 ---
 
-## I2P-Log-Dateien
+## I2P Log Files
 
-Nach dem Start finden sich Logs unter:
+After starting, logs can be found at:
 
-| Datei | Beschreibung |
-|-------|--------------|
-| `~/.config/SecuChat/logs/i2pd.log` | Konsolenausgabe von i2pd |
-| `~/.config/SecuChat/logs/i2pd-internal.log` | Interne i2pd-Logs |
+| File | Description |
+|-------|-------------|
+| `~/.config/SecuChat/logs/i2pd.log` | Console output from i2pd |
+| `~/.config/SecuChat/logs/i2pd-internal.log` | Internal i2pd logs |
 
 ---
 
-## SAM-Konfiguration
+## SAM Configuration
 
-Die App verbindet sich direkt über SAM mit i2pd:
+The app connects directly to i2pd via SAM:
 
 ```
 Host: 127.0.0.1
 Port: 7656 (SAM)
-HTTP-Konsole: http://127.0.0.1:7070
+HTTP Console: http://127.0.0.1:7070
 ```
 
 ---
 
-## Build-Anweisungen
+## Build Instructions
 
 ### Linux
 ```bash
@@ -169,39 +169,39 @@ npm run dist:win
 
 ## Testing
 
-1. **Entwicklung:**
+1. **Development:**
    ```bash
    cd electron
    npm run dev
    ```
 
-2. **Geprägte App testen:**
+2. **Test packaged app:**
    ```bash
    # Linux
    ./release/SecuChat-0.0.38.AppImage
    
-   # Oder DEB installieren
+   # Or install DEB
    sudo dpkg -i release/secuchat_0.0.38_amd64.deb
    ```
 
-3. **Log-Überwachung:**
+3. **Log monitoring:**
    ```bash
    tail -f ~/.config/SecuChat/logs/i2pd.log
    ```
 
 ---
 
-## Bekannte Einschränkungen
+## Known Limitations
 
-- macOS-Unterstützung erfordert möglicherweise Anpassungen
-- ARM-Architektur benötigt separate i2pd-Binaries
-- Windows: VC++ Redistributables müssen installiert sein
+- macOS support may require adjustments
+- ARM architecture needs separate i2pd binaries
+- Windows: VC++ Redistributables must be installed
 
 ---
 
 ## Support
 
-Bei Problemen:
-1. Logs prüfen: `~/.config/SecuChat/logs/`
-2. `TROUBLESHOOTING.md` konsultieren
-3. Issue mit Logs und System-Info erstellen
+For issues:
+1. Check logs: `~/.config/SecuChat/logs/`
+2. Consult `TROUBLESHOOTING.md`
+3. Create an issue with logs and system info

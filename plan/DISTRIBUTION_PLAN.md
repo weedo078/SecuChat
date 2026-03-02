@@ -1,43 +1,43 @@
-# SecuChat – Distribution & Plattform-Architektur
+# SecuChat – Distribution & Platform Architecture
 
-## Übersicht
+## Overview
 
-SecuChat wird auf zwei Plattformen ausgeliefert:
+SecuChat is delivered on two platforms:
 
-| Plattform | Technologie | Status |
-|-----------|-------------|--------|
-| Desktop (Linux, Windows) | Electron | Phase 1 – nächster Schritt |
-| Android | Capacitor + nodejs-mobile | Phase 2 – nach Desktop |
+| Platform | Technology | Status |
+|----------|------------|--------|
+| Desktop (Linux, Windows) | Electron | Phase 1 – next step |
+| Android | Capacitor + nodejs-mobile | Phase 2 – after Desktop |
 
-Distribution ausschließlich über **GitHub Releases** (kein App Store, kein Play Store).
+Distribution exclusively via **GitHub Releases** (no App Store, no Play Store).
 
 ---
 
 ## Desktop (Electron)
 
-### Zielplattformen
+### Target platforms
 - **Linux**: AppImage + `.deb`
-- **Windows**: NSIS Installer (`.exe`, x64)
-- macOS: nicht geplant
+- **Windows**: NSIS installer (`.exe`, x64)
+- macOS: not planned
 
-### Architektur
+### Architecture
 
 ```
 SecuChat.exe / SecuChat.AppImage
 └── Electron Main Process (src/main.ts)
-    ├── startet i2pd (gebündelt, plattformspezifisch)
+    ├── starts i2pd (bundled, platform-specific)
     │     resources/i2pd/linux/i2pd
     │     resources/i2pd/win/i2pd.exe
-    ├── startet sam-proxy (sam-proxy/proxy.mjs via Node.js)
-    ├── wartet bis SAM-WebSocket auf :7657 antwortet
-    └── BrowserWindow lädt app/dist/index.html
+    ├── starts sam-proxy (sam-proxy/proxy.mjs via Node.js)
+    ├── waits until SAM WebSocket responds on :7657
+    └── BrowserWindow loads app/dist/index.html
 ```
 
-### Startsequenz
+### Startup sequence
 
-1. Electron startet
-2. `main.ts` prüft ob i2pd extern läuft (Port 7656)
-3. Falls nicht: gebündeltes i2pd starten mit Flags:
+1. Electron starts
+2. `main.ts` checks if i2pd is running externally (Port 7656)
+3. If not: start bundled i2pd with flags:
    ```
    --sam.enabled true
    --sam.address 127.0.0.1
@@ -46,20 +46,20 @@ SecuChat.exe / SecuChat.AppImage
    --httpproxy.enabled false
    --socksproxy.enabled false
    ```
-4. sam-proxy als Child-Process starten (verbindet :7657 → :7656)
-5. Warten bis :7657 antwortet (max. 30s, danach Fehlermeldung)
-6. BrowserWindow öffnen → `app/dist/index.html`
+4. Start sam-proxy as child process (connects :7657 → :7656)
+5. Wait until :7657 responds (max. 30s, then error message)
+6. Open BrowserWindow → `app/dist/index.html`
 
-### i2pd Binaries
+### i2pd binaries
 
-i2pd muss pro Plattform gebündelt werden. Bezugsquellen:
-- Linux: Build aus Quellen oder offizielles Release von https://github.com/PurpleI2P/i2pd/releases
-- Windows: i2pd-win32 Release (gleiche Quelle)
+i2pd must be bundled per platform. Sources:
+- Linux: Build from source or official release from https://github.com/PurpleI2P/i2pd/releases
+- Windows: i2pd-win32 release (same source)
 
-Binaries landen in `electron/resources/i2pd/{linux,win}/`.
-Sie werden **nicht** ins Git-Repository eingecheckt (`.gitignore`), sondern beim Build-Prozess heruntergeladen (Download-Script geplant).
+Binaries go into `electron/resources/i2pd/{linux,win}/`.
+They are **not** checked into the Git repository (`.gitignore`), but downloaded during the build process (download script planned).
 
-### Projektstruktur (geplant)
+### Project structure (planned)
 
 ```
 electron/
@@ -67,75 +67,75 @@ electron/
 │   └── main.ts          ← Electron Main Process
 ├── resources/
 │   └── i2pd/
-│       ├── linux/i2pd   ← nicht in Git
-│       └── win/i2pd.exe ← nicht in Git
+│       ├── linux/i2pd   ← not in Git
+│       └── win/i2pd.exe ← not in Git
 ├── package.json
 └── electron-builder.json
 ```
 
-Der bestehende `securechat-desktop/` Ordner ist veraltet und wird nicht verwendet.
+The existing `securechat-desktop/` folder is deprecated and not used.
 
 ### Build & Release
 
 ```bash
-# App bauen
+# Build app
 cd app && npm run build
 
-# Electron paketieren
+# Package Electron
 cd electron && npm run dist
 
-# Ausgabe:
+# Output:
 # electron/release/SecuChat-x.x.x.AppImage  (Linux)
 # electron/release/SecuChat-Setup-x.x.x.exe (Windows)
 ```
 
-GitHub Release enthält beide Binaries + SHA256-Checksums.
+GitHub Release contains both binaries + SHA256 checksums.
 
 ---
 
 ## Android (Capacitor)
 
-### Abhängigkeiten für den Nutzer
+### Dependencies for the user
 
-Der Nutzer muss **einmalig** installieren:
-1. **i2pd** aus F-Droid: https://f-droid.org/packages/org.purplei2p.i2pd/
-   - Muss mit aktiviertem SAM auf Port 7656 laufen
-   - i2pd läuft als Android-Hintergrunddienst und gibt Tunnel für andere Apps frei
-2. **SecuChat APK** (von GitHub Releases)
+The user must install **once**:
+1. **i2pd** from F-Droid: https://f-droid.org/packages/org.purplei2p.i2pd/
+   - Must run with SAM enabled on port 7656
+   - i2pd runs as Android background service and exposes tunnels for other apps
+2. **SecuChat APK** (from GitHub Releases)
 
-### Architektur
+### Architecture
 
 ```
 SecuChat.apk (Capacitor)
 ├── WebView
-│   └── app/dist/index.html   ← identische Web-App wie Desktop
+│   └── app/dist/index.html   ← identical web app as Desktop
 │       └── ws://localhost:7657 (sam-proxy)
 ├── nodejs-mobile-capacitor
-│   └── sam-proxy/proxy.mjs   ← startet automatisch beim App-Start
+│   └── sam-proxy/proxy.mjs   ← starts automatically on app start
 │       └── TCP localhost:7656 (i2pd F-Droid)
 └── AndroidManifest.xml
-    └── android:usesCleartextTraffic="true" (für localhost-Verbindungen)
+    └── android:usesCleartextTraffic="true" (for localhost connections)
 ```
 
-### Startsequenz
+### Startup sequence
 
-1. SecuChat APK startet
-2. nodejs-mobile-capacitor startet `sam-proxy/proxy.mjs` im Hintergrund
-3. WebView lädt `app/dist/index.html`
-4. App verbindet sich auf `ws://localhost:7657`
-5. sam-proxy bridget zu i2pd auf `127.0.0.1:7656`
-6. Falls i2pd nicht läuft: App zeigt Hinweis mit Link zu F-Droid
+1. SecuChat APK starts
+2. nodejs-mobile-capacitor starts `sam-proxy/proxy.mjs` in background
+3. WebView loads `app/dist/index.html`
+4. App connects to `ws://localhost:7657`
+5. sam-proxy bridges to i2pd on `127.0.0.1:7656`
+6. If i2pd is not running: App shows hint with link to F-Droid
 
-### Nutzer-Onboarding (Android-spezifisch)
+### User onboarding (Android-specific)
 
-Die App muss erkennen ob i2pd läuft und entsprechend reagieren:
-- i2pd nicht installiert/läuft nicht → Hinweisdialog mit F-Droid Link
-- i2pd läuft aber SAM nicht aktiviert → Anleitung zur SAM-Aktivierung
-- Alles OK → normaler Start
+The app must detect if i2pd is running and react accordingly:
+- i2pd not installed/not running → Hint dialog with F-Droid link
+- i2pd running but SAM not enabled → Instructions for SAM activation
+- Everything OK → Normal start
 
-### Minimale Android-Version
+### Minimum Android version
 
-Ziel: Android 8.0+ (API 26) — Minimum für nodejs-mobile-capacitor.
+Target: Android 8.0+ (API 26) — Minimum for nodejs-mobile-capacitor.
 
 ### Build & Release
 
@@ -143,43 +143,43 @@ Ziel: Android 8.0+ (API 26) — Minimum für nodejs-mobile-capacitor.
 cd app && npm run build
 cd android-capacitor && npx cap sync
 cd android-capacitor && ./gradlew assembleRelease
-# APK signieren + zu GitHub Release hochladen
+# Sign APK + upload to GitHub Release
 ```
 
 ---
 
-## Gemeinsame Punkte
+## Common points
 
-### sam-proxy bleibt unverändert
+### sam-proxy remains unchanged
 
-`sam-proxy/proxy.mjs` wird auf beiden Plattformen unverändert verwendet:
-- Desktop: Electron startet es als Child-Process
-- Android: nodejs-mobile-capacitor führt es aus
+`sam-proxy/proxy.mjs` is used unchanged on both platforms:
+- Desktop: Electron starts it as child process
+- Android: nodejs-mobile-capacitor executes it
 
-### Web-App bleibt unverändert
+### Web app remains unchanged
 
-`app/src/` (Vite/React) wird auf allen Plattformen identisch gebaut.
-Plattformspezifische Anpassungen ausschließlich in den jeweiligen Wrappern.
+`app/src/` (Vite/React) is built identically on all platforms.
+Platform-specific adjustments exclusively in the respective wrappers.
 
-### I2P Warm-up Zeit
+### I2P warm-up time
 
-I2P benötigt nach dem Start ~5–10 Minuten um Tunnel aufzubauen.
-Die App zeigt währenddessen den Verbindungsstatus (bereits implementiert in `Header.tsx` + `AppContext.tsx`).
+I2P needs ~5–10 minutes after start to build tunnels.
+The app shows the connection status during this time (already implemented in `Header.tsx` + `AppContext.tsx`).
 
 ---
 
-## Offene Aufgaben
+## Open tasks
 
 ### Phase 1 – Desktop
-- [ ] `electron/` Ordner anlegen mit `main.ts`, `package.json`, `electron-builder.json`
-- [ ] i2pd Binary Download-Script schreiben
-- [ ] sam-proxy Start in Electron Main Process integrieren
-- [ ] Build testen (Linux AppImage + Windows NSIS)
-- [ ] GitHub Release Workflow (GitHub Actions) aufsetzen
+- [ ] Create `electron/` folder with `main.ts`, `package.json`, `electron-builder.json`
+- [ ] Write i2pd binary download script
+- [ ] Integrate sam-proxy start in Electron main process
+- [ ] Test build (Linux AppImage + Windows NSIS)
+- [ ] Set up GitHub Release workflow (GitHub Actions)
 
 ### Phase 2 – Android
-- [ ] Capacitor Projekt initialisieren (`android-capacitor/`)
-- [ ] `nodejs-mobile-capacitor` Plugin integrieren
-- [ ] i2pd-Erkennung + Onboarding-Dialog implementieren
-- [ ] APK signieren + Release-Prozess definieren
-- [ ] Testen mit i2pd F-Droid auf echtem Gerät
+- [ ] Initialize Capacitor project (`android-capacitor/`)
+- [ ] Integrate `nodejs-mobile-capacitor` plugin
+- [ ] Implement i2pd detection + onboarding dialog
+- [ ] Sign APK + define release process
+- [ ] Test with i2pd F-Droid on real device
