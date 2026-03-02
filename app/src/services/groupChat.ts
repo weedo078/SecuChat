@@ -324,7 +324,7 @@ class GroupChatManager {
     await i2pService.sendMessage(member.i2pAddress, invite);
   }
 
-  private async handleGroupMessage(from: string, msg: GroupMessage): Promise<void> {
+  private async handleGroupMessage(_from: string, msg: GroupMessage): Promise<void> {
     const group = this.groups.get(msg.groupId);
     if (!group) {
       logger.warn('[GroupChat] Message for unknown group:', msg.groupId);

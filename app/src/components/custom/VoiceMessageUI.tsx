@@ -77,8 +77,8 @@ export function VoiceRecordButton({
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [liveWaveform, setLiveWaveform] = useState<number[]>([]);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
-  const holdTimerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const holdTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const isHolding = useRef(false);
 
   useEffect(() => {
