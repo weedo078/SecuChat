@@ -5,7 +5,7 @@
  */
 
 import { useState } from 'react';
-import { Users, Plus, Crown, LogOut, UserMinus, UserPlus } from 'lucide-react';
+import { Users, Crown, LogOut, UserMinus, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {

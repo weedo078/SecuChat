@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { Mic, MicOff, Play, Pause, Square, Trash2 } from 'lucide-react';
+import { Mic, Play, Pause, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { voiceMessageManager, type VoiceMessage, type VoicePlaybackState } from '@/services/voiceMessages';
 
@@ -29,7 +29,6 @@ function Waveform({
   const containerRef = useRef<HTMLDivElement>(null);
   const bars = data.length || 30;
   const barWidth = 3;
-  const gap = 1;
 
   const handleClick = (e: React.MouseEvent) => {
     if (!onClick || !containerRef.current) return;

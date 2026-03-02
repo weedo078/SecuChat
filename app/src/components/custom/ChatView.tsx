@@ -8,8 +8,8 @@ import { useApp } from '@/contexts/AppContext';
 import { toast } from 'sonner';
 import { statusMessenger } from '@/services/statusMessages';
 import { ContactVerificationDialog, VerificationBadge } from './ContactVerificationDialog';
-import { VoiceRecordButton, VoiceMessagePlayer } from './VoiceMessageUI';
-import { FileTransferDialog, FileDropZone } from './FileTransferUI';
+import { VoiceRecordButton } from './VoiceMessageUI';
+import { FileTransferDialog } from './FileTransferUI';
 import { fileTransferManager, type FileTransferProgress } from '@/services/fileTransfer';
 import type { VoiceMessage } from '@/services/voiceMessages';
 import {
@@ -121,7 +121,7 @@ export function ChatView() {
       const file = new File([voiceMsg.blob], `voice-${voiceMsg.id}.webm`, { type: voiceMsg.mimeType });
       await sendFile(activeChat.contact.i2pAddress, file);
       toast.success('Sprachnachricht gesendet');
-    } catch (err) {
+    } catch {
       toast.error('Fehler beim Senden der Sprachnachricht');
     }
   }, [activeChat?.contact?.i2pAddress, sendFile]);

@@ -5,8 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { File, Download, X, Upload, Image as ImageIcon } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { File, Download, Upload, Image as ImageIcon } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import {
   AlertDialog,
