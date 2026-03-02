@@ -1,56 +1,56 @@
-# SecureChat - Projekt Dokumentation
+# SecureChat - Project Documentation
 
-## Übersicht
+## Overview
 
-SecureChat ist eine sichere Messaging-Webapp mit Ende-zu-Ende-Verschlüsselung, die ohne zentrale Server auskommt. Die App wurde basierend auf der technischen Spezifikation aus der Android-App in eine moderne Webanwendung überführt.
+SecureChat is a secure messaging web app with end-to-end encryption that works without central servers. The app was migrated from the Android app into a modern web application based on the technical specification.
 
-**Live-Demo:** https://psdt3z7ayegn6.ok.kimi.link
+**Live Demo:** https://psdt3z7ayegn6.ok.kimi.link
 
 ---
 
 ## Tech Stack
 
-| Komponente | Technologie |
-|------------|-------------|
+| Component | Technology |
+|-----------|------------|
 | Frontend Framework | React 19 + TypeScript |
 | Build Tool | Vite 7 |
 | Styling | Tailwind CSS 3.4 |
-| UI Components | shadcn/ui (40+ Komponenten) |
-| Kryptografie | OpenPGP.js |
-| P2P-Kommunikation | WebRTC |
-| Lokale Speicherung | IndexedDB |
-| QR-Codes | qrcode + jsQR |
+| UI Components | shadcn/ui (40+ components) |
+| Cryptography | OpenPGP.js |
+| P2P Communication | WebRTC |
+| Local Storage | IndexedDB |
+| QR Codes | qrcode + jsQR |
 
 ---
 
-## Projektstruktur
+## Project Structure
 
 ```
 /mnt/okcomputer/output/app/
 ├── src/
 │   ├── components/
-│   │   ├── ui/                    # shadcn/ui Komponenten
-│   │   └── custom/                # Eigene Komponenten
-│   │       ├── Header.tsx         # App-Header mit Status
-│   │       ├── Sidebar.tsx        # Chat-Liste & Navigation
-│   │       ├── ChatView.tsx       # Chat-Interface
-│   │       ├── ContactManager.tsx # Kontaktverwaltung
-│   │       ├── QRCodeShare.tsx    # QR-Code teilen/scannen
-│   │       ├── Settings.tsx       # Einstellungen
-│   │       └── Onboarding.tsx     # Erst Einrichtung
+│   │   ├── ui/                    # shadcn/ui components
+│   │   └── custom/                # Custom components
+│   │       ├── Header.tsx         # App header with status
+│   │       ├── Sidebar.tsx        # Chat list & navigation
+│   │       ├── ChatView.tsx       # Chat interface
+│   │       ├── ContactManager.tsx # Contact management
+│   │       ├── QRCodeShare.tsx    # QR code share/scan
+│   │       ├── Settings.tsx       # Settings
+│   │       └── Onboarding.tsx     # First-time setup
 │   ├── contexts/
-│   │   └── AppContext.tsx         # Global State Management
+│   │   └── AppContext.tsx         # Global state management
 │   ├── services/
-│   │   ├── crypto.ts              # PGP-Kryptografie (OpenPGP.js)
-│   │   ├── storage.ts             # IndexedDB Wrapper
-│   │   └── webrtc.ts              # WebRTC P2P-Kommunikation
+│   │   ├── crypto.ts              # PGP cryptography (OpenPGP.js)
+│   │   ├── storage.ts             # IndexedDB wrapper
+│   │   └── webrtc.ts              # WebRTC P2P communication
 │   ├── types/
-│   │   └── index.ts               # TypeScript Type-Definitionen
-│   ├── App.tsx                    # Haupt-App-Komponente
-│   ├── main.tsx                   # Entry Point
-│   └── index.css                  # Globale Styles
-├── public/                        # Statische Assets
-├── dist/                          # Build-Output
+│   │   └── index.ts               # TypeScript type definitions
+│   ├── App.tsx                    # Main app component
+│   ├── main.tsx                   # Entry point
+│   └── index.css                  # Global styles
+├── public/                        # Static assets
+├── dist/                          # Build output
 ├── index.html
 ├── package.json
 ├── tailwind.config.js
@@ -60,63 +60,63 @@ SecureChat ist eine sichere Messaging-Webapp mit Ende-zu-Ende-Verschlüsselung, 
 
 ---
 
-## Kernfunktionen
+## Core Features
 
-### 1. PGP-Verschlüsselung (OpenPGP.js)
+### 1. PGP Encryption (OpenPGP.js)
 
-**Datei:** `src/services/crypto.ts`
+**File:** `src/services/crypto.ts`
 
-- RSA-4096 Schlüsselgenerierung
-- Ende-zu-Ende-Verschlüsselung aller Nachrichten
-- Digitale Signaturen
-- Schlüsselvalidierung
-- Import/Export von Verbindungsdateien
+- RSA-4096 key generation
+- End-to-end encryption of all messages
+- Digital signatures
+- Key validation
+- Import/export of connection files
 
 ```typescript
-// Schlüsselgenerierung
+// Key generation
 const keys = await cryptoService.generateKeyPair(username, passphrase);
 
-// Nachricht verschlüsseln
+// Encrypt message
 const encrypted = await cryptoService.encryptMessage(message, recipientPublicKey);
 
-// Nachricht entschlüsseln
+// Decrypt message
 const decrypted = await cryptoService.decryptMessage(encryptedMessage, passphrase);
 ```
 
-### 2. WebRTC P2P-Kommunikation
+### 2. WebRTC P2P Communication
 
-**Datei:** `src/services/webrtc.ts`
+**File:** `src/services/webrtc.ts`
 
-- Direkte Peer-to-Peer-Verbindungen
-- DataChannels für Nachrichtenübertragung
-- ICE-Kandidaten für NAT-Traversal
-- Verbindungsstatus-Monitoring
-- Signaling über WebSocket (erweiterbar für I2P)
+- Direct peer-to-peer connections
+- DataChannels for message transmission
+- ICE candidates for NAT traversal
+- Connection status monitoring
+- Signaling via WebSocket (extensible for I2P)
 
-### 3. Lokale Datenspeicherung (IndexedDB)
+### 3. Local Data Storage (IndexedDB)
 
-**Datei:** `src/services/storage.ts`
+**File:** `src/services/storage.ts`
 
-- Verschlüsselte Speicherung aller Daten
+- Encrypted storage of all data
 - Stores: user, contacts, chats, messages, settings
-- Backup & Restore Funktionalität
-- Vollständige Datenlöschung möglich
+- Backup & restore functionality
+- Complete data deletion possible
 
-### 4. UI/UX Komponenten
+### 4. UI/UX Components
 
-| Komponente | Funktion |
-|------------|----------|
-| Header | Verbindungsstatus, Verschlüsselungsstatus, Benutzermenü |
-| Sidebar | Chat-Liste, Kontaktsuche, Schnellaktionen |
-| ChatView | Nachrichtenanzeige, Eingabe, Status-Indikatoren |
-| ContactManager | Kontakte hinzufügen/entfernen/verwalten |
-| QRCodeShare | Kontaktaustausch via QR-Code |
-| Settings | App-Einstellungen, Sicherheit, Backup |
-| Onboarding | Erst-Einrichtung mit Schlüsselgenerierung |
+| Component | Function |
+|-----------|----------|
+| Header | Connection status, encryption status, user menu |
+| Sidebar | Chat list, contact search, quick actions |
+| ChatView | Message display, input, status indicators |
+| ContactManager | Add/remove/manage contacts |
+| QRCodeShare | Contact exchange via QR code |
+| Settings | App settings, security, backup |
+| Onboarding | First-time setup with key generation |
 
 ---
 
-## Datenstrukturen
+## Data Structures
 
 ### User
 ```typescript
@@ -160,7 +160,7 @@ interface Message {
 }
 ```
 
-### Connection File (Kontaktaustausch)
+### Connection File (contact exchange)
 ```json
 {
   "version": "1.0",
@@ -182,63 +182,63 @@ interface Message {
 
 ---
 
-## Sicherheitsfunktionen
+## Security Features
 
-### Implementiert
+### Implemented
 
-| Funktion | Status | Beschreibung |
-|----------|--------|--------------|
-| PGP-Verschlüsselung | ✅ | RSA-4096, Ende-zu-Ende |
-| Lokale Schlüsselspeicherung | ✅ | Passphrase-geschützt |
-| App-Sperre | ✅ | Passphrase-Entsperrung |
-| Screenshot-Schutz | ✅ | UI-Indikator (Browser-Limitation) |
-| Automatische Sperre | ✅ | Konfigurierbares Timeout |
-| Duress PIN | ✅ | Notfall-Löschung |
-| Backup-Verschlüsselung | ✅ | PGP-verschlüsselte Backups |
-| Schlüssel-Export/Import | ✅ | JSON-Format |
-| Vollständige Datenlöschung | ✅ | Mit Bestätigung |
+| Feature | Status | Description |
+|---------|--------|-------------|
+| PGP Encryption | ✅ | RSA-4096, end-to-end |
+| Local key storage | ✅ | Passphrase-protected |
+| App lock | ✅ | Passphrase unlock |
+| Screenshot protection | ✅ | UI indicator (browser limitation) |
+| Auto-lock | ✅ | Configurable timeout |
+| Duress PIN | ✅ | Emergency deletion |
+| Backup encryption | ✅ | PGP-encrypted backups |
+| Key export/import | ✅ | JSON format |
+| Complete data deletion | ✅ | With confirmation |
 
-### Geplant (Zukunft)
+### Planned (future)
 
-| Funktion | Status | Beschreibung |
-|----------|--------|--------------|
-| Biometrische Authentifizierung | 🔄 | WebAuthn API |
-| I2P-Integration | 🔄 | Anonymes Routing |
-| Forward Secrecy | 🔄 | Ephemere Schlüssel |
-| Message Self-Destruct | 🔄 | Zeitbasierte Löschung |
-
----
-
-## Entwicklungsphasen
-
-### Phase 1: Basis (Implementiert)
-- ✅ PGP-Verschlüsselung mit OpenPGP.js
-- ✅ Grundlegende UI mit shadcn/ui
-- ✅ Lokale Datenspeicherung (IndexedDB)
-- ✅ Kontaktverwaltung
-- ✅ Chat-Interface
-
-### Phase 2: Erweiterte Funktionen (Implementiert)
-- ✅ WebRTC-Integration
-- ✅ QR-Code Kontaktaustausch
-- ✅ Backup-System
-- ✅ Sicherheitseinstellungen
-- ✅ Fehlerbehandlung
-
-### Phase 3: Optimierung (Geplant)
-- 🔄 I2P-Integration für anonymes Routing
-- 🔄 Performance-Optimierung
-- 🔄 Mobile Responsiveness
-- 🔄 Push-Benachrichtigungen
-- 🔄 Dateiübertragung
+| Feature | Status | Description |
+|---------|--------|-------------|
+| Biometric authentication | 🔄 | WebAuthn API |
+| I2P integration | 🔄 | Anonymous routing |
+| Forward secrecy | 🔄 | Ephemeral keys |
+| Message self-destruct | 🔄 | Time-based deletion |
 
 ---
 
-## Installation & Entwicklung
+## Development phases
 
-### Voraussetzungen
+### Phase 1: Basics (implemented)
+- ✅ PGP encryption with OpenPGP.js
+- ✅ Basic UI with shadcn/ui
+- ✅ Local data storage (IndexedDB)
+- ✅ Contact management
+- ✅ Chat interface
+
+### Phase 2: Extended features (implemented)
+- ✅ WebRTC integration
+- ✅ QR code contact exchange
+- ✅ Backup system
+- ✅ Security settings
+- ✅ Error handling
+
+### Phase 3: Optimization (planned)
+- 🔄 I2P integration for anonymous routing
+- 🔄 Performance optimization
+- 🔄 Mobile responsiveness
+- 🔄 Push notifications
+- 🔄 File transfer
+
+---
+
+## Installation & Development
+
+### Prerequisites
 - Node.js 20+
-- npm oder yarn
+- npm or yarn
 
 ### Installation
 ```bash
@@ -246,7 +246,7 @@ cd /mnt/okcomputer/output/app
 npm install
 ```
 
-### Entwicklungsserver
+### Development server
 ```bash
 npm run dev
 ```
@@ -256,7 +256,7 @@ npm run dev
 npm run build
 ```
 
-### Build-Output
+### Build output
 ```
 dist/
 ├── index.html
@@ -269,73 +269,73 @@ dist/
 
 ## Deployment
 
-Die App wurde auf einem statischen Webserver deployed:
+The app was deployed on a static web server:
 
 ```bash
-# Build erstellen
+# Create build
 npm run build
 
-# Deploy (via Tool)
+# Deploy (via tool)
 # Output: /mnt/okcomputer/output/app/dist
 ```
 
-**Live-URL:** https://psdt3z7ayegn6.ok.kimi.link
+**Live URL:** https://psdt3z7ayegn6.ok.kimi.link
 
 ---
 
-## Browser-Kompatibilität
+## Browser Compatibility
 
-| Browser | Unterstützung | Hinweise |
-|---------|---------------|----------|
-| Chrome/Edge | ✅ Voll | Alle Features |
-| Firefox | ✅ Voll | Alle Features |
-| Safari | ⚠️ Teilweise | WebRTC Einschränkungen |
-| Mobile Chrome | ✅ Voll | Touch-optimiert |
-| Mobile Safari | ⚠️ Teilweise | Kamera-Zugriff eingeschränkt |
-
----
-
-## Bekannte Einschränkungen
-
-1. **WebRTC Signaling**: Derzeit über WebSocket, I2P-Integration geplant
-2. **Push-Benachrichtigungen**: Nicht implementiert (erfordert Service Worker)
-3. **Dateiübertragung**: Nicht implementiert
-4. **Sprach/Videoanrufe**: UI vorhanden, Funktionalität geplant
-5. **Screenshot-Schutz**: Nur visueller Indikator, technischer Schutz nicht möglich
+| Browser | Support | Notes |
+|---------|---------|-------|
+| Chrome/Edge | ✅ Full | All features |
+| Firefox | ✅ Full | All features |
+| Safari | ⚠️ Partial | WebRTC limitations |
+| Mobile Chrome | ✅ Full | Touch-optimized |
+| Mobile Safari | ⚠️ Partial | Camera access limited |
 
 ---
 
-## Architektur-Entscheidungen
+## Known limitations
 
-### Warum React + TypeScript?
-- Typensicherheit für kryptografische Operationen
-- Große Ökosystem für UI-Komponenten
-- Gute Performance mit Vite
-
-### Warum OpenPGP.js?
-- Industriestandard für PGP-Verschlüsselung
-- Gut gewartet und dokumentiert
-| Unterstützt RSA-4096
-
-### Warum IndexedDB?
-- Native Browser-Unterstützung
-- Asynchrone API
-- Große Speicherkapazität
-- Transaktionssicher
-
-### Warum WebRTC?
-- Direkte P2P-Verbindungen
-- Eingebauter DTLS-Verschlüsselung
-- Geringe Latenz
+1. **WebRTC signaling**: Currently via WebSocket, I2P integration planned
+2. **Push notifications**: Not implemented (requires service worker)
+3. **File transfer**: Not implemented
+4. **Voice/video calls**: UI present, functionality planned
+5. **Screenshot protection**: Only visual indicator, technical protection not possible
 
 ---
 
-## Lizenz
+## Architecture decisions
 
-Dieses Projekt wurde als Demo-Implementierung erstellt.
+### Why React + TypeScript?
+- Type safety for cryptographic operations
+- Large ecosystem for UI components
+- Good performance with Vite
+
+### Why OpenPGP.js?
+- Industry standard for PGP encryption
+- Well maintained and documented
+| Supports RSA-4096
+
+### Why IndexedDB?
+- Native browser support
+- Asynchronous API
+- Large storage capacity
+- Transaction-safe
+
+### Why WebRTC?
+- Direct P2P connections
+- Built-in DTLS encryption
+- Low latency
 
 ---
 
-## Autor
+## License
 
-Entwickelt basierend auf der technischen Spezifikation für eine sichere Chat-Anwendung.
+This project was created as a demo implementation.
+
+---
+
+## Author
+
+Developed based on the technical specification for a secure chat application.
