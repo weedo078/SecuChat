@@ -1,11 +1,17 @@
-import { useState, useRef, useEffect } from 'react';
-import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2 } from 'lucide-react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2, ShieldCheck, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useApp } from '@/contexts/AppContext';
 import { toast } from 'sonner';
+import { statusMessenger } from '@/services/statusMessages';
+import { ContactVerificationDialog, VerificationBadge } from './ContactVerificationDialog';
+import { VoiceRecordButton, VoiceMessagePlayer } from './VoiceMessageUI';
+import { FileTransferDialog, FileDropZone } from './FileTransferUI';
+import { fileTransferManager, type FileTransferProgress } from '@/services/fileTransfer';
+import type { VoiceMessage } from '@/services/voiceMessages';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -42,8 +48,12 @@ export function ChatView() {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showVerification, setShowVerification] = useState(false);
+  const [isContactTyping, setIsContactTyping] = useState(false);
+  const [fileTransferProgress, setFileTransferProgress] = useState<FileTransferProgress | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileTransferInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
@@ -52,9 +62,89 @@ export function ChatView() {
     }
   }, [messages]);
 
+  // Initialize status messenger
+  useEffect(() => {
+    if (user?.id) {
+      statusMessenger.initialize(user.id);
+    }
+  }, [user?.id]);
+
+  // Listen for typing indicators from active chat contact
+  useEffect(() => {
+    if (!activeChat?.contact?.i2pAddress) return;
+    const contactAddr = activeChat.contact.i2pAddress;
+    const handler = (from: string, isTyping: boolean) => {
+      if (from === contactAddr || from.includes(contactAddr.split('.')[0])) {
+        setIsContactTyping(isTyping);
+      }
+    };
+    statusMessenger.onTyping(handler);
+    return () => {
+      statusMessenger.offTyping(handler);
+      setIsContactTyping(false);
+    };
+  }, [activeChat?.contact?.i2pAddress]);
+
+  // Send read receipts when messages appear
+  useEffect(() => {
+    if (!activeChat?.contact?.i2pAddress || !messages.length) return;
+    const unread = messages.filter(m => m.senderId !== user?.id && m.status !== 'read');
+    for (const msg of unread) {
+      statusMessenger.sendReadReceipt(activeChat.contact.i2pAddress, msg.id);
+    }
+  }, [messages, activeChat?.contact?.i2pAddress, user?.id]);
+
+  // File transfer progress
+  useEffect(() => {
+    const handler = (progress: FileTransferProgress) => {
+      setFileTransferProgress(progress);
+      if (progress.status === 'completed') {
+        setTimeout(() => setFileTransferProgress(null), 3000);
+      }
+    };
+    fileTransferManager.onProgress(handler);
+    return () => fileTransferManager.offProgress(handler);
+  }, []);
+
+  // Handle typing indicator on input
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    setMessageText(e.target.value);
+    if (activeChat?.contact?.i2pAddress) {
+      statusMessenger.sendTyping(activeChat.contact.i2pAddress);
+    }
+  }, [activeChat?.contact?.i2pAddress]);
+
+  // Handle voice message recorded
+  const handleVoiceRecorded = useCallback(async (voiceMsg: VoiceMessage) => {
+    if (!activeChat?.contact?.i2pAddress) return;
+    try {
+      const file = new File([voiceMsg.blob], `voice-${voiceMsg.id}.webm`, { type: voiceMsg.mimeType });
+      await sendFile(activeChat.contact.i2pAddress, file);
+      toast.success('Sprachnachricht gesendet');
+    } catch (err) {
+      toast.error('Fehler beim Senden der Sprachnachricht');
+    }
+  }, [activeChat?.contact?.i2pAddress, sendFile]);
+
+  // Handle file transfer send
+  const handleFileTransfer = useCallback(async (file: File) => {
+    if (!activeChat?.contact?.i2pAddress) return;
+    try {
+      await fileTransferManager.sendFile(activeChat.contact.i2pAddress, file);
+      toast.success('Datei gesendet');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Fehler beim Senden');
+    }
+  }, [activeChat?.contact?.i2pAddress]);
+
   const handleSend = async () => {
     if (!messageText.trim()) return;
     
+    // Stop typing indicator
+    if (activeChat?.contact?.i2pAddress) {
+      statusMessenger.stopTyping(activeChat.contact.i2pAddress);
+    }
+
     try {
       await sendMessage(messageText.trim());
     } catch (error) {
@@ -218,7 +308,12 @@ export function ChatView() {
                     <Shield className="h-3 w-3" aria-hidden="true" />
                     Verschlüsselt
                   </span>
+                  <span aria-hidden="true">•</span>
+                  <VerificationBadge contactId={activeChat.contact?.id || ''} />
                 </>
+              )}
+              {isContactTyping && (
+                <span className="text-primary animate-pulse">tippt...</span>
               )}
             </div>
           </div>
@@ -273,6 +368,10 @@ export function ChatView() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem>Kontaktinfo</DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowVerification(true)}>
+                <ShieldCheck className="h-4 w-4 mr-2" />
+                Kontakt verifizieren
+              </DropdownMenuItem>
               <DropdownMenuItem>Nachrichten suchen</DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem 
@@ -365,6 +464,15 @@ export function ChatView() {
         </div>
       </ScrollArea>
 
+      {/* Typing Indicator */}
+      {isContactTyping && (
+        <div className="px-4 py-1">
+          <span className="text-xs text-muted-foreground animate-pulse">
+            {activeChat.contact?.name} tippt...
+          </span>
+        </div>
+      )}
+
       {/* Image Preview */}
       {previewImage && (
         <div className="p-4 border-t border-border bg-muted/50">
@@ -423,23 +531,50 @@ export function ChatView() {
           >
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
           </Button>
+          <input
+            type="file"
+            ref={fileTransferInputRef}
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) handleFileTransfer(f);
+              e.target.value = '';
+            }}
+            aria-label="Datei auswählen"
+          />
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => fileTransferInputRef.current?.click()}
+            disabled={encryptionState !== 'encrypted'}
+            aria-label="Datei senden"
+          >
+            <Paperclip className="h-5 w-5" aria-hidden="true" />
+          </Button>
           <Input
             placeholder="Nachricht schreiben..."
             value={messageText}
-            onChange={(e) => setMessageText(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             className="flex-1"
             disabled={encryptionState !== 'encrypted'}
             aria-label="Nachricht eingeben"
           />
-          <Button 
-            onClick={handleSend} 
-            disabled={!messageText.trim() || encryptionState !== 'encrypted'}
-            size="icon"
-            aria-label="Nachricht senden"
-          >
-            <Send className="h-5 w-5" aria-hidden="true" />
-          </Button>
+          {messageText.trim() ? (
+            <Button 
+              onClick={handleSend} 
+              disabled={encryptionState !== 'encrypted'}
+              size="icon"
+              aria-label="Nachricht senden"
+            >
+              <Send className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          ) : (
+            <VoiceRecordButton
+              onRecorded={handleVoiceRecorded}
+              disabled={encryptionState !== 'encrypted'}
+            />
+          )}
         </div>
         {encryptionState !== 'encrypted' && (
           <p className="text-xs text-muted-foreground mt-2 text-center">
@@ -482,6 +617,34 @@ export function ChatView() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* File Transfer Dialog (accept/reject incoming) */}
+      <FileTransferDialog />
+
+      {/* File Transfer Progress */}
+      {fileTransferProgress && fileTransferProgress.status !== 'completed' && (
+        <div className="px-4 py-2 border-t border-border bg-muted/50">
+          <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+            <span>{fileTransferProgress.direction === 'send' ? 'Sende Datei...' : 'Empfange Datei...'}</span>
+            <span>{fileTransferProgress.percent}%</span>
+          </div>
+          <div className="h-1 bg-muted rounded-full overflow-hidden">
+            <div className="h-full bg-primary transition-all" style={{ width: `${fileTransferProgress.percent}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Contact Verification Dialog */}
+      {activeChat?.contact && user && (
+        <ContactVerificationDialog
+          open={showVerification}
+          onOpenChange={setShowVerification}
+          contactId={activeChat.contact.id}
+          contactName={activeChat.contact.name}
+          contactFingerprint={activeChat.contact.fingerprint}
+          myFingerprint={user.fingerprint}
+        />
+      )}
 
       {/* Delete Chat Confirmation */}
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
