@@ -477,12 +477,6 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 )}
               </div>
             )}
-                  placeholder="Passwort zum Entschlüsseln"
-                  value={restorePassword}
-                  onChange={(e) => setRestorePassword(e.target.value)}
-                />
-              </div>
-            )}
 
             {/* Passphrase for key encryption in storage */}
             {restoreValidation?.valid && (
