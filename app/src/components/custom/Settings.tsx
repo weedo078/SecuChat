@@ -20,8 +20,8 @@ import { Separator } from '@/components/ui/separator';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService, samService } from '@/services/i2p';
 import { storageService } from '@/services/storage';
-import { cryptoService } from '@/services/crypto';
-import type { BackupData } from '@/types';
+import { backupService, type ValidationResult } from '@/services/backup';
+import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -308,70 +308,103 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 }
 
 function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [backupData, setBackupData] = useState('');
-  const [copied, setCopied] = useState(false);
+  const { user } = useApp();
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [usePassword, setUsePassword] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState('');
 
-  const generateBackup = async () => {
-    const backup = await storageService.createBackup();
-    // Encrypt backup with user's public key
-    const encrypted = await cryptoService.encryptMessage(
-      JSON.stringify(backup),
-      backup.user.pgpPublicKey
-    );
-    setBackupData(encrypted);
-  };
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(backupData);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleDownload = () => {
-    const blob = new Blob([backupData], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `securechat-backup-${new Date().toISOString().split('T')[0]}.txt`;
-    link.click();
-    URL.revokeObjectURL(url);
+  const handleCreateBackup = async () => {
+    if (usePassword && password !== confirmPassword) {
+      setError('Passwörter stimmen nicht überein');
+      return;
+    }
+    if (usePassword && password.length < 8) {
+      setError('Passwort muss mindestens 8 Zeichen haben');
+      return;
+    }
+    setIsCreating(true);
+    setError('');
+    try {
+      const backupFile = await backupService.createBackup(usePassword ? password : undefined);
+      backupService.downloadBackup(backupFile, user?.username || 'user');
+      setDone(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Backup fehlgeschlagen');
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setDone(false); setPassword(''); setConfirmPassword(''); setError(''); } onClose(); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Backup erstellen</DialogTitle>
           <DialogDescription>
-            Erstellen Sie ein verschlüsseltes Backup Ihrer Daten.
+            Erstellen Sie ein vollständiges Backup aller Daten.
           </DialogDescription>
         </DialogHeader>
 
-        {!backupData ? (
-          <div className="mt-4">
-            <p className="text-sm text-muted-foreground mb-4">
-              Das Backup enthält alle Ihre Chats, Kontakte und Einstellungen. 
-              Es wird mit Ihrem PGP-Schlüssel verschlüsselt.
+        {done ? (
+          <div className="mt-4 text-center py-4">
+            <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
+            <p className="font-medium text-green-500">Backup wurde heruntergeladen!</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Bewahren Sie die .secuchat-Datei sicher auf.
             </p>
-            <Button onClick={generateBackup} className="w-full">
-              Backup generieren
-            </Button>
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            <textarea
-              className="w-full h-40 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
-              value={backupData}
-              readOnly
-            />
-            <div className="flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={handleCopy}>
-                {copied ? 'Kopiert!' : 'Kopieren'}
-              </Button>
-              <Button variant="outline" className="flex-1" onClick={handleDownload}>
-                Herunterladen
-              </Button>
+            <p className="text-sm text-muted-foreground">
+              Das Backup enthält Profile, Nachrichten, Kontakte und Einstellungen.
+            </p>
+
+            <div className="flex items-center justify-between p-3 rounded-lg border border-border">
+              <div>
+                <p className="font-medium text-sm">Mit Passwort verschlüsseln</p>
+                <p className="text-xs text-muted-foreground">Zusätzlicher Schutz für die Backup-Datei</p>
+              </div>
+              <Switch
+                checked={usePassword}
+                onCheckedChange={setUsePassword}
+              />
             </div>
+
+            {usePassword && (
+              <div className="space-y-3">
+                <Input
+                  type="password"
+                  placeholder="Passwort (min. 8 Zeichen)"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                />
+                <Input
+                  type="password"
+                  placeholder="Passwort bestätigen"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                />
+              </div>
+            )}
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            <Button onClick={handleCreateBackup} disabled={isCreating} className="w-full">
+              {isCreating ? (
+                <>
+                  <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                  Backup wird erstellt...
+                </>
+              ) : (
+                <>
+                  <Download className="h-4 w-4 mr-2" />
+                  Backup erstellen & herunterladen
+                </>
+              )}
+            </Button>
           </div>
         )}
       </DialogContent>
@@ -380,44 +413,50 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 }
 
 function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [restoreData, setRestoreData] = useState('');
+  const [file, setFile] = useState<File | null>(null);
+  const [validation, setValidation] = useState<ValidationResult | null>(null);
+  const [password, setPassword] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
-  const handleRestore = async () => {
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setError('');
     try {
-      setError('');
-      if (!passphrase || passphrase.length < 8) {
-        setError('Bitte geben Sie eine Passphrase mit mindestens 8 Zeichen ein');
-        return;
-      }
-      // Decrypt backup using user's private key
-      const decryptedJson = await cryptoService.decryptMessage(restoreData);
-      const backup: BackupData = JSON.parse(decryptedJson);
-      // Set encryption passphrase before restoring to ensure keys are encrypted
-      storageService.setEncryptionPassphrase(passphrase);
-      await storageService.restoreBackup(backup);
-      setSuccess(true);
-    } catch (err) {
-      setError('Ungültiges Backup-Format oder Entschlüsselung fehlgeschlagen');
-      console.error('Restore error:', err);
+      const content = await backupService.readFile(f);
+      const v = backupService.validateBackupFile(content);
+      setValidation(v);
+      if (!v.valid) setError(v.error || 'Ungültige Datei');
+    } catch {
+      setValidation(null);
+      setError('Datei konnte nicht gelesen werden');
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      setRestoreData(event.target?.result as string);
-    };
-    reader.readAsText(file);
+  const handleRestore = async () => {
+    if (!file || !validation?.valid) return;
+    setIsRestoring(true);
+    setError('');
+    try {
+      const content = await backupService.readFile(file);
+      if (passphrase.length >= 8) {
+        storageService.setEncryptionPassphrase(passphrase);
+      }
+      await backupService.restoreBackup(content, validation.encrypted ? password : undefined);
+      setSuccess(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Wiederherstellung fehlgeschlagen');
+    } finally {
+      setIsRestoring(false);
+    }
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setFile(null); setValidation(null); setPassword(''); setPassphrase(''); setError(''); setSuccess(false); } onClose(); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Backup wiederherstellen</DialogTitle>
@@ -427,55 +466,71 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
         </DialogHeader>
 
         {success ? (
-          <div className="mt-4 text-center">
+          <div className="mt-4 text-center py-4">
+            <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
             <p className="text-green-500 font-medium">Wiederherstellung erfolgreich!</p>
             <p className="text-sm text-muted-foreground mt-2">
-              Bitte starten Sie die App neu, um die Wiederherstellung abzuschließen.
+              Bitte starten Sie die App neu, um die Änderungen zu übernehmen.
             </p>
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            <textarea
-              className="w-full h-32 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
-              placeholder="Backup-Daten einfügen..."
-              value={restoreData}
-              onChange={(e) => setRestoreData(e.target.value)}
-            />
-            
             <div className="relative">
               <input
                 type="file"
-                accept=".txt"
-                onChange={handleFileUpload}
+                accept=".secuchat,.json,.txt"
+                onChange={handleFileSelect}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
               />
               <Button variant="outline" className="w-full">
                 <Upload className="h-4 w-4 mr-2" />
-                Backup-Datei hochladen
+                {file ? file.name : 'Backup-Datei auswählen'}
               </Button>
             </div>
 
-            <input
-              type="password"
-              className="w-full p-3 rounded-md border border-input bg-background text-sm"
-              placeholder="Passphrase für die Verschlüsselung (min. 8 Zeichen)..."
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Diese Passphrase wird verwendet, um Ihre Private Keys zu verschlüsseln.
-            </p>
-
-            {error && (
-              <p className="text-sm text-destructive">{error}</p>
+            {validation?.valid && (
+              <div className="p-3 bg-green-500/10 rounded-lg text-sm space-y-1">
+                <p className="text-green-500 font-medium flex items-center gap-1">
+                  <Check className="h-3 w-3" /> Gültige Backup-Datei
+                </p>
+                {validation.username && <p className="text-muted-foreground">Benutzer: {validation.username}</p>}
+                {validation.contactCount !== undefined && (
+                  <p className="text-muted-foreground">{validation.contactCount} Kontakte, {validation.messageCount} Nachrichten</p>
+                )}
+              </div>
             )}
 
-            <Button 
-              onClick={handleRestore} 
+            {validation?.encrypted && (
+              <Input
+                type="password"
+                placeholder="Backup-Passwort"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            )}
+
+            {validation?.valid && (
+              <>
+                <Input
+                  type="password"
+                  placeholder="Passphrase für Schlüssel (min. 8 Zeichen)"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Verschlüsselt Ihre Private Keys auf diesem Gerät.
+                </p>
+              </>
+            )}
+
+            {error && <p className="text-sm text-destructive">{error}</p>}
+
+            <Button
+              onClick={handleRestore}
               className="w-full"
-              disabled={!restoreData || !passphrase || passphrase.length < 8}
+              disabled={!validation?.valid || isRestoring || passphrase.length < 8 || (validation?.encrypted && !password)}
             >
-              Wiederherstellen
+              {isRestoring ? 'Wiederherstellen...' : 'Wiederherstellen'}
             </Button>
           </div>
         )}

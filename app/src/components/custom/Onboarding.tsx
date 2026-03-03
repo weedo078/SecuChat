@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw } from 'lucide-react';
+import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Progress } from '@/components/ui/progress';
@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useApp } from '@/contexts/AppContext';
 import { cryptoService } from '@/services/crypto';
 import { storageService } from '@/services/storage';
+import { backupService } from '@/services/backup';
 import { i2pService, samService } from '@/services/i2p';
 import { platformService, type PlatformInfo } from '@/services/platform';
 import { uint8ArrayToBase64 } from '@/utils/base32';
@@ -34,6 +35,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [showPairing, setShowPairing] = useState(false);
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
   const [i2pTestStatus, setI2pTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  const [showRestoreFlow, setShowRestoreFlow] = useState(false);
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreValidation, setRestoreValidation] = useState<import('@/services/backup').ValidationResult | null>(null);
+  const [restorePassword, setRestorePassword] = useState('');
+  const [restorePassphrase, setRestorePassphrase] = useState('');
+  const [isRestoring, setIsRestoring] = useState(false);
   const { setUser } = useApp();
 
   // Detect platform on mount
@@ -313,6 +320,189 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     );
   }
 
+  const handleRestoreFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setRestoreFile(file);
+    setError(null);
+    try {
+      const content = await backupService.readFile(file);
+      const validation = backupService.validateBackupFile(content);
+      setRestoreValidation(validation);
+      if (!validation.valid) {
+        setError(validation.error || 'Ungültige Backup-Datei');
+      }
+    } catch {
+      setRestoreValidation(null);
+      setError('Datei konnte nicht gelesen werden');
+    }
+  };
+
+  const handleRestoreBackup = async () => {
+    if (!restoreFile || !restoreValidation?.valid) return;
+    setIsRestoring(true);
+    setError(null);
+    try {
+      await storageService.init();
+      const content = await backupService.readFile(restoreFile);
+      const password = restoreValidation.encrypted ? restorePassword : undefined;
+      const restored = await backupService.restoreBackup(content, password);
+
+      // Set encryption passphrase for private key storage
+      if (restorePassphrase.length >= 8) {
+        storageService.setEncryptionPassphrase(restorePassphrase);
+        // Re-save user to encrypt private keys with new passphrase
+        if (restored.user) {
+          await storageService.saveUser(restored.user);
+        }
+      }
+
+      // Import crypto keys if available
+      if (restored.user?.pgpPrivateKey && restored.user?.pgpPublicKey) {
+        try {
+          await cryptoService.importKeyPair(
+            restored.user.pgpPrivateKey,
+            restored.user.pgpPublicKey,
+            restorePassphrase
+          );
+        } catch {
+          // Key import may fail if passphrase doesn't match PGP key passphrase
+          // User can unlock later
+        }
+      }
+
+      setUser(restored.user);
+      onComplete();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Wiederherstellung fehlgeschlagen');
+    } finally {
+      setIsRestoring(false);
+    }
+  };
+
+  // Restore from backup flow
+  if (showRestoreFlow) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <div className="w-full max-w-lg">
+          <div className="text-center mb-8">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
+              <Upload className="h-8 w-8 text-primary" />
+            </div>
+            <h1 className="text-2xl font-bold mb-2">Backup wiederherstellen</h1>
+            <p className="text-muted-foreground">
+              Stellen Sie Ihr Profil aus einer Backup-Datei wieder her
+            </p>
+          </div>
+
+          {error && (
+            <Alert variant="destructive" className="mb-4">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="bg-card rounded-xl border border-border p-6 space-y-4">
+            {/* File picker */}
+            <div>
+              <label className="text-sm font-medium mb-2 block">Backup-Datei auswählen</label>
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".secuchat,.json,.txt"
+                  onChange={handleRestoreFileSelect}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <Button variant="outline" className="w-full">
+                  <Upload className="h-4 w-4 mr-2" />
+                  {restoreFile ? restoreFile.name : 'Datei auswählen...'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Validation info */}
+            {restoreValidation?.valid && (
+              <div className="p-4 bg-green-500/10 rounded-lg space-y-1">
+                <div className="flex items-center gap-2">
+                  <Check className="h-4 w-4 text-green-500" />
+                  <span className="font-medium text-green-500">Gültige Backup-Datei</span>
+                </div>
+                {restoreValidation.username && (
+                  <p className="text-sm text-muted-foreground">Benutzer: {restoreValidation.username}</p>
+                )}
+                {restoreValidation.contactCount !== undefined && (
+                  <p className="text-sm text-muted-foreground">
+                    {restoreValidation.contactCount} Kontakte, {restoreValidation.messageCount} Nachrichten
+                  </p>
+                )}
+                {restoreValidation.encrypted && (
+                  <p className="text-sm text-yellow-500 flex items-center gap-1">
+                    <Lock className="h-3 w-3" /> Verschlüsselt
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* Password for encrypted backup */}
+            {restoreValidation?.encrypted && (
+              <div>
+                <label className="text-sm font-medium mb-2 block">Backup-Passwort</label>
+                <Input
+                  type="password"
+                  placeholder="Passwort zum Entschlüsseln"
+                  value={restorePassword}
+                  onChange={(e) => setRestorePassword(e.target.value)}
+                />
+              </div>
+            )}
+
+            {/* Passphrase for key encryption in storage */}
+            {restoreValidation?.valid && (
+              <div>
+                <label className="text-sm font-medium mb-2 block">Passphrase für Verschlüsselung</label>
+                <Input
+                  type="password"
+                  placeholder="Mindestens 8 Zeichen"
+                  value={restorePassphrase}
+                  onChange={(e) => setRestorePassphrase(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground mt-1">
+                  Schützt Ihre privaten Schlüssel auf diesem Gerät
+                </p>
+              </div>
+            )}
+
+            {/* Restore button */}
+            <Button
+              onClick={handleRestoreBackup}
+              disabled={!restoreValidation?.valid || isRestoring || restorePassphrase.length < 8 || (restoreValidation?.encrypted && !restorePassword)}
+              className="w-full"
+            >
+              {isRestoring ? (
+                <>
+                  <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
+                  Wiederherstellen...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-4 w-4 mr-2" />
+                  Backup wiederherstellen
+                </>
+              )}
+            </Button>
+          </div>
+
+          <div className="flex justify-center mt-6">
+            <Button variant="outline" onClick={() => { setShowRestoreFlow(false); setError(null); }}>
+              <ChevronLeft className="h-4 w-4 mr-2" />
+              Zurück zur Neueinrichtung
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // New account flow
   return (
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -379,6 +569,20 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 />
                 <p className="text-xs text-muted-foreground mt-1">
                   Hilft Ihnen, Ihre Geräte zu unterscheiden
+                </p>
+              </div>
+
+              <div className="pt-4 border-t border-border">
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowRestoreFlow(true)}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Vorhandenes Backup laden
+                </Button>
+                <p className="text-xs text-muted-foreground mt-1 text-center">
+                  Haben Sie bereits ein Backup? Stellen Sie Ihr Profil wieder her.
                 </p>
               </div>
             </div>
