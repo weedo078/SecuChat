@@ -1,7 +1,7 @@
-import type { BackupData, AppSettings, SecuritySettings } from '@/types';
+import type { BackupData, AppSettings, SecuritySettings, Message } from '@/types';
 import { storageService } from '@/services/storage';
 import { logger } from '@/utils/logger';
-import * as age from 'age-encryption';
+import { Encrypter, Decrypter, generateIdentity, identityToRecipient } from 'age-encryption';
 
 const BACKUP_VERSION = '3.0-age';
 const BACKUP_MAGIC = 'SECUCHAT_BACKUP';
@@ -14,7 +14,7 @@ export interface BackupFile {
   timestamp: string;
   username: string;
   data: string; // Age-encrypted base64
-  publicKey: string; // Age public key used for encryption
+  publicKey: string; // Age public key (age1...)
 }
 
 export interface BackupKeyFile {
@@ -22,8 +22,8 @@ export interface BackupKeyFile {
   version: string;
   type: 'age-private-key';
   username: string;
-  privateKey: string; // Base64-encoded Age private key
-  publicKey: string; // Base64-encoded Age public key
+  privateKey: string; // Age identity (AGE-SECRET-KEY-1...)
+  publicKey: string; // Age recipient (age1...)
   createdAt: string;
 }
 
@@ -46,36 +46,59 @@ export interface ValidationResult {
 }
 
 /**
+ * Convert Uint8Array to base64 string (browser-compatible)
+ */
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Convert base64 string to Uint8Array (browser-compatible)
+ */
+function base64ToUint8(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
  * Generate a new Age key pair for backup encryption
  */
-export function generateAgeKeyPair(): { publicKey: string; privateKey: string } {
-  const identity = age.generateIdentity();
-  const recipient = age.identityToRecipient(identity);
-  
+export async function generateAgeKeyPair(): Promise<{ publicKey: string; privateKey: string }> {
+  const identity = await generateIdentity();
+  const recipient = await identityToRecipient(identity);
+
   return {
-    publicKey: Buffer.from(recipient).toString('base64'),
-    privateKey: Buffer.from(identity).toString('base64')
+    publicKey: recipient,
+    privateKey: identity,
   };
 }
 
 /**
  * Encrypt data with Age public key
  */
-export async function encryptWithAge(data: string, publicKeyBase64: string): Promise<string> {
-  const recipient = age.parseRecipient(Buffer.from(publicKeyBase64, 'base64'));
-  const plaintext = Buffer.from(data, 'utf-8');
-  const encrypted = await age.encrypt(plaintext, [recipient]);
-  return Buffer.from(encrypted).toString('base64');
+export async function encryptWithAge(data: string, publicKey: string): Promise<string> {
+  const e = new Encrypter();
+  e.addRecipient(publicKey);
+  const encrypted = await e.encrypt(data);
+  return uint8ToBase64(encrypted);
 }
 
 /**
  * Decrypt data with Age private key
  */
-export async function decryptWithAge(encryptedBase64: string, privateKeyBase64: string): Promise<string> {
-  const identity = age.parseIdentity(Buffer.from(privateKeyBase64, 'base64'));
-  const encrypted = Buffer.from(encryptedBase64, 'base64');
-  const decrypted = await age.decrypt(encrypted, [identity]);
-  return Buffer.from(decrypted).toString('utf-8');
+export async function decryptWithAge(encryptedBase64: string, privateKey: string): Promise<string> {
+  const d = new Decrypter();
+  d.addIdentity(privateKey);
+  const encrypted = base64ToUint8(encryptedBase64);
+  return await d.decrypt(encrypted, 'text');
 }
 
 /**
@@ -86,59 +109,39 @@ export async function createBackup(): Promise<BackupResult> {
   const user = await storageService.getUser();
   if (!user) throw new Error('No user found');
 
-  const contacts = await storageService.getContacts();
-  const chats = await storageService.getChats();
-  const messages: Record<string, unknown[]> = {};
-  
+  const contacts = await storageService.getAllContacts();
+  const chats = await storageService.getAllChats();
+  const allMessages: Message[] = [];
+
   for (const chat of chats) {
-    messages[chat.id] = await storageService.getMessages(chat.id);
+    const chatMessages = await storageService.getMessagesByChatId(chat.id);
+    allMessages.push(...chatMessages);
   }
-  
+
   const settings = await storageService.getSettings();
   const securitySettings = await storageService.getSecuritySettings();
 
   const backupContents: BackupContents = {
-    user: {
-      id: user.id,
-      username: user.username,
-      deviceId: user.deviceId,
-      deviceName: user.deviceName,
-      fingerprint: user.fingerprint,
-      pgpPublicKey: user.pgpPublicKey,
-      i2pAddress: user.i2pAddress,
-      i2pPublicKey: user.i2pPublicKey,
-      createdAt: user.createdAt,
-    },
-    contacts: contacts.map(c => ({
-      id: c.id,
-      username: c.username,
-      fingerprint: c.fingerprint,
-      pgpPublicKey: c.pgpPublicKey,
-      i2pAddress: c.i2pAddress,
-      i2pPublicKey: c.i2pPublicKey,
-      verified: c.verified,
-      addedAt: c.addedAt,
-    })),
-    chats: chats.map(c => ({
-      id: c.id,
-      contactId: c.contactId,
-      createdAt: c.createdAt,
-      lastMessageAt: c.lastMessageAt,
-    })),
-    messages,
+    version: BACKUP_VERSION,
+    timestamp: new Date().toISOString(),
+    user,
+    contacts,
+    chats,
+    messages: allMessages,
+    devices: await storageService.getAllDevices(),
     settings: settings || undefined,
     securitySettings: securitySettings || undefined,
   };
 
   // Generate Age keys for this backup
-  const { publicKey, privateKey } = generateAgeKeyPair();
-  
+  const { publicKey, privateKey } = await generateAgeKeyPair();
+
   // Encrypt backup data
   const jsonData = JSON.stringify(backupContents);
   const encryptedData = await encryptWithAge(jsonData, publicKey);
 
   const timestamp = new Date().toISOString();
-  
+
   const backupFile: BackupFile = {
     magic: BACKUP_MAGIC,
     version: BACKUP_VERSION,
@@ -159,7 +162,7 @@ export async function createBackup(): Promise<BackupResult> {
   };
 
   logger.info('[Backup] Created Age-encrypted backup for user:', user.username);
-  
+
   return { backupFile, keyFile };
 }
 
@@ -212,11 +215,11 @@ export async function restoreBackup(
 export function validateBackupFile(content: string): ValidationResult {
   try {
     const backup = JSON.parse(content) as Partial<BackupFile>;
-    
+
     if (backup.magic !== BACKUP_MAGIC) {
       return { valid: false, error: 'Ungültige Backup-Datei', requiresKey: false };
     }
-    
+
     if (backup.version === BACKUP_VERSION) {
       // Age-encrypted backup
       return {
@@ -226,7 +229,7 @@ export function validateBackupFile(content: string): ValidationResult {
         requiresKey: true,
       };
     }
-    
+
     return { valid: false, error: 'Unbekannte Backup-Version', requiresKey: false };
   } catch {
     return { valid: false, error: 'Ungültiges Dateiformat', requiresKey: false };
@@ -273,7 +276,7 @@ export function downloadBackupKey(keyFile: BackupKeyFile): void {
   link.click();
   document.body.removeChild(link);
   URL.revokeObjectURL(url);
-  
+
   logger.info('[Backup] Key file downloaded for user:', keyFile.username);
 }
 

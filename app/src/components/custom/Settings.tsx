@@ -308,7 +308,6 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 }
 
 function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const { user } = useApp();
   const [isCreating, setIsCreating] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
@@ -425,24 +424,20 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
     </Dialog>
   );
 }
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
-  const [file, setFile] = useState<File | null>(null);
+  const [backupFile, setBackupFile] = useState<File | null>(null);
+  const [keyFile, setKeyFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
-  const [password, setPassword] = useState('');
   const [passphrase, setPassphrase] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
 
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackupFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    setFile(f);
+    setBackupFile(f);
     setError('');
     try {
       const content = await backupService.readFile(f);
@@ -455,16 +450,23 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
     }
   };
 
+  const handleKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setKeyFile(f);
+  };
+
   const handleRestore = async () => {
-    if (!file || !validation?.valid) return;
+    if (!backupFile || !keyFile || !validation?.valid) return;
     setIsRestoring(true);
     setError('');
     try {
-      const content = await backupService.readFile(file);
+      const backupContent = await backupService.readFile(backupFile);
+      const keyContent = await backupService.readFile(keyFile);
       if (passphrase.length >= 8) {
         storageService.setEncryptionPassphrase(passphrase);
       }
-      await backupService.restoreBackup(content, validation.encrypted ? password : undefined);
+      await backupService.restoreBackup(backupContent, keyContent);
       setSuccess(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Wiederherstellung fehlgeschlagen');
@@ -473,13 +475,22 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
     }
   };
 
+  const resetState = () => {
+    setBackupFile(null);
+    setKeyFile(null);
+    setValidation(null);
+    setPassphrase('');
+    setError('');
+    setSuccess(false);
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setFile(null); setValidation(null); setPassword(''); setPassphrase(''); setError(''); setSuccess(false); } onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) resetState(); onClose(); }}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Backup wiederherstellen</DialogTitle>
           <DialogDescription>
-            Stellen Sie Ihre Daten aus einem Backup wieder her.
+            Sie benötigen sowohl die Backup-Datei als auch die BackupKey-Datei.
           </DialogDescription>
         </DialogHeader>
 
@@ -493,17 +504,39 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            <div className="relative">
-              <input
-                type="file"
-                accept=".secuchat,.json,.txt"
-                onChange={handleFileSelect}
-                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              />
-              <Button variant="outline" className="w-full">
-                <Upload className="h-4 w-4 mr-2" />
-                {file ? file.name : 'Backup-Datei auswählen'}
-              </Button>
+            {/* Backup file picker */}
+            <div>
+              <label className="text-sm font-medium mb-2 block">1. Backup-Datei (*.secuchat)</label>
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".secuchat,.json"
+                  onChange={handleBackupFileSelect}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <Button variant="outline" className="w-full">
+                  <Upload className="h-4 w-4 mr-2" />
+                  {backupFile ? backupFile.name : 'Backup-Datei auswählen'}
+                </Button>
+              </div>
+            </div>
+
+            {/* Key file picker */}
+            <div>
+              <label className="text-sm font-medium mb-2 block">2. BackupKey-Datei (*.secuchat)</label>
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".secuchat,.json"
+                  onChange={handleKeyFileSelect}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                  disabled={!validation?.valid}
+                />
+                <Button variant="outline" className="w-full" disabled={!validation?.valid}>
+                  <Shield className="h-4 w-4 mr-2" />
+                  {keyFile ? keyFile.name : 'Key-Datei auswählen'}
+                </Button>
+              </div>
             </div>
 
             {validation?.valid && (
@@ -512,19 +545,7 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
                   <Check className="h-3 w-3" /> Gültige Backup-Datei
                 </p>
                 {validation.username && <p className="text-muted-foreground">Benutzer: {validation.username}</p>}
-                {validation.contactCount !== undefined && (
-                  <p className="text-muted-foreground">{validation.contactCount} Kontakte, {validation.messageCount} Nachrichten</p>
-                )}
               </div>
-            )}
-
-            {validation?.encrypted && (
-              <Input
-                type="password"
-                placeholder="Backup-Passwort"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
             )}
 
             {validation?.valid && (
@@ -546,7 +567,7 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
             <Button
               onClick={handleRestore}
               className="w-full"
-              disabled={!validation?.valid || isRestoring || passphrase.length < 8 || (validation?.encrypted && !password)}
+              disabled={!validation?.valid || !keyFile || isRestoring || passphrase.length < 8}
             >
               {isRestoring ? 'Wiederherstellen...' : 'Wiederherstellen'}
             </Button>
