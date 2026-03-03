@@ -57,6 +57,7 @@ class SAMService {
   private maxReconnectAttempts = 5;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isReconnecting = false;
+  private acceptLoopActive = false;
 
   /**
    * Check if SAM proxy is reachable
@@ -444,6 +445,155 @@ class SAMService {
   }
 
   /**
+   * Start accepting incoming stream connections in the background.
+   * SAM v3.1 requires a dedicated socket per STREAM ACCEPT — cannot reuse
+   * the session socket. Each accepted connection gets its own socket.
+   * Must be called after createSession().
+   */
+  startAcceptLoop(): void {
+    if (this.acceptLoopActive) return;
+    this.acceptLoopActive = true;
+    logger.log('[SAM] Starting accept loop');
+    this.scheduleAccept();
+  }
+
+  stopAcceptLoop(): void {
+    this.acceptLoopActive = false;
+  }
+
+  private scheduleAccept(): void {
+    if (!this.acceptLoopActive || !this.sessionNickname) return;
+    this.acceptOneIncoming().catch((err) => {
+      if (this.acceptLoopActive) {
+        logger.warn('[SAM] Accept error, retrying in 3s:', err);
+        setTimeout(() => this.scheduleAccept(), 3000);
+      }
+    });
+  }
+
+  /**
+   * Accept a single incoming stream connection on a fresh socket.
+   * SAM v3.1 flow:
+   *   new WS → HELLO → STREAM ACCEPT → wait for peer destination → data flows
+   */
+  private async acceptOneIncoming(): Promise<void> {
+    if (!this.sessionNickname) throw new Error('No active session');
+    const nick = this.sessionNickname;
+
+    const acceptSocket = new WebSocket(`ws://${this.config.host}:${this.config.port}`);
+
+    // Wait for WebSocket to open
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        try { acceptSocket.close(); } catch { /* ignore */ }
+        reject(new Error('Accept socket open timeout'));
+      }, 10000);
+      acceptSocket.onopen = () => { clearTimeout(timeout); resolve(); };
+      acceptSocket.onerror = () => { clearTimeout(timeout); reject(new Error('Accept socket error')); };
+      acceptSocket.onclose = () => { clearTimeout(timeout); reject(new Error('Accept socket closed before open')); };
+    });
+
+    // HELLO handshake
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Accept HELLO timeout')), 10000);
+      const onMsg = (ev: MessageEvent) => {
+        if (typeof ev.data === 'string' && ev.data.includes('RESULT=OK')) {
+          acceptSocket.removeEventListener('message', onMsg);
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      acceptSocket.addEventListener('message', onMsg);
+      acceptSocket.send('HELLO VERSION MIN=3.1 MAX=3.1\n');
+    });
+
+    // STREAM ACCEPT — waits (potentially a long time) for an inbound connection.
+    // After STREAM STATUS RESULT=OK, the next line is the peer's base64 destination.
+    logger.log('[SAM] Waiting for incoming stream...');
+    const peerB64Destination = await new Promise<string>((resolve, reject) => {
+      let gotStatus = false;
+
+      const onClose = () => {
+        reject(new Error('Accept socket closed while waiting for connection'));
+      };
+      acceptSocket.addEventListener('close', onClose);
+
+      const onMsg = (ev: MessageEvent) => {
+        const data = ev.data as string;
+        if (!gotStatus) {
+          if (data.startsWith('STREAM STATUS') && data.includes('RESULT=OK')) {
+            gotStatus = true;
+            // Some SAM versions include DESTINATION= in the status line itself
+            const destMatch = data.match(/DESTINATION=([A-Za-z0-9+/~=-]+)/);
+            if (destMatch) {
+              acceptSocket.removeEventListener('message', onMsg);
+              acceptSocket.removeEventListener('close', onClose);
+              resolve(destMatch[1]);
+            }
+            // Otherwise wait for the next message which is the peer's destination
+          } else if (data.startsWith('STREAM STATUS')) {
+            acceptSocket.removeEventListener('message', onMsg);
+            acceptSocket.removeEventListener('close', onClose);
+            reject(new Error(`STREAM ACCEPT failed: ${data}`));
+          }
+        } else {
+          // After STREAM STATUS OK the next non-empty data line is the peer's
+          // base64 destination (newline-terminated, delivered as a single WS frame
+          // by the proxy's line-splitting logic).
+          const dest = data.trim();
+          if (dest && !dest.startsWith('HELLO ') && !dest.startsWith('SESSION ') && !dest.startsWith('STREAM ')) {
+            acceptSocket.removeEventListener('message', onMsg);
+            acceptSocket.removeEventListener('close', onClose);
+            resolve(dest);
+          }
+        }
+      };
+
+      acceptSocket.addEventListener('message', onMsg);
+      acceptSocket.send(`STREAM ACCEPT ID=${nick} SILENT=false\n`);
+    });
+
+    // Compute b32 address so message routing uses the same key as i2pService.peers
+    const peerB32 = await this.computeB32Address(peerB64Destination);
+    logger.log('[SAM] Accepted incoming stream from:', peerB32.slice(0, 20) + '...');
+
+    const streamId = this.nextStreamId++;
+    const stream: SAMStream = {
+      id: streamId,
+      peerDestination: peerB32,
+      connected: true,
+      socket: acceptSocket,
+    };
+    this.streams.set(streamId, stream);
+
+    // Forward incoming data to message handlers using b32 as the sender identifier
+    acceptSocket.onmessage = (ev) => {
+      const data = ev.data as string;
+      if (!data.startsWith('HELLO ') && !data.startsWith('SESSION ') && !data.startsWith('STREAM ')) {
+        this.messageHandlers.forEach(h => h(peerB32, data));
+      }
+    };
+
+    acceptSocket.onclose = () => {
+      stream.connected = false;
+      this.streams.delete(streamId);
+      logger.log('[SAM] Accepted stream from', peerB32.slice(0, 20), 'closed');
+    };
+
+    acceptSocket.onerror = (err) => {
+      logger.error('[SAM] Accepted stream error:', err);
+      stream.connected = false;
+    };
+
+    this.streamHandlers.forEach(h => h(stream));
+
+    // Queue the next accept immediately so there is always one waiting
+    if (this.acceptLoopActive) {
+      this.scheduleAccept();
+    }
+  }
+
+  /**
    * Send data over a stream
    */
   isStreamOpen(streamId: number): boolean {
@@ -528,7 +678,9 @@ class SAMService {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
-    
+
+    this.stopAcceptLoop();
+
     // Close all stream sockets
     this.streams.forEach(stream => {
       stream.connected = false;
