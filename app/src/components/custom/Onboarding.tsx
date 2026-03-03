@@ -36,9 +36,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
   const [i2pTestStatus, setI2pTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [showRestoreFlow, setShowRestoreFlow] = useState(false);
-  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [restoreBackupFile, setRestoreBackupFile] = useState<File | null>(null);
+  const [restoreKeyFile, setRestoreKeyFile] = useState<File | null>(null);
   const [restoreValidation, setRestoreValidation] = useState<import('@/services/backup').ValidationResult | null>(null);
-  const [restorePassword, setRestorePassword] = useState('');
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
   const { setUser } = useApp();
@@ -320,10 +320,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     );
   }
 
-  const handleRestoreFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleBackupFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setRestoreFile(file);
+    setRestoreBackupFile(file);
     setError(null);
     try {
       const content = await backupService.readFile(file);
@@ -338,15 +338,23 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     }
   };
 
+  const handleKeyFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setRestoreKeyFile(file);
+      setError(null);
+    }
+  };
+
   const handleRestoreBackup = async () => {
-    if (!restoreFile || !restoreValidation?.valid) return;
+    if (!restoreBackupFile || !restoreKeyFile || !restoreValidation?.valid) return;
     setIsRestoring(true);
     setError(null);
     try {
       await storageService.init();
-      const content = await backupService.readFile(restoreFile);
-      const password = restoreValidation.encrypted ? restorePassword : undefined;
-      const restored = await backupService.restoreBackup(content, password);
+      const backupContent = await backupService.readFile(restoreBackupFile);
+      const keyContent = await backupService.readFile(restoreKeyFile);
+      const restored = await backupService.restoreBackup(backupContent, keyContent);
 
       // Set encryption passphrase for private key storage
       if (restorePassphrase.length >= 8) {
@@ -403,21 +411,58 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           )}
 
           <div className="bg-card rounded-xl border border-border p-6 space-y-4">
-            {/* File picker */}
+            {/* Info */}
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
+              <p className="text-amber-800 text-sm font-medium">
+                ⚠️ Zwei Dateien erforderlich
+              </p>
+              <p className="text-amber-700 text-xs mt-1">
+                Sie benötigen sowohl die Backup-Datei als auch die BackupKey-Datei.
+                Ohne die Key-Datei können die Daten nicht entschlüsselt werden.
+              </p>
+            </div>
+
+            {/* Backup file picker */}
             <div>
-              <label className="text-sm font-medium mb-2 block">Backup-Datei auswählen</label>
+              <label className="text-sm font-medium mb-2 block">1. Backup-Datei (*.secuchat)</label>
               <div className="relative">
                 <input
                   type="file"
-                  accept=".secuchat,.json,.txt"
-                  onChange={handleRestoreFileSelect}
+                  accept=".secuchat,.json"
+                  onChange={handleBackupFileSelect}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
                 <Button variant="outline" className="w-full">
                   <Upload className="h-4 w-4 mr-2" />
-                  {restoreFile ? restoreFile.name : 'Datei auswählen...'}
+                  {restoreBackupFile ? restoreBackupFile.name : 'Backup-Datei auswählen...'}
                 </Button>
               </div>
+            </div>
+
+            {/* Key file picker */}
+            <div>
+              <label className="text-sm font-medium mb-2 block">2. BackupKey-Datei (*.secuchat)</label>
+              <div className="relative">
+                <input
+                  type="file"
+                  accept=".secuchat,.json"
+                  onChange={handleKeyFileSelect}
+                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                />
+                <Button 
+                  variant="outline" 
+                  className="w-full"
+                  disabled={!restoreValidation?.valid}
+                >
+                  <Key className="h-4 w-4 mr-2" />
+                  {restoreKeyFile ? restoreKeyFile.name : 'Key-Datei auswählen...'}
+                </Button>
+              </div>
+              {!restoreValidation?.valid && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Wählen Sie zuerst die Backup-Datei aus
+                </p>
+              )}
             </div>
 
             {/* Validation info */}
@@ -425,30 +470,13 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-4 bg-green-500/10 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
                   <Check className="h-4 w-4 text-green-500" />
-                  <span className="font-medium text-green-500">Gültige Backup-Datei</span>
+                  <span className="font-medium text-green-500">Gültige Backup-Datei erkannt</span>
                 </div>
                 {restoreValidation.username && (
                   <p className="text-sm text-muted-foreground">Benutzer: {restoreValidation.username}</p>
                 )}
-                {restoreValidation.contactCount !== undefined && (
-                  <p className="text-sm text-muted-foreground">
-                    {restoreValidation.contactCount} Kontakte, {restoreValidation.messageCount} Nachrichten
-                  </p>
-                )}
-                {restoreValidation.encrypted && (
-                  <p className="text-sm text-yellow-500 flex items-center gap-1">
-                    <Lock className="h-3 w-3" /> Verschlüsselt
-                  </p>
-                )}
               </div>
             )}
-
-            {/* Password for encrypted backup */}
-            {restoreValidation?.encrypted && (
-              <div>
-                <label className="text-sm font-medium mb-2 block">Backup-Passwort</label>
-                <Input
-                  type="password"
                   placeholder="Passwort zum Entschlüsseln"
                   value={restorePassword}
                   onChange={(e) => setRestorePassword(e.target.value)}
@@ -475,7 +503,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             {/* Restore button */}
             <Button
               onClick={handleRestoreBackup}
-              disabled={!restoreValidation?.valid || isRestoring || restorePassphrase.length < 8 || (restoreValidation?.encrypted && !restorePassword)}
+              disabled={!restoreValidation?.valid || !restoreKeyFile || isRestoring || restorePassphrase.length < 8}
               className="w-full"
             >
               {isRestoring ? (
@@ -493,7 +521,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           </div>
 
           <div className="flex justify-center mt-6">
-            <Button variant="outline" onClick={() => { setShowRestoreFlow(false); setError(null); }}>
+            <Button variant="outline" onClick={() => { setShowRestoreFlow(false); setError(null); setRestoreBackupFile(null); setRestoreKeyFile(null); setRestoreValidation(null); }}>
               <ChevronLeft className="h-4 w-4 mr-2" />
               Zurück zur Neueinrichtung
             </Button>

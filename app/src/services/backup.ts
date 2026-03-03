@@ -1,16 +1,30 @@
 import type { BackupData, AppSettings, SecuritySettings } from '@/types';
 import { storageService } from '@/services/storage';
 import { logger } from '@/utils/logger';
+import * as age from 'age-encryption';
 
-const BACKUP_VERSION = '3.0';
+const BACKUP_VERSION = '3.0-age';
 const BACKUP_MAGIC = 'SECUCHAT_BACKUP';
+const KEY_VERSION = '1.0-age';
+const KEY_MAGIC = 'SECUCHAT_BACKUP_KEY';
 
 export interface BackupFile {
   magic: string;
   version: string;
-  encrypted: boolean;
   timestamp: string;
-  data: string; // JSON string (plain or AES-encrypted base64)
+  username: string;
+  data: string; // Age-encrypted base64
+  publicKey: string; // Age public key used for encryption
+}
+
+export interface BackupKeyFile {
+  magic: string;
+  version: string;
+  type: 'age-private-key';
+  username: string;
+  privateKey: string; // Base64-encoded Age private key
+  publicKey: string; // Base64-encoded Age public key
+  createdAt: string;
 }
 
 export interface BackupContents extends BackupData {
@@ -18,288 +32,262 @@ export interface BackupContents extends BackupData {
   securitySettings?: SecuritySettings;
 }
 
-// AES-GCM encryption for backup files
-async function deriveBackupKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(password),
-    'PBKDF2',
-    false,
-    ['deriveBits', 'deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: salt.buffer as ArrayBuffer, iterations: 200000, hash: 'SHA-256' },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
-
-async function encryptBackup(data: string, password: string): Promise<string> {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveBackupKey(password, salt);
-  const encoder = new TextEncoder();
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encoder.encode(data)
-  );
-  // Combine: salt(16) + iv(12) + ciphertext
-  const combined = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
-  combined.set(salt);
-  combined.set(iv, salt.length);
-  combined.set(new Uint8Array(encrypted), salt.length + iv.length);
-  return btoa(String.fromCharCode(...combined));
-}
-
-async function decryptBackup(encryptedBase64: string, password: string): Promise<string> {
-  const combined = new Uint8Array(atob(encryptedBase64).split('').map(c => c.charCodeAt(0)));
-  const salt = combined.slice(0, 16);
-  const iv = combined.slice(16, 28);
-  const encrypted = combined.slice(28);
-  const key = await deriveBackupKey(password, salt);
-  const decrypted = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encrypted
-  );
-  return new TextDecoder().decode(decrypted);
+export interface BackupResult {
+  backupFile: BackupFile;
+  keyFile: BackupKeyFile;
 }
 
 export interface ValidationResult {
   valid: boolean;
-  error?: string;
-  encrypted?: boolean;
   version?: string;
-  timestamp?: string;
   username?: string;
-  contactCount?: number;
-  messageCount?: number;
+  error?: string;
+  requiresKey: boolean;
 }
 
-export class BackupService {
-  private static instance: BackupService;
+/**
+ * Generate a new Age key pair for backup encryption
+ */
+export function generateAgeKeyPair(): { publicKey: string; privateKey: string } {
+  const identity = age.generateIdentity();
+  const recipient = age.identityToRecipient(identity);
+  
+  return {
+    publicKey: Buffer.from(recipient).toString('base64'),
+    privateKey: Buffer.from(identity).toString('base64')
+  };
+}
 
-  static getInstance(): BackupService {
-    if (!BackupService.instance) {
-      BackupService.instance = new BackupService();
-    }
-    return BackupService.instance;
+/**
+ * Encrypt data with Age public key
+ */
+export async function encryptWithAge(data: string, publicKeyBase64: string): Promise<string> {
+  const recipient = age.parseRecipient(Buffer.from(publicKeyBase64, 'base64'));
+  const plaintext = Buffer.from(data, 'utf-8');
+  const encrypted = await age.encrypt(plaintext, [recipient]);
+  return Buffer.from(encrypted).toString('base64');
+}
+
+/**
+ * Decrypt data with Age private key
+ */
+export async function decryptWithAge(encryptedBase64: string, privateKeyBase64: string): Promise<string> {
+  const identity = age.parseIdentity(Buffer.from(privateKeyBase64, 'base64'));
+  const encrypted = Buffer.from(encryptedBase64, 'base64');
+  const decrypted = await age.decrypt(encrypted, [identity]);
+  return Buffer.from(decrypted).toString('utf-8');
+}
+
+/**
+ * Create a full backup with Age encryption
+ * Returns both the encrypted backup and the private key
+ */
+export async function createBackup(): Promise<BackupResult> {
+  const user = await storageService.getUser();
+  if (!user) throw new Error('No user found');
+
+  const contacts = await storageService.getContacts();
+  const chats = await storageService.getChats();
+  const messages: Record<string, unknown[]> = {};
+  
+  for (const chat of chats) {
+    messages[chat.id] = await storageService.getMessages(chat.id);
+  }
+  
+  const settings = await storageService.getSettings();
+  const securitySettings = await storageService.getSecuritySettings();
+
+  const backupContents: BackupContents = {
+    user: {
+      id: user.id,
+      username: user.username,
+      deviceId: user.deviceId,
+      deviceName: user.deviceName,
+      fingerprint: user.fingerprint,
+      pgpPublicKey: user.pgpPublicKey,
+      i2pAddress: user.i2pAddress,
+      i2pPublicKey: user.i2pPublicKey,
+      createdAt: user.createdAt,
+    },
+    contacts: contacts.map(c => ({
+      id: c.id,
+      username: c.username,
+      fingerprint: c.fingerprint,
+      pgpPublicKey: c.pgpPublicKey,
+      i2pAddress: c.i2pAddress,
+      i2pPublicKey: c.i2pPublicKey,
+      verified: c.verified,
+      addedAt: c.addedAt,
+    })),
+    chats: chats.map(c => ({
+      id: c.id,
+      contactId: c.contactId,
+      createdAt: c.createdAt,
+      lastMessageAt: c.lastMessageAt,
+    })),
+    messages,
+    settings: settings || undefined,
+    securitySettings: securitySettings || undefined,
+  };
+
+  // Generate Age keys for this backup
+  const { publicKey, privateKey } = generateAgeKeyPair();
+  
+  // Encrypt backup data
+  const jsonData = JSON.stringify(backupContents);
+  const encryptedData = await encryptWithAge(jsonData, publicKey);
+
+  const timestamp = new Date().toISOString();
+  
+  const backupFile: BackupFile = {
+    magic: BACKUP_MAGIC,
+    version: BACKUP_VERSION,
+    timestamp,
+    username: user.username,
+    data: encryptedData,
+    publicKey,
+  };
+
+  const keyFile: BackupKeyFile = {
+    magic: KEY_MAGIC,
+    version: KEY_VERSION,
+    type: 'age-private-key',
+    username: user.username,
+    privateKey,
+    publicKey,
+    createdAt: timestamp,
+  };
+
+  logger.info('[Backup] Created Age-encrypted backup for user:', user.username);
+  
+  return { backupFile, keyFile };
+}
+
+/**
+ * Restore from Age-encrypted backup
+ * Requires both the backup file and the key file
+ */
+export async function restoreBackup(
+  backupContent: string,
+  keyContent: string
+): Promise<BackupContents> {
+  let backupFile: BackupFile;
+  let keyFile: BackupKeyFile;
+
+  try {
+    backupFile = JSON.parse(backupContent) as BackupFile;
+  } catch {
+    throw new Error('Ungültige Backup-Datei');
   }
 
-  /**
-   * Create a full backup of all app data
-   */
-  async createBackup(password?: string): Promise<BackupFile> {
-    logger.log('[Backup] Creating backup...');
+  try {
+    keyFile = JSON.parse(keyContent) as BackupKeyFile;
+  } catch {
+    throw new Error('Ungültige BackupKey-Datei');
+  }
+
+  // Validate files
+  if (backupFile.magic !== BACKUP_MAGIC) {
+    throw new Error('Ungültige Backup-Datei (falsches Format)');
+  }
+  if (keyFile.magic !== KEY_MAGIC) {
+    throw new Error('Ungültige BackupKey-Datei (falsches Format)');
+  }
+  if (backupFile.publicKey !== keyFile.publicKey) {
+    throw new Error('Backup und Key passen nicht zusammen! Stellen Sie sicher, dass beide Dateien vom selben Backup stammen.');
+  }
+
+  // Decrypt
+  const decrypted = await decryptWithAge(backupFile.data, keyFile.privateKey);
+  const contents = JSON.parse(decrypted) as BackupContents;
+
+  logger.info('[Backup] Restored backup for user:', contents.user.username);
+  return contents;
+}
+
+/**
+ * Validate a backup file without the key
+ * Returns metadata and checks if key is required
+ */
+export function validateBackupFile(content: string): ValidationResult {
+  try {
+    const backup = JSON.parse(content) as Partial<BackupFile>;
     
-    const backup = await storageService.createBackup();
-    const settings = await storageService.getSettings();
-    const securitySettings = await storageService.getSecuritySettings();
-
-    const contents: BackupContents = {
-      ...backup,
-      version: BACKUP_VERSION,
-      settings: settings || undefined,
-      securitySettings: securitySettings || undefined,
-    };
-
-    const jsonData = JSON.stringify(contents);
-    const isEncrypted = !!password;
-
-    const backupFile: BackupFile = {
-      magic: BACKUP_MAGIC,
-      version: BACKUP_VERSION,
-      encrypted: isEncrypted,
-      timestamp: new Date().toISOString(),
-      data: isEncrypted ? await encryptBackup(jsonData, password!) : jsonData,
-    };
-
-    logger.log(`[Backup] Created backup: ${contents.contacts.length} contacts, ${contents.messages.length} messages, encrypted: ${isEncrypted}`);
-    return backupFile;
-  }
-
-  /**
-   * Validate a backup file without restoring it
-   */
-  validateBackupFile(fileContent: string): ValidationResult {
-    try {
-      const parsed = JSON.parse(fileContent);
-      
-      // Check if it's the new format (v3.0 with magic header)
-      if (parsed.magic === BACKUP_MAGIC) {
-        const result: ValidationResult = {
-          valid: true,
-          encrypted: parsed.encrypted,
-          version: parsed.version,
-          timestamp: parsed.timestamp,
-        };
-
-        // If not encrypted, peek at the data
-        if (!parsed.encrypted) {
-          try {
-            const data = JSON.parse(parsed.data) as BackupContents;
-            result.username = data.user?.username;
-            result.contactCount = data.contacts?.length ?? 0;
-            result.messageCount = data.messages?.length ?? 0;
-          } catch {
-            // data field is invalid JSON
-            return { valid: false, error: 'Ungültige Backup-Daten' };
-          }
-        }
-        return result;
-      }
-
-      // Check if it's a legacy v2.0 backup (direct BackupData)
-      if (parsed.version === '2.0' && parsed.user && Array.isArray(parsed.contacts)) {
-        return {
-          valid: true,
-          encrypted: false,
-          version: parsed.version,
-          timestamp: parsed.timestamp,
-          username: parsed.user?.username,
-          contactCount: parsed.contacts?.length ?? 0,
-          messageCount: parsed.messages?.length ?? 0,
-        };
-      }
-
-      // Check if it's a key-only backup from onboarding
-      if (parsed.version === '2.0' && parsed.type === 'backup' && parsed.pgpPublicKey) {
-        return {
-          valid: true,
-          encrypted: false,
-          version: 'keys-only',
-          timestamp: parsed.exportedAt,
-          username: parsed.username,
-          contactCount: 0,
-          messageCount: 0,
-        };
-      }
-
-      // Check if it's a PGP-encrypted backup (old format from Settings)
-      if (typeof parsed === 'string' || (typeof fileContent === 'string' && fileContent.startsWith('-----BEGIN PGP'))) {
-        return {
-          valid: true,
-          encrypted: true,
-          version: 'legacy-pgp',
-        };
-      }
-
-      return { valid: false, error: 'Unbekanntes Backup-Format' };
-    } catch {
-      // Maybe it's raw PGP-encrypted text
-      if (fileContent.startsWith('-----BEGIN PGP')) {
-        return { valid: true, encrypted: true, version: 'legacy-pgp' };
-      }
-      return { valid: false, error: 'Ungültiges JSON-Format' };
+    if (backup.magic !== BACKUP_MAGIC) {
+      return { valid: false, error: 'Ungültige Backup-Datei', requiresKey: false };
     }
-  }
-
-  /**
-   * Restore a backup file
-   */
-  async restoreBackup(fileContent: string, password?: string): Promise<BackupContents> {
-    const parsed = JSON.parse(fileContent);
-    let contents: BackupContents;
-
-    // New format (v3.0)
-    if (parsed.magic === BACKUP_MAGIC) {
-      let dataStr: string;
-      if (parsed.encrypted) {
-        if (!password) throw new Error('Backup ist verschlüsselt. Bitte Passwort eingeben.');
-        try {
-          dataStr = await decryptBackup(parsed.data, password);
-        } catch {
-          throw new Error('Falsches Passwort oder beschädigte Backup-Datei.');
-        }
-      } else {
-        dataStr = parsed.data;
-      }
-      contents = JSON.parse(dataStr);
-    }
-    // Legacy v2.0 BackupData
-    else if (parsed.version === '2.0' && parsed.user && Array.isArray(parsed.contacts)) {
-      contents = parsed;
-    }
-    // Keys-only backup from onboarding
-    else if (parsed.version === '2.0' && parsed.type === 'backup' && parsed.pgpPublicKey) {
-      // Convert keys-only backup to full backup format
-      contents = {
-        version: '2.0',
-        timestamp: parsed.exportedAt || new Date().toISOString(),
-        user: {
-          id: crypto.randomUUID(),
-          username: parsed.username || 'Imported User',
-          deviceId: crypto.randomUUID(),
-          deviceName: parsed.deviceName || 'Imported Device',
-          pgpPublicKey: parsed.pgpPublicKey,
-          pgpPrivateKey: parsed.pgpPrivateKey,
-          fingerprint: parsed.fingerprint,
-          i2pAddress: parsed.i2pAddress || '',
-          i2pPublicKey: parsed.i2pPublicKey,
-          i2pPrivateKey: parsed.i2pPrivateKey,
-          createdAt: parsed.exportedAt || new Date().toISOString(),
-        },
-        contacts: [],
-        chats: [],
-        messages: [],
-        devices: [],
+    
+    if (backup.version === BACKUP_VERSION) {
+      // Age-encrypted backup
+      return {
+        valid: true,
+        version: backup.version,
+        username: backup.username,
+        requiresKey: true,
       };
-    } else {
-      throw new Error('Unbekanntes Backup-Format');
     }
-
-    // Validate required fields
-    if (!contents.user) throw new Error('Backup enthält keine Benutzerdaten');
-    if (!Array.isArray(contents.contacts)) contents.contacts = [];
-    if (!Array.isArray(contents.chats)) contents.chats = [];
-    if (!Array.isArray(contents.messages)) contents.messages = [];
-    if (!Array.isArray(contents.devices)) contents.devices = [];
-
-    // Restore to storage
-    await storageService.restoreBackup(contents);
-
-    // Restore settings if present
-    if (contents.settings) {
-      await storageService.saveSettings(contents.settings);
-    }
-    if (contents.securitySettings) {
-      await storageService.saveSecuritySettings(contents.securitySettings);
-    }
-
-    logger.log(`[Backup] Restored: ${contents.contacts.length} contacts, ${contents.messages.length} messages`);
-    return contents;
-  }
-
-  /**
-   * Export backup as downloadable file
-   */
-  downloadBackup(backupFile: BackupFile, username: string): void {
-    const json = JSON.stringify(backupFile, null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    const date = new Date().toISOString().split('T')[0];
-    link.download = `secuchat-backup-${username}-${date}.secuchat`;
-    link.click();
-    URL.revokeObjectURL(url);
-  }
-
-  /**
-   * Read a file and return its text content
-   */
-  readFile(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target?.result as string);
-      reader.onerror = () => reject(new Error('Datei konnte nicht gelesen werden'));
-      reader.readAsText(file);
-    });
+    
+    return { valid: false, error: 'Unbekannte Backup-Version', requiresKey: false };
+  } catch {
+    return { valid: false, error: 'Ungültiges Dateiformat', requiresKey: false };
   }
 }
 
-export const backupService = BackupService.getInstance();
+/**
+ * Read a file and return its contents as string
+ */
+export function readFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsText(file);
+  });
+}
+
+/**
+ * Trigger download of backup file
+ */
+export function downloadBackup(backupFile: BackupFile): void {
+  const blob = new Blob([JSON.stringify(backupFile, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `Backup_${backupFile.username}_${new Date().toISOString().split('T')[0]}.secuchat`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * Trigger download of backup key file
+ */
+export function downloadBackupKey(keyFile: BackupKeyFile): void {
+  const blob = new Blob([JSON.stringify(keyFile, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `BackupKey_${keyFile.username}.secuchat`;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  
+  logger.info('[Backup] Key file downloaded for user:', keyFile.username);
+}
+
+// Export all functions as backupService
+export const backupService = {
+  generateAgeKeyPair,
+  encryptWithAge,
+  decryptWithAge,
+  createBackup,
+  restoreBackup,
+  validateBackupFile,
+  readFile,
+  downloadBackup,
+  downloadBackupKey,
+};
+
+export default backupService;

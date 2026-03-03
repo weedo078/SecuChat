@@ -309,28 +309,27 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
 function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const { user } = useApp();
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [usePassword, setUsePassword] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
+  const [warningAccepted, setWarningAccepted] = useState(false);
 
   const handleCreateBackup = async () => {
-    if (usePassword && password !== confirmPassword) {
-      setError('Passwörter stimmen nicht überein');
-      return;
-    }
-    if (usePassword && password.length < 8) {
-      setError('Passwort muss mindestens 8 Zeichen haben');
-      return;
-    }
     setIsCreating(true);
     setError('');
     try {
-      const backupFile = await backupService.createBackup(usePassword ? password : undefined);
-      backupService.downloadBackup(backupFile, user?.username || 'user');
+      const { backupFile, keyFile } = await backupService.createBackup();
+      
+      // Download both files
+      backupService.downloadBackup(backupFile);
+      
+      // Small delay to ensure first download starts
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      backupService.downloadBackupKey(keyFile);
+      
       setDone(true);
+      toast.success('Backup und Schlüssel wurden heruntergeladen!');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Backup fehlgeschlagen');
     } finally {
@@ -339,60 +338,75 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setDone(false); setPassword(''); setConfirmPassword(''); setError(''); } onClose(); }}>
-      <DialogContent>
+    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setDone(false); setError(''); setWarningAccepted(false); } onClose(); }}>
+      <DialogContent className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Backup erstellen</DialogTitle>
           <DialogDescription>
-            Erstellen Sie ein vollständiges Backup aller Daten.
+            Erstellen Sie ein vollständiges, verschlüsseltes Backup aller Daten.
           </DialogDescription>
         </DialogHeader>
 
         {done ? (
-          <div className="mt-4 text-center py-4">
-            <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
-            <p className="font-medium text-green-500">Backup wurde heruntergeladen!</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Bewahren Sie die .secuchat-Datei sicher auf.
-            </p>
+          <div className="mt-4 text-center py-4 space-y-4">
+            <Check className="h-8 w-8 text-green-500 mx-auto" />
+            <div>
+              <p className="font-medium text-green-500">Backup wurde erstellt!</p>
+              <p className="text-sm text-muted-foreground mt-1">
+                Zwei Dateien wurden heruntergeladen:
+              </p>
+            </div>
+            <div className="text-left bg-muted p-4 rounded-lg space-y-2 text-sm">
+              <p><strong>1. Backup_*.secuchat</strong> - Ihre verschlüsselten Daten</p>
+              <p><strong>2. BackupKey_*.secuchat</strong> - Der Entschlüsselungsschlüssel</p>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
+              <p className="text-amber-800 text-sm font-medium">
+                ⚠️ Wichtig: Bewahren Sie beide Dateien sicher auf!
+              </p>
+              <p className="text-amber-700 text-xs mt-1">
+                Ohne die BackupKey-Datei können Sie Ihre Daten nicht wiederherstellen.
+              </p>
+            </div>
           </div>
         ) : (
           <div className="mt-4 space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Das Backup enthält Profile, Nachrichten, Kontakte und Einstellungen.
-            </p>
-
-            <div className="flex items-center justify-between p-3 rounded-lg border border-border">
-              <div>
-                <p className="font-medium text-sm">Mit Passwort verschlüsseln</p>
-                <p className="text-xs text-muted-foreground">Zusätzlicher Schutz für die Backup-Datei</p>
-              </div>
-              <Switch
-                checked={usePassword}
-                onCheckedChange={setUsePassword}
-              />
+            <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg">
+              <p className="text-destructive font-medium text-sm">
+                ⚠️ WARNUNG: Ohne die BackupKey-Datei ist dieses Backup unwiderruflich verloren!
+              </p>
+              <p className="text-destructive/80 text-xs mt-2">
+                Es werden zwei Dateien erstellt:
+              </p>
+              <ul className="text-destructive/80 text-xs mt-1 list-disc list-inside">
+                <li><strong>Backup_*.secuchat</strong> - Ihre verschlüsselten Daten</li>
+                <li><strong>BackupKey_*.secuchat</strong> - Der private Schlüssel zum Entschlüsseln</li>
+              </ul>
+              <p className="text-destructive/80 text-xs mt-2 font-medium">
+                Bewahren Sie die BackupKey-Datei an einem sicheren Ort auf (USB-Stick, Safe, etc.)
+              </p>
             </div>
 
-            {usePassword && (
-              <div className="space-y-3">
-                <Input
-                  type="password"
-                  placeholder="Passwort (min. 8 Zeichen)"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                />
-                <Input
-                  type="password"
-                  placeholder="Passwort bestätigen"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                />
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                id="warning-accept"
+                checked={warningAccepted}
+                onChange={(e) => setWarningAccepted(e.target.checked)}
+                className="rounded border-border"
+              />
+              <label htmlFor="warning-accept" className="text-sm text-muted-foreground">
+                Ich verstehe, dass ich beide Dateien benötige um das Backup wiederherzustellen
+              </label>
+            </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 
-            <Button onClick={handleCreateBackup} disabled={isCreating} className="w-full">
+            <Button 
+              onClick={handleCreateBackup} 
+              disabled={isCreating || !warningAccepted} 
+              className="w-full"
+            >
               {isCreating ? (
                 <>
                   <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
@@ -401,12 +415,16 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
               ) : (
                 <>
                   <Download className="h-4 w-4 mr-2" />
-                  Backup erstellen & herunterladen
+                  Backup erstellen (2 Dateien)
                 </>
               )}
             </Button>
           </div>
         )}
+      </DialogContent>
+    </Dialog>
+  );
+}
       </DialogContent>
     </Dialog>
   );
