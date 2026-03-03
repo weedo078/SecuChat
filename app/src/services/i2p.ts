@@ -102,10 +102,10 @@ class I2PService {
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
 
-      // Note: STREAM ACCEPT must use a *separate* socket (SAM v3.1 spec).
-      // Calling accept() on the session socket corrupts the session state in
-      // i2pd and causes INVALID_ID on subsequent STREAM CONNECT calls.
-      // Incoming stream support will be implemented with a dedicated socket.
+      // Start accepting incoming streams on a dedicated socket (SAM v3.1 spec).
+      // Each accepted connection gets its own WebSocket so the session socket
+      // is never corrupted by mixing ACCEPT responses with CONNECT handshakes.
+      samService.startAcceptLoop();
 
       // Get our address and sync it into the identity object so that
       // exportIdentity() and contact exports always carry the real SAM b32.
@@ -243,7 +243,11 @@ class I2PService {
     }
 
     const existing = this.peers.get(b32Address);
-    if (existing?.status === 'connected') {
+    if (
+      existing?.status === 'connected' &&
+      existing.samStreamId != null &&
+      samService.isStreamOpen(existing.samStreamId)
+    ) {
       logger.log('[I2P] Peer already connected:', b32Address.slice(0, 20));
       return existing;
     }
@@ -428,6 +432,7 @@ class I2PService {
     });
 
     // When SAM auto-reconnects and restores the session, update our status
+    // and restart the accept loop for the new session.
     samService.onReconnect(() => {
       logger.log('[I2P] SAM session restored after reconnect');
       this.currentStatus = {
@@ -437,6 +442,7 @@ class I2PService {
         error: undefined,
       };
       this.notifyStatusChange();
+      samService.startAcceptLoop();
     });
   }
 
