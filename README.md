@@ -1,5 +1,7 @@
 # SecuChat 🔒
 
+![SecuChat Preview](https://i.imgur.com/mnWP6pn.png)
+
 **Private messenger without servers, without metadata, without compromises.**
 
 SecuChat is a desktop messaging app with end-to-end encryption (PGP) and anonymous routing via the I2P network. Your messages are only readable by you and your conversation partner – no one else can eavesdrop, not even us.
