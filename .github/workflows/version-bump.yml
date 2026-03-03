@@ -28,20 +28,22 @@ jobs:
           # (GITHUB_TOKEN pushes don't trigger other workflows)
           token: ${{ secrets.RELEASE_TOKEN }}
 
-      - name: Get current version
-        id: current
-        run: |
-          VERSION=$(node -p "require('./electron/package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Current version: $VERSION"
-
-      - name: Bump patch version
+      - name: Get next version from latest tag
         id: new
         run: |
-          CURRENT="${{ steps.current.outputs.version }}"
-          IFS='.' read -r major minor patch <<< "$CURRENT"
-          patch=$((patch + 1))
-          NEW="$major.$minor.$patch"
+          # Get the latest v* tag by version sort
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No existing v* tag found, starting at 0.1.0"
+            NEW="0.1.0"
+          else
+            echo "Latest tag: $LATEST_TAG"
+            # Strip the 'v' prefix
+            CURRENT="${LATEST_TAG#v}"
+            IFS='.' read -r major minor patch <<< "$CURRENT"
+            patch=$((patch + 1))
+            NEW="$major.$minor.$patch"
+          fi
           echo "version=$NEW" >> $GITHUB_OUTPUT
           echo "New version: $NEW"
 
