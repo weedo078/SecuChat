@@ -130,9 +130,6 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     if (!keyPair || !i2pIdentity) return;
 
     try {
-      // Initialize database before saving
-      await storageService.init();
-
       const user = {
         id: crypto.randomUUID(),
         username,
@@ -351,7 +348,6 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     setIsRestoring(true);
     setError(null);
     try {
-      await storageService.init();
       const backupContent = await backupService.readFile(restoreBackupFile);
       const keyContent = await backupService.readFile(restoreKeyFile);
       const restored = await backupService.restoreBackup(backupContent, keyContent);
