@@ -101,7 +101,7 @@ jobs:
           retention-days: 7
 
       - name: Comment PR
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           script: |
             const prNum = '${{ github.event.pull_request.number }}';
