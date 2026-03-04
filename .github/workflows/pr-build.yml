@@ -16,6 +16,8 @@ jobs:
     name: Build Windows PR
     runs-on: windows-latest
     if: github.event.pull_request.draft == false
+    permissions:
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v4
