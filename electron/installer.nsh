@@ -1,9 +1,9 @@
 ; Custom NSIS installer script for SecuChat
 ; Requests admin privileges and adds Windows Defender exclusions for i2pd.exe
-; (legitimate open-source privacy tool, see https://i2pd.website —
-;  flagged as false positive by some antivirus engines).
+; BEFORE file extraction so Defender cannot flag it as a false positive.
+; (i2pd is a legitimate open-source I2P router: https://i2pd.website)
 
-; Require admin privileges — triggers UAC prompt automatically
+; Require admin privileges — triggers Windows UAC prompt automatically
 RequestExecutionLevel admin
 
 !macro customHeader
@@ -11,50 +11,43 @@ RequestExecutionLevel admin
 !macroend
 
 !macro customInit
-  ; Verify we actually have admin rights (belt-and-suspenders with UAC manifest)
+  ; Verify we actually have admin rights before proceeding
   UserInfo::GetAccountType
   Pop $0
   ${If} $0 != "admin"
-    MessageBox MB_ICONSTOP|MB_OK "SecuChat requires administrator privileges to install correctly.$\n$\nThis is needed to add Windows Defender exclusions for i2pd (the bundled I2P router), which is otherwise flagged as a false positive.$\n$\nPlease right-click the installer and select 'Run as administrator'."
-    SetErrorLevel 740  ; ERROR_ELEVATION_REQUIRED
+    MessageBox MB_ICONSTOP|MB_OK "SecuChat muss als Administrator installiert werden.$\n$\nDies ist notwendig, damit Windows Defender-Ausnahmen f${\"u}r i2pd (den I2P-Router) gesetzt werden k${\"o}nnen, welcher sonst f${\"a}lschlicherweise als Bedrohung erkannt wird.$\n$\nBitte Rechtsklick auf den Installer → 'Als Administrator ausf${\"u}hren'."
+    SetErrorLevel 740
     Quit
   ${EndIf}
+
+  ; *** CRITICAL: Set Defender exclusions BEFORE file extraction ***
+  ; Process exclusion for i2pd.exe — path-independent, takes effect immediately
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Add-MpPreference -ExclusionProcess \"i2pd.exe\" -ErrorAction SilentlyContinue"'
+
+  ; Path exclusion for the installation directory (default path, before files land)
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Add-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue"'
 !macroend
 
 !macro customInstall
-  ; Add install directory as Defender exclusion (persistent)
-  DetailPrint "Adding Windows Defender exclusion for install directory..."
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    try { Add-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction Stop } \
-    catch { exit 1 }"' $0
+  ; Re-apply path exclusion with the actual install directory
+  ; (user may have changed it from the default set in customInit)
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Add-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue"'
 
-  ; Add AppData directory as Defender exclusion (where i2pd writes data/logs)
-  DetailPrint "Adding Windows Defender exclusion for app data directory..."
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    $$appdataDir = Join-Path $$env:APPDATA \"securechat\"; \
-    try { Add-MpPreference -ExclusionPath $$appdataDir -ErrorAction Stop } \
-    catch { exit 1 }"' $0
-
-  ; Add specific exclusion for i2pd.exe process
-  DetailPrint "Adding Windows Defender exclusion for i2pd.exe process..."
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    try { Add-MpPreference -ExclusionProcess \"i2pd.exe\" -ErrorAction Stop } \
-    catch { exit 1 }"' $0
-
-  DetailPrint "Windows Defender exclusions configured."
+  ; AppData exclusion for i2pd runtime data and logs
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Add-MpPreference -ExclusionPath \"$APPDATA\securechat\" -ErrorAction SilentlyContinue"'
 !macroend
 
 !macro customUnInstall
-  ; Remove Defender exclusion on uninstall
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    try { Remove-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue } catch {}"'
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Remove-MpPreference -ExclusionProcess \"i2pd.exe\" -ErrorAction SilentlyContinue"'
 
-  ; Remove AppData exclusion
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    $$appdataDir = Join-Path $$env:APPDATA \"securechat\"; \
-    try { Remove-MpPreference -ExclusionPath $$appdataDir -ErrorAction SilentlyContinue } catch {}"'
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Remove-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue"'
 
-  ; Remove process exclusion
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "\
-    try { Remove-MpPreference -ExclusionProcess \"i2pd.exe\" -ErrorAction SilentlyContinue } catch {}"'
+  ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
+    "Remove-MpPreference -ExclusionPath \"$APPDATA\securechat\" -ErrorAction SilentlyContinue"'
 !macroend
