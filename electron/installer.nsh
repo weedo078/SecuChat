@@ -1,9 +1,13 @@
 ; Custom NSIS installer script for SecuChat
-; Requests admin privileges and adds Windows Defender exclusions for i2pd.exe
-; BEFORE file extraction so Defender cannot flag it as a false positive.
-; (i2pd is a legitimate open-source I2P router: https://i2pd.website)
+; Ensures admin privileges via TWO mechanisms (manifest + programmatic fallback)
+; and sets Windows Defender exclusions for i2pd.exe BEFORE file extraction
+; to prevent false-positive quarantine.
 
-; Require admin privileges — triggers Windows UAC prompt automatically
+; --- Mechanism 1: manifest-based UAC (compile-time) ---
+; Embeds requireAdministrator in the installer EXE manifest.
+; Windows shows UAC prompt automatically on double-click.
+; Note: electron-builder may override this with its own generated directive,
+; which is why Mechanism 2 (runtime fallback) is essential.
 RequestExecutionLevel admin
 
 !macro customHeader
@@ -11,28 +15,41 @@ RequestExecutionLevel admin
 !macroend
 
 !macro customInit
-  ; Verify we actually have admin rights before proceeding
+  ; --- Mechanism 2: runtime elevation fallback ---
+  ; If the manifest-based elevation was overridden or bypassed, this re-launches
+  ; the installer with "runas" to trigger the UAC prompt programmatically.
   UserInfo::GetAccountType
   Pop $0
   ${If} $0 != "admin"
-    MessageBox MB_ICONSTOP|MB_OK "SecuChat muss als Administrator installiert werden.$\n$\nDies ist notwendig, damit Windows Defender-Ausnahmen f${\"u}r i2pd (den I2P-Router) gesetzt werden k${\"o}nnen, welcher sonst f${\"a}lschlicherweise als Bedrohung erkannt wird.$\n$\nBitte Rechtsklick auf den Installer → 'Als Administrator ausf${\"u}hren'."
-    SetErrorLevel 740
-    Quit
+    ExecShell "runas" "$EXEPATH" "$CMDLINE" "" SW_SHOWNORMAL
+    ${If} ${Errors}
+      ; User declined elevation or UAC is disabled
+      MessageBox MB_ICONSTOP|MB_OK \
+        "SecuChat requires administrator privileges to install correctly.$\n$\n\
+This is needed to configure Windows Defender exclusions for i2pd.exe \
+(the bundled I2P router), which would otherwise be incorrectly quarantined \
+as a false positive.$\n$\n\
+Please right-click the installer and choose 'Run as administrator'."
+    ${EndIf}
+    Abort
   ${EndIf}
 
-  ; *** CRITICAL: Set Defender exclusions BEFORE file extraction ***
-  ; Process exclusion for i2pd.exe — path-independent, takes effect immediately
+  ; We now have verified admin rights.
+  ; Set Defender exclusions BEFORE NSIS extracts any files to disk,
+  ; so i2pd.exe is never scanned without an active exclusion.
+
+  ; Process exclusion — path-independent, takes effect immediately
   ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
     "Add-MpPreference -ExclusionProcess \"i2pd.exe\" -ErrorAction SilentlyContinue"'
 
-  ; Path exclusion for the installation directory (default path, before files land)
+  ; Path exclusion for the install directory (default value, before extraction)
   ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
     "Add-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue"'
 !macroend
 
 !macro customInstall
-  ; Re-apply path exclusion with the actual install directory
-  ; (user may have changed it from the default set in customInit)
+  ; Refresh path exclusion with the actual install dir.
+  ; (User may have changed it from the default set in customInit above.)
   ExecWait 'powershell.exe -NonInteractive -ExecutionPolicy Bypass -Command \
     "Add-MpPreference -ExclusionPath \"$INSTDIR\" -ErrorAction SilentlyContinue"'
 
