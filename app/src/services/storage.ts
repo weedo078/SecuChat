@@ -130,6 +130,7 @@ export class StorageService {
   private fallback: LocalStorageFallback | null = null;
   private encryptionPassphrase: string | null = null;
   private _usingFallback = false;
+  private _initPromise: Promise<void> | null = null;
 
   /** True when IndexedDB was unavailable and localStorage fallback is active */
   get usingFallback(): boolean {
@@ -168,8 +169,26 @@ export class StorageService {
    * Initialize the database.
    * Attempts IndexedDB first; falls back to localStorage if IndexedDB is
    * unavailable (common on file:// protocol).
+   *
+   * Idempotent: safe to call multiple times — subsequent calls are no-ops
+   * if already initialized. Concurrent calls share a single in-flight Promise.
    */
   async init(): Promise<void> {
+    // Already initialized — return immediately
+    if (this.db !== null || this._usingFallback) {
+      return;
+    }
+    // Deduplicate concurrent init calls
+    if (this._initPromise) {
+      return this._initPromise;
+    }
+    this._initPromise = this._doInit().finally(() => {
+      this._initPromise = null;
+    });
+    return this._initPromise;
+  }
+
+  private async _doInit(): Promise<void> {
     // Detect environments where IndexedDB is known to be broken
     const isFileProtocol = typeof location !== 'undefined' && location.protocol === 'file:';
 
@@ -211,10 +230,15 @@ export class StorageService {
         clearTimeout(timeout);
         this.db = request.result;
 
-        // Handle unexpected close (e.g. storage cleared by browser)
+        // Handle unexpected close (e.g. storage cleared by browser).
+        // Null out the reference so the next init() call will re-open it.
         this.db.onclose = () => {
-          console.warn('[Storage] IndexedDB connection closed unexpectedly');
+          console.warn('[Storage] IndexedDB connection closed unexpectedly — will reconnect on next access');
           this.db = null;
+          // Proactively re-open so the connection is ready for the next operation
+          this.initIndexedDB().catch((err) => {
+            console.error('[Storage] Failed to reconnect IndexedDB after unexpected close:', err);
+          });
         };
 
         resolve();
