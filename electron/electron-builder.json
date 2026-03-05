@@ -40,8 +40,11 @@
   },
   "nsis": {
     "oneClick": false,
+    "perMachine": true,
     "allowToChangeInstallationDirectory": true,
+    "allowElevation": true,
     "createDesktopShortcut": true,
-    "include": "installer.nsh"
+    "include": "installer.nsh",
+    "requestedExecutionLevel": "requireAdministrator"
   }
 }
