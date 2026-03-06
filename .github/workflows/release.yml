@@ -67,6 +67,13 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Set version in package.json files
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          V_PLAIN="${V#v}"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
+
       - name: Download i2pd (Linux x64)
         run: |
           curl -L -o i2pd.deb \
@@ -109,6 +116,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
+
+      - name: Set version in package.json files
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          V_PLAIN="${V#v}"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
 
       - name: Download i2pd (Linux arm64)
         run: |
@@ -156,6 +170,18 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '20'
+
+      - name: Set version in package.json files
+        shell: pwsh
+        run: |
+          $V = "${{ needs.version.outputs.version }}"
+          $VPlain = $V.TrimStart('v')
+          $ep = Get-Content 'electron/package.json' | ConvertFrom-Json
+          $ep.version = $VPlain
+          $ep | ConvertTo-Json -Depth 100 | Set-Content 'electron/package.json'
+          $ap = Get-Content 'app/package.json' | ConvertFrom-Json
+          $ap.version = $VPlain
+          $ap | ConvertTo-Json -Depth 100 | Set-Content 'app/package.json'
 
       - name: Download i2pd (Windows x64)
         shell: pwsh
