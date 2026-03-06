@@ -1,18 +1,20 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
-import { 
-  Sun, 
-  Bell, 
-  Shield, 
-  Download, 
-  Upload, 
-  Trash2, 
+import {
+  Sun,
+  Bell,
+  Shield,
+  Download,
+  Upload,
+  Trash2,
   ChevronRight,
   Eye,
   EyeOff,
   Network,
   Check,
-  X
+  X,
+  Globe
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
@@ -53,6 +55,7 @@ interface SettingsProps {
 }
 
 export function Settings({ isOpen, onClose }: SettingsProps) {
+  const { t, i18n } = useTranslation();
   const { settings, updateSettings, securitySettings, updateSecuritySettings } = useApp();
   const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [showRestoreDialog, setShowRestoreDialog] = useState(false);
@@ -64,9 +67,9 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Einstellungen</DialogTitle>
+          <DialogTitle>{t('settings.title')}</DialogTitle>
           <DialogDescription>
-            Konfigurieren Sie Ihre App-Einstellungen und Sicherheitsoptionen.
+            {t('settings.description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -76,20 +79,53 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
                 <Sun className="h-4 w-4" />
-                Erscheinungsbild
+                {t('settings.appearance')}
               </h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
-                    <p className="font-medium">Dunkles Theme</p>
-                    <p className="text-sm text-muted-foreground">Dunkles Erscheinungsbild verwenden</p>
+                    <p className="font-medium">{t('settings.darkTheme')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.darkThemeDesc')}</p>
                   </div>
                   <Switch
                     checked={settings.theme === 'dark'}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       updateSettings({ theme: checked ? 'dark' : 'light' })
                     }
                   />
+                </div>
+              </div>
+            </section>
+
+            <Separator />
+
+            {/* Language */}
+            <section>
+              <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
+                <Globe className="h-4 w-4" />
+                {t('settings.language')}
+              </h3>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between p-3 rounded-lg border border-border">
+                  <div>
+                    <p className="font-medium">{t('settings.language')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.languageDesc')}</p>
+                  </div>
+                  <Select
+                    value={i18n.language.startsWith('de') ? 'de' : i18n.language.startsWith('en') ? 'en' : i18n.language}
+                    onValueChange={(value) => {
+                      i18n.changeLanguage(value);
+                      localStorage.setItem('securechat-language', value);
+                    }}
+                  >
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="de">Deutsch</SelectItem>
+                      <SelectItem value="en">English</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
             </section>
@@ -100,29 +136,29 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
                 <Bell className="h-4 w-4" />
-                Benachrichtigungen
+                {t('settings.notifications')}
               </h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
-                    <p className="font-medium">Benachrichtigungen aktivieren</p>
-                    <p className="text-sm text-muted-foreground">Push-Benachrichtigungen erhalten</p>
+                    <p className="font-medium">{t('settings.enableNotifications')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.enableNotificationsDesc')}</p>
                   </div>
                   <Switch
                     checked={settings.notifications}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       updateSettings({ notifications: checked })
                     }
                   />
                 </div>
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
-                    <p className="font-medium">Ton</p>
-                    <p className="text-sm text-muted-foreground">Ton bei neuen Nachrichten</p>
+                    <p className="font-medium">{t('settings.sound')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.soundDesc')}</p>
                   </div>
                   <Switch
                     checked={settings.soundEnabled}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       updateSettings({ soundEnabled: checked })
                     }
                   />
@@ -136,17 +172,17 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
                 <Shield className="h-4 w-4" />
-                Sicherheit
+                {t('settings.security')}
               </h3>
               <div className="space-y-3">
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
-                    <p className="font-medium">Automatische Sperre</p>
-                    <p className="text-sm text-muted-foreground">App nach Inaktivität sperren</p>
+                    <p className="font-medium">{t('settings.autoLock')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.autoLockDesc')}</p>
                   </div>
                   <Switch
                     checked={securitySettings.autoLockEnabled}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       updateSecuritySettings({ autoLockEnabled: checked })
                     }
                   />
@@ -155,12 +191,12 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                 {securitySettings.autoLockEnabled && (
                   <div className="flex items-center justify-between p-3 rounded-lg border border-border ml-4">
                     <div>
-                      <p className="font-medium">Sperrzeit</p>
-                      <p className="text-sm text-muted-foreground">Minuten bis zur automatischen Sperre</p>
+                      <p className="font-medium">{t('settings.lockTime')}</p>
+                      <p className="text-sm text-muted-foreground">{t('settings.lockTimeDesc')}</p>
                     </div>
                     <Select
                       value={securitySettings.autoLockTimeout.toString()}
-                      onValueChange={(value) => 
+                      onValueChange={(value) =>
                         updateSecuritySettings({ autoLockTimeout: parseInt(value) })
                       }
                     >
@@ -179,12 +215,12 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 
                 <div className="flex items-center justify-between p-3 rounded-lg border border-border">
                   <div>
-                    <p className="font-medium">Screenshot-Schutz</p>
-                    <p className="text-sm text-muted-foreground">Screenshots in der App verhindern</p>
+                    <p className="font-medium">{t('settings.screenshotProtection')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.screenshotProtectionDesc')}</p>
                   </div>
                   <Switch
                     checked={settings.screenshotProtection}
-                    onCheckedChange={(checked) => 
+                    onCheckedChange={(checked) =>
                       updateSettings({ screenshotProtection: checked })
                     }
                   />
@@ -195,9 +231,9 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent transition-colors"
                 >
                   <div className="text-left">
-                    <p className="font-medium">Duress PIN</p>
+                    <p className="font-medium">{t('settings.duressPin')}</p>
                     <p className="text-sm text-muted-foreground">
-                      {securitySettings.duressPin ? 'Konfiguriert' : 'Nicht konfiguriert'}
+                      {securitySettings.duressPin ? t('settings.duressPinConfigured') : t('settings.duressPinNotConfigured')}
                     </p>
                   </div>
                   <ChevronRight className="h-4 w-4 text-muted-foreground" />
@@ -211,7 +247,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
                 <Network className="h-4 w-4" />
-                I2P Netzwerk
+                {t('settings.i2pNetwork')}
               </h3>
               <div className="space-y-3">
                 <button
@@ -219,9 +255,9 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent transition-colors"
                 >
                   <div className="text-left">
-                    <p className="font-medium">I2P-Verbindung</p>
+                    <p className="font-medium">{t('settings.i2pConnection')}</p>
                     <p className="text-sm text-muted-foreground">
-                      {settings.i2p.sam.enabled ? 'SAM-Modus aktiviert' : 'Browser-nativer Modus'}
+                      {settings.i2p.sam.enabled ? t('settings.samEnabled') : t('settings.browserNative')}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -248,7 +284,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-muted-foreground mb-3 flex items-center gap-2">
                 <Download className="h-4 w-4" />
-                Backup & Wiederherstellung
+                {t('settings.backupRestore')}
               </h3>
               <div className="space-y-3">
                 <button
@@ -256,8 +292,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent transition-colors"
                 >
                   <div className="text-left">
-                    <p className="font-medium">Backup erstellen</p>
-                    <p className="text-sm text-muted-foreground">Verschlüsseltes Backup exportieren</p>
+                    <p className="font-medium">{t('settings.createBackup')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.createBackupDesc')}</p>
                   </div>
                   <Download className="h-4 w-4 text-muted-foreground" />
                 </button>
@@ -267,8 +303,8 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   className="w-full flex items-center justify-between p-3 rounded-lg border border-border hover:bg-accent transition-colors"
                 >
                   <div className="text-left">
-                    <p className="font-medium">Wiederherstellen</p>
-                    <p className="text-sm text-muted-foreground">Backup importieren</p>
+                    <p className="font-medium">{t('settings.restore')}</p>
+                    <p className="text-sm text-muted-foreground">{t('settings.restoreDesc')}</p>
                   </div>
                   <Upload className="h-4 w-4 text-muted-foreground" />
                 </button>
@@ -281,15 +317,15 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
             <section>
               <h3 className="text-sm font-medium text-destructive mb-3 flex items-center gap-2">
                 <Trash2 className="h-4 w-4" />
-                Gefahrenzone
+                {t('settings.dangerZone')}
               </h3>
               <button
                 onClick={() => setShowDeleteDialog(true)}
                 className="w-full flex items-center justify-between p-3 rounded-lg border border-destructive/30 hover:bg-destructive/10 transition-colors"
               >
                 <div className="text-left">
-                  <p className="font-medium text-destructive">Alle Daten löschen</p>
-                  <p className="text-sm text-muted-foreground">Alle Chats und Kontakte löschen</p>
+                  <p className="font-medium text-destructive">{t('settings.deleteAllData')}</p>
+                  <p className="text-sm text-muted-foreground">{t('settings.deleteAllDataDesc')}</p>
                 </div>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </button>
@@ -308,6 +344,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
 }
 
 function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   const [isCreating, setIsCreating] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState('');
@@ -318,19 +355,19 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
     setError('');
     try {
       const { backupFile, keyFile } = await backupService.createBackup();
-      
+
       // Download both files
       backupService.downloadBackup(backupFile);
-      
+
       // Small delay to ensure first download starts
       await new Promise(resolve => setTimeout(resolve, 500));
-      
+
       backupService.downloadBackupKey(keyFile);
-      
+
       setDone(true);
-      toast.success('Backup und Schlüssel wurden heruntergeladen!');
+      toast.success(t('backup.backupAndKeyDownloaded'));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Backup fehlgeschlagen');
+      setError(err instanceof Error ? err.message : t('backup.backupFailed'));
     } finally {
       setIsCreating(false);
     }
@@ -340,9 +377,9 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) { setDone(false); setError(''); setWarningAccepted(false); } onClose(); }}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Backup erstellen</DialogTitle>
+          <DialogTitle>{t('backup.title')}</DialogTitle>
           <DialogDescription>
-            Erstellen Sie ein vollständiges, verschlüsseltes Backup aller Daten.
+            {t('backup.description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -350,9 +387,9 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
           <div className="mt-4 text-center py-4 space-y-4">
             <Check className="h-8 w-8 text-green-500 mx-auto" />
             <div>
-              <p className="font-medium text-green-500">Backup wurde erstellt!</p>
+              <p className="font-medium text-green-500">{t('backup.created')}</p>
               <p className="text-sm text-muted-foreground mt-1">
-                Zwei Dateien wurden heruntergeladen:
+                {t('backup.twoFilesDownloaded')}
               </p>
             </div>
             <div className="text-left bg-muted p-4 rounded-lg space-y-2 text-sm">
@@ -361,10 +398,10 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
             </div>
             <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
               <p className="text-amber-800 text-sm font-medium">
-                ⚠️ Wichtig: Bewahren Sie beide Dateien sicher auf!
+                ⚠️ {t('backup.keepBothFiles')}
               </p>
               <p className="text-amber-700 text-xs mt-1">
-                Ohne die BackupKey-Datei können Sie Ihre Daten nicht wiederherstellen.
+                {t('backup.withoutKeyFile')}
               </p>
             </div>
           </div>
@@ -372,17 +409,17 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
           <div className="mt-4 space-y-4">
             <div className="bg-destructive/10 border border-destructive/20 p-4 rounded-lg">
               <p className="text-destructive font-medium text-sm">
-                ⚠️ WARNUNG: Ohne die BackupKey-Datei ist dieses Backup unwiderruflich verloren!
+                ⚠️ {t('backup.warning')}
               </p>
               <p className="text-destructive/80 text-xs mt-2">
-                Es werden zwei Dateien erstellt:
+                {t('backup.twoFilesCreated')}
               </p>
               <ul className="text-destructive/80 text-xs mt-1 list-disc list-inside">
                 <li><strong>Backup_*.secuchat</strong> - Ihre verschlüsselten Daten</li>
                 <li><strong>BackupKey_*.secuchat</strong> - Der private Schlüssel zum Entschlüsseln</li>
               </ul>
               <p className="text-destructive/80 text-xs mt-2 font-medium">
-                Bewahren Sie die BackupKey-Datei an einem sicheren Ort auf (USB-Stick, Safe, etc.)
+                {t('backup.keepKeyFileSafe')}
               </p>
             </div>
 
@@ -395,26 +432,26 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
                 className="rounded border-border"
               />
               <label htmlFor="warning-accept" className="text-sm text-muted-foreground">
-                Ich verstehe, dass ich beide Dateien benötige um das Backup wiederherzustellen
+                {t('backup.understandBothFiles')}
               </label>
             </div>
 
             {error && <p className="text-sm text-destructive">{error}</p>}
 
-            <Button 
-              onClick={handleCreateBackup} 
-              disabled={isCreating || !warningAccepted} 
+            <Button
+              onClick={handleCreateBackup}
+              disabled={isCreating || !warningAccepted}
               className="w-full"
             >
               {isCreating ? (
                 <>
                   <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                  Backup wird erstellt...
+                  {t('backup.creating')}
                 </>
               ) : (
                 <>
                   <Download className="h-4 w-4 mr-2" />
-                  Backup erstellen (2 Dateien)
+                  {t('backup.createTwoFiles')}
                 </>
               )}
             </Button>
@@ -426,6 +463,7 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 }
 
 function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   const [backupFile, setBackupFile] = useState<File | null>(null);
   const [keyFile, setKeyFile] = useState<File | null>(null);
   const [validation, setValidation] = useState<ValidationResult | null>(null);
@@ -443,10 +481,10 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
       const content = await backupService.readFile(f);
       const v = backupService.validateBackupFile(content);
       setValidation(v);
-      if (!v.valid) setError(v.error || 'Ungültige Datei');
+      if (!v.valid) setError(v.error || t('backup.invalidFile'));
     } catch {
       setValidation(null);
-      setError('Datei konnte nicht gelesen werden');
+      setError(t('backup.fileReadError'));
     }
   };
 
@@ -469,7 +507,7 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
       await backupService.restoreBackup(backupContent, keyContent);
       setSuccess(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Wiederherstellung fehlgeschlagen');
+      setError(err instanceof Error ? err.message : t('backup.restoreFailed'));
     } finally {
       setIsRestoring(false);
     }
@@ -488,25 +526,25 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
     <Dialog open={isOpen} onOpenChange={(open) => { if (!open) resetState(); onClose(); }}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Backup wiederherstellen</DialogTitle>
+          <DialogTitle>{t('backup.restoreTitle')}</DialogTitle>
           <DialogDescription>
-            Sie benötigen sowohl die Backup-Datei als auch die BackupKey-Datei.
+            {t('backup.restoreDescription')}
           </DialogDescription>
         </DialogHeader>
 
         {success ? (
           <div className="mt-4 text-center py-4">
             <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
-            <p className="text-green-500 font-medium">Wiederherstellung erfolgreich!</p>
+            <p className="text-green-500 font-medium">{t('backup.restoreSuccess')}</p>
             <p className="text-sm text-muted-foreground mt-2">
-              Bitte starten Sie die App neu, um die Änderungen zu übernehmen.
+              {t('backup.restartApp')}
             </p>
           </div>
         ) : (
           <div className="mt-4 space-y-4">
             {/* Backup file picker */}
             <div>
-              <label className="text-sm font-medium mb-2 block">1. Backup-Datei (*.secuchat)</label>
+              <label className="text-sm font-medium mb-2 block">{t('onboarding.backupFile')}</label>
               <div className="relative">
                 <input
                   type="file"
@@ -516,14 +554,14 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
                 />
                 <Button variant="outline" className="w-full">
                   <Upload className="h-4 w-4 mr-2" />
-                  {backupFile ? backupFile.name : 'Backup-Datei auswählen'}
+                  {backupFile ? backupFile.name : t('backup.selectBackupFile')}
                 </Button>
               </div>
             </div>
 
             {/* Key file picker */}
             <div>
-              <label className="text-sm font-medium mb-2 block">2. BackupKey-Datei (*.secuchat)</label>
+              <label className="text-sm font-medium mb-2 block">{t('onboarding.keyFile')}</label>
               <div className="relative">
                 <input
                   type="file"
@@ -534,7 +572,7 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
                 />
                 <Button variant="outline" className="w-full" disabled={!validation?.valid}>
                   <Shield className="h-4 w-4 mr-2" />
-                  {keyFile ? keyFile.name : 'Key-Datei auswählen'}
+                  {keyFile ? keyFile.name : t('backup.selectKeyFile')}
                 </Button>
               </div>
             </div>
@@ -542,9 +580,9 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
             {validation?.valid && (
               <div className="p-3 bg-green-500/10 rounded-lg text-sm space-y-1">
                 <p className="text-green-500 font-medium flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Gültige Backup-Datei
+                  <Check className="h-3 w-3" /> {t('backup.validBackup')}
                 </p>
-                {validation.username && <p className="text-muted-foreground">Benutzer: {validation.username}</p>}
+                {validation.username && <p className="text-muted-foreground">{t('backup.user', { name: validation.username })}</p>}
               </div>
             )}
 
@@ -552,12 +590,12 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
               <>
                 <Input
                   type="password"
-                  placeholder="Passphrase für Schlüssel (min. 8 Zeichen)"
+                  placeholder={t('backup.passphrasePlaceholder')}
                   value={passphrase}
                   onChange={(e) => setPassphrase(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Verschlüsselt Ihre Private Keys auf diesem Gerät.
+                  {t('backup.passphraseHelp')}
                 </p>
               </>
             )}
@@ -569,7 +607,7 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
               className="w-full"
               disabled={!validation?.valid || !keyFile || isRestoring || passphrase.length < 8}
             >
-              {isRestoring ? 'Wiederherstellen...' : 'Wiederherstellen'}
+              {isRestoring ? t('backup.restoring') : t('settings.restore')}
             </Button>
           </div>
         )}
@@ -579,11 +617,12 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
 }
 
 function DeleteDataDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   const [confirmText, setConfirmText] = useState('');
   const [deleted, setDeleted] = useState(false);
 
   const handleDelete = async () => {
-    if (confirmText === 'LÖSCHEN') {
+    if (confirmText === t('deleteData.confirmWord')) {
       await storageService.clearAllData();
       setDeleted(true);
     }
@@ -593,39 +632,38 @@ function DeleteDataDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
     <AlertDialog open={isOpen} onOpenChange={onClose}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle className="text-destructive">Alle Daten löschen?</AlertDialogTitle>
+          <AlertDialogTitle className="text-destructive">{t('deleteData.title')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Diese Aktion kann nicht rückgängig gemacht werden. Alle Ihre Chats, 
-            Kontakte und Schlüssel werden dauerhaft gelöscht.
+            {t('deleteData.description')}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
         {deleted ? (
           <div className="text-center py-4">
-            <p className="text-green-500 font-medium">Alle Daten wurden gelöscht</p>
+            <p className="text-green-500 font-medium">{t('deleteData.allDataDeleted')}</p>
           </div>
         ) : (
           <>
             <div className="my-4">
               <p className="text-sm text-muted-foreground mb-2">
-                Geben Sie "LÖSCHEN" ein, um zu bestätigen:
+                {t('deleteData.confirmPrompt')}
               </p>
               <input
                 type="text"
                 className="w-full p-2 rounded-md border border-input"
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
-                placeholder="LÖSCHEN"
+                placeholder={t('deleteData.confirmWord')}
               />
             </div>
             <AlertDialogFooter>
-              <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+              <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
               <AlertDialogAction
                 onClick={handleDelete}
                 className="bg-destructive"
-                disabled={confirmText !== 'LÖSCHEN'}
+                disabled={confirmText !== t('deleteData.confirmWord')}
               >
-                Löschen
+                {t('common.delete')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </>
@@ -636,6 +674,7 @@ function DeleteDataDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
 }
 
 function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   const { securitySettings, updateSecuritySettings } = useApp();
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
@@ -644,11 +683,11 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
   const handleSave = () => {
     if (pin.length < 4) {
-      setError('PIN muss mindestens 4 Zeichen haben');
+      setError(t('duressPin.pinTooShort'));
       return;
     }
     if (pin !== confirmPin) {
-      setError('PINs stimmen nicht überein');
+      setError(t('duressPin.pinMismatch'));
       return;
     }
 
@@ -665,19 +704,18 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Duress PIN</DialogTitle>
+          <DialogTitle>{t('duressPin.title')}</DialogTitle>
           <DialogDescription>
-            Eine Duress PIN löscht alle Daten, wenn sie eingegeben wird.
-            Nützlich in Notsituationen.
+            {t('duressPin.description')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="mt-4 space-y-4">
           {securitySettings.duressPin ? (
             <div className="text-center py-4">
-              <p className="text-muted-foreground mb-4">Duress PIN ist konfiguriert</p>
+              <p className="text-muted-foreground mb-4">{t('duressPin.configured')}</p>
               <Button variant="destructive" onClick={handleRemove}>
-                Duress PIN entfernen
+                {t('duressPin.remove')}
               </Button>
             </div>
           ) : (
@@ -686,7 +724,7 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                 <input
                   type={showPin ? 'text' : 'password'}
                   className="w-full p-2 pr-10 rounded-md border border-input"
-                  placeholder="PIN eingeben"
+                  placeholder={t('duressPin.enterPin')}
                   value={pin}
                   onChange={(e) => setPin(e.target.value)}
                 />
@@ -701,7 +739,7 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               <input
                 type={showPin ? 'text' : 'password'}
                 className="w-full p-2 rounded-md border border-input"
-                placeholder="PIN bestätigen"
+                placeholder={t('duressPin.confirmPin')}
                 value={confirmPin}
                 onChange={(e) => setConfirmPin(e.target.value)}
               />
@@ -711,7 +749,7 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               )}
 
               <Button onClick={handleSave} className="w-full">
-                Speichern
+                {t('common.save')}
               </Button>
             </>
           )}
@@ -722,6 +760,7 @@ function DuressPinDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 }
 
 function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
+  const { t } = useTranslation();
   const { settings, updateSettings, i2pStatus } = useApp();
   const [samHost, setSamHost] = useState(settings.i2p.sam.host);
   const [samPort, setSamPort] = useState(settings.i2p.sam.port.toString());
@@ -732,13 +771,13 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
   const handleTestConnection = async () => {
     setTesting(true);
     setTestResult(null);
-    
+
     const available = await samService.isAvailable({
       host: samHost,
       port: parseInt(samPort),
       enabled: true,
     });
-    
+
     setTestResult(available ? 'success' : 'error');
     setTesting(false);
   };
@@ -747,7 +786,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     // Validate port range (1-65535)
     const portNum = parseInt(samPort);
     if (isNaN(portNum) || portNum < 1 || portNum > 65535) {
-      setPortError('Ungültiger Port. Der Port muss zwischen 1 und 65535 liegen.');
+      setPortError(t('i2pConfig.invalidPort'));
       return;
     }
     setPortError(null);
@@ -761,17 +800,17 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
         nickname: 'securechat',
       },
     };
-    
+
     await updateSettings({ i2p: newI2pSettings });
-    
+
     // Reinitialize I2P with new settings
     try {
       await i2pService.initialize(newI2pSettings.sam);
-      toast.success('I2P-Konfiguration erfolgreich gespeichert');
+      toast.success(t('i2pConfig.configSaved'));
       onClose();
     } catch (error) {
       console.error('[Settings] Failed to reinitialize I2P:', error);
-      toast.error('Fehler beim Anwenden der I2P-Konfiguration');
+      toast.error(t('i2pConfig.configError'));
     }
   };
 
@@ -779,22 +818,22 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>I2P-Netzwerkkonfiguration</DialogTitle>
+          <DialogTitle>{t('i2pConfig.title')}</DialogTitle>
           <DialogDescription>
-            Konfigurieren Sie die Verbindung zu Ihrem I2P-Router.
+            {t('i2pConfig.description')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="mt-4 space-y-6">
           {/* Current Status */}
           <div className="p-3 rounded-lg bg-muted">
-            <p className="text-sm font-medium mb-1">Aktueller Status</p>
+            <p className="text-sm font-medium mb-1">{t('i2pConfig.currentStatus')}</p>
             <div className="flex items-center gap-2 text-sm">
               <span className={`w-2 h-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`} />
               <span className="text-muted-foreground">
-                {i2pStatus?.samConnected 
-                  ? 'Verbunden mit I2P (SAM)' 
-                  : 'Nicht verbunden'}
+                {i2pStatus?.samConnected
+                  ? t('i2pConfig.connectedSam')
+                  : t('i2pConfig.notConnected')}
               </span>
             </div>
             {i2pStatus?.address && (
@@ -806,11 +845,11 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
           {/* SAM Configuration */}
           <div className="space-y-4 border rounded-lg p-4">
-            <p className="text-sm font-medium">SAM Konfiguration</p>
-            
+            <p className="text-sm font-medium">{t('i2pConfig.samConfig')}</p>
+
             <div className="space-y-3">
               <div>
-                <label className="text-xs text-muted-foreground">Host</label>
+                <label className="text-xs text-muted-foreground">{t('i2pConfig.host')}</label>
                 <input
                   type="text"
                   className="w-full p-2 rounded-md border border-input mt-1"
@@ -821,7 +860,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               </div>
 
               <div>
-                <label className="text-xs text-muted-foreground">Port</label>
+                <label className="text-xs text-muted-foreground">{t('i2pConfig.port')}</label>
                 <input
                   type="number"
                   className={`w-full p-2 rounded-md border mt-1 ${portError ? 'border-destructive' : 'border-input'}`}
@@ -844,20 +883,20 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
                 disabled={testing}
                 className="w-full"
               >
-                {testing ? 'Teste...' : 'Verbindung testen'}
+                {testing ? t('i2pConfig.testing') : t('i2pConfig.testConnection')}
               </Button>
 
               {testResult === 'success' && (
                 <p className="text-xs text-green-500 flex items-center gap-1">
                   <Check className="h-3 w-3" />
-                  SAM-Verbindung erfolgreich
+                  {t('i2pConfig.samSuccess')}
                 </p>
               )}
 
               {testResult === 'error' && (
                 <p className="text-xs text-destructive flex items-center gap-1">
                   <X className="h-3 w-3" />
-                  Keine SAM-Verbindung möglich
+                  {t('i2pConfig.samFailed')}
                 </p>
               )}
             </div>
@@ -865,7 +904,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
           {/* Info Box */}
           <div className="p-3 rounded-lg bg-blue-500/10 border border-blue-500/20">
-            <p className="text-sm font-medium text-blue-400 mb-1">Einrichtung</p>
+            <p className="text-sm font-medium text-blue-400 mb-1">{t('i2pConfig.setup')}</p>
             <p className="text-xs text-muted-foreground">
               1. i2pd mit SAM aktivieren (Port 7656):
             </p>
@@ -885,10 +924,10 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
 
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={onClose}>
-              Abbrechen
+              {t('common.cancel')}
             </Button>
             <Button className="flex-1" onClick={handleSave}>
-              Speichern
+              {t('common.save')}
             </Button>
           </div>
         </div>

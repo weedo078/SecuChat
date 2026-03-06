@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2, ShieldCheck, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -42,6 +43,7 @@ import {
 } from '@/components/ui/alert-dialog';
 
 export function ChatView() {
+  const { t } = useTranslation();
   const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat } = useApp();
   const [messageText, setMessageText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
@@ -120,26 +122,26 @@ export function ChatView() {
     try {
       const file = new File([voiceMsg.blob], `voice-${voiceMsg.id}.webm`, { type: voiceMsg.mimeType });
       await sendFile(activeChat.contact.i2pAddress, file);
-      toast.success('Sprachnachricht gesendet');
+      toast.success(t('chat.voiceSent'));
     } catch {
-      toast.error('Fehler beim Senden der Sprachnachricht');
+      toast.error(t('chat.voiceError'));
     }
-  }, [activeChat?.contact?.i2pAddress, sendFile]);
+  }, [activeChat?.contact?.i2pAddress, sendFile, t]);
 
   // Handle file transfer send
   const handleFileTransfer = useCallback(async (file: File) => {
     if (!activeChat?.contact?.i2pAddress) return;
     try {
       await fileTransferManager.sendFile(activeChat.contact.i2pAddress, file);
-      toast.success('Datei gesendet');
+      toast.success(t('chat.fileSent'));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Fehler beim Senden');
+      toast.error(err instanceof Error ? err.message : t('chat.fileSendError'));
     }
-  }, [activeChat?.contact?.i2pAddress]);
+  }, [activeChat?.contact?.i2pAddress, t]);
 
   const handleSend = async () => {
     if (!messageText.trim()) return;
-    
+
     // Stop typing indicator
     if (activeChat?.contact?.i2pAddress) {
       statusMessenger.stopTyping(activeChat.contact.i2pAddress);
@@ -148,8 +150,8 @@ export function ChatView() {
     try {
       await sendMessage(messageText.trim());
     } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Unbekannter Fehler';
-      toast.error('Fehler beim Senden', {
+      const errorMsg = error instanceof Error ? error.message : t('chat.unknownError');
+      toast.error(t('chat.sendError'), {
         description: errorMsg,
       });
     }
@@ -187,11 +189,11 @@ export function ChatView() {
 
       await sendFile(activeChat.contact.i2pAddress, file);
       setPreviewImage(null);
-      toast.success('Bild erfolgreich gesendet');
+      toast.success(t('chat.imageSent'));
     } catch (err) {
       console.error('Error sending image:', err);
-      toast.error('Fehler beim Senden des Bildes', {
-        description: err instanceof Error ? err.message : 'Unbekannter Fehler',
+      toast.error(t('chat.imageSendError'), {
+        description: err instanceof Error ? err.message : t('chat.unknownError'),
       });
     } finally {
       setIsUploading(false);
@@ -208,7 +210,7 @@ export function ChatView() {
   };
 
   const formatMessageTime = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString('de-DE', {
+    return new Date(timestamp).toLocaleTimeString(undefined, {
       hour: '2-digit',
       minute: '2-digit',
     });
@@ -234,15 +236,15 @@ export function ChatView() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'sending':
-        return 'Wird gesendet';
+        return t('status.sending');
       case 'sent':
-        return 'Gesendet';
+        return t('status.sent');
       case 'delivered':
-        return 'Zugestellt';
+        return t('status.delivered');
       case 'read':
-        return 'Gelesen';
+        return t('status.read');
       case 'failed':
-        return 'Fehlgeschlagen';
+        return t('status.failed');
       default:
         return '';
     }
@@ -252,23 +254,22 @@ export function ChatView() {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-background p-8">
         <Shield className="h-24 w-24 text-primary/20 mb-6" aria-hidden="true" />
-        <h2 className="text-2xl font-semibold mb-2">Willkommen bei SecureChat</h2>
+        <h2 className="text-2xl font-semibold mb-2">{t('chat.welcome')}</h2>
         <p className="text-muted-foreground text-center max-w-md mb-6">
-          Wählen Sie einen Chat aus der Liste oder fügen Sie neue Kontakte hinzu,
-          um mit Ende-zu-Ende-verschlüsselter Kommunikation zu beginnen.
+          {t('chat.welcomeDescription')}
         </p>
         <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
             <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />
-            <span>PGP-Verschlüsselung aktiv</span>
+            <span>{t('chat.pgpActive')}</span>
           </div>
           <div className="flex items-center gap-2">
-            <span 
+            <span
               className={`h-2 w-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`}
-              aria-label={i2pStatus?.samConnected ? 'I2P verbunden' : 'I2P nicht verbunden'}
+              aria-label={i2pStatus?.samConnected ? t('chat.i2pConnected') : t('chat.i2pNotConnected')}
               role="status"
             />
-            <span>{i2pStatus?.samConnected ? 'I2P verbunden' : 'I2P nicht verbunden'}</span>
+            <span>{i2pStatus?.samConnected ? t('chat.i2pConnected') : t('chat.i2pNotConnected')}</span>
           </div>
           {i2pStatus?.error && (
             <p className="text-xs text-yellow-500 text-center max-w-sm">
@@ -286,13 +287,13 @@ export function ChatView() {
       <div className="h-16 border-b border-border flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Avatar className="h-10 w-10" aria-label={`Avatar von ${activeChat.contact?.name}`}>
+            <Avatar className="h-10 w-10" aria-label={t('chat.avatarOf', { name: activeChat.contact?.name })}>
               <AvatarFallback>{getInitials(activeChat.contact?.name || '??')}</AvatarFallback>
             </Avatar>
             {activeChat.contact?.status === 'online' && (
-              <span 
+              <span
                 className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-background"
-                aria-label="Online"
+                aria-label={t('common.online')}
                 role="status"
               />
             )}
@@ -300,20 +301,20 @@ export function ChatView() {
           <div>
             <h3 className="font-semibold">{activeChat.contact?.name}</h3>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{activeChat.contact?.status === 'online' ? 'Online' : 'Offline'}</span>
+              <span>{activeChat.contact?.status === 'online' ? t('common.online') : t('common.offline')}</span>
               {encryptionState === 'encrypted' && (
                 <>
                   <span aria-hidden="true">•</span>
                   <span className="text-green-500 flex items-center gap-1">
                     <Shield className="h-3 w-3" aria-hidden="true" />
-                    Verschlüsselt
+                    {t('chat.encrypted')}
                   </span>
                   <span aria-hidden="true">•</span>
                   <VerificationBadge contactId={activeChat.contact?.id || ''} />
                 </>
               )}
               {isContactTyping && (
-                <span className="text-primary animate-pulse">tippt...</span>
+                <span className="text-primary animate-pulse">{t('chat.typing')}</span>
               )}
             </div>
           </div>
@@ -323,17 +324,17 @@ export function ChatView() {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   disabled
-                  aria-label="Anruf (demnächst verfügbar)"
+                  aria-label={t('chat.callSoon')}
                 >
                   <Phone className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Anrufe demnächst verfügbar</p>
+                <p>{t('chat.callsSoon')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -341,45 +342,45 @@ export function ChatView() {
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   disabled
-                  aria-label="Videoanruf (demnächst verfügbar)"
+                  aria-label={t('chat.videoCallSoon')}
                 >
                   <Video className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Videoanrufe demnächst verfügbar</p>
+                <p>{t('chat.videoCallsSoon')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 size="icon"
-                aria-label="Chat-Menü"
+                aria-label={t('chat.chatMenu')}
               >
                 <MoreVertical className="h-5 w-5" aria-hidden="true" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem>Kontaktinfo</DropdownMenuItem>
+              <DropdownMenuItem>{t('chat.contactInfo')}</DropdownMenuItem>
               <DropdownMenuItem onClick={() => setShowVerification(true)}>
                 <ShieldCheck className="h-4 w-4 mr-2" />
-                Kontakt verifizieren
+                {t('chat.verifyContact')}
               </DropdownMenuItem>
-              <DropdownMenuItem>Nachrichten suchen</DropdownMenuItem>
+              <DropdownMenuItem>{t('chat.searchMessages')}</DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem 
+              <DropdownMenuItem
                 className="text-destructive focus:text-destructive"
                 onClick={() => setShowDeleteDialog(true)}
               >
                 <Trash2 className="h-4 w-4 mr-2" />
-                Chat löschen
+                {t('chat.deleteChat')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -387,18 +388,18 @@ export function ChatView() {
       </div>
 
       {/* Messages Area */}
-      <ScrollArea ref={scrollRef} className="flex-1 p-4" role="log" aria-label="Nachrichtenverlauf">
+      <ScrollArea ref={scrollRef} className="flex-1 p-4" role="log" aria-label={t('chat.messageHistory')}>
         <div className="space-y-4">
           {messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
-              <p>Keine Nachrichten vorhanden</p>
-              <p className="text-sm">Schreiben Sie die erste Nachricht!</p>
+              <p>{t('chat.noMessages')}</p>
+              <p className="text-sm">{t('chat.writeFirstMessage')}</p>
             </div>
           ) : (
             messages.map((message, index) => {
               const isOwn = message.senderId === user?.id;
-              const showDate = index === 0 || 
-                new Date(message.timestamp).toDateString() !== 
+              const showDate = index === 0 ||
+                new Date(message.timestamp).toDateString() !==
                 new Date(messages[index - 1].timestamp).toDateString();
 
               return (
@@ -406,7 +407,7 @@ export function ChatView() {
                   {showDate && (
                     <div className="flex justify-center my-4">
                       <span className="text-xs text-muted-foreground bg-muted px-3 py-1 rounded-full">
-                        {new Date(message.timestamp).toLocaleDateString('de-DE', {
+                        {new Date(message.timestamp).toLocaleDateString(undefined, {
                           weekday: 'long',
                           day: 'numeric',
                           month: 'long',
@@ -426,23 +427,23 @@ export function ChatView() {
                         {/* Image message */}
                         {message.type === 'image' && message.fileInfo && (
                           <div className="mb-2">
-                            <img 
-                              src={message.fileInfo.url || message.decryptedContent} 
+                            <img
+                              src={message.fileInfo.url || message.decryptedContent}
                               alt={message.fileInfo.filename}
                               className="max-w-full rounded-lg cursor-pointer"
                               onClick={() => setSelectedImage((message.fileInfo?.url || message.decryptedContent) ?? null)}
                             />
                           </div>
                         )}
-                        
+
                         {/* Text message */}
                         {message.type !== 'image' && (
                           <p className="text-sm whitespace-pre-wrap break-words">
-                            {message.decryptedContent || '[Verschlüsselt]'}
+                            {message.decryptedContent || t('chat.encryptedPlaceholder')}
                           </p>
                         )}
                       </div>
-                      <div 
+                      <div
                         className={`flex items-center gap-1 mt-1 ${isOwn ? 'justify-end' : 'justify-start'}`}
                         aria-label={isOwn ? `Status: ${getStatusLabel(message.status)}` : undefined}
                       >
@@ -468,7 +469,7 @@ export function ChatView() {
       {isContactTyping && (
         <div className="px-4 py-1">
           <span className="text-xs text-muted-foreground animate-pulse">
-            {activeChat.contact?.name} tippt...
+            {t('chat.contactTyping', { name: activeChat.contact?.name })}
           </span>
         </div>
       )}
@@ -477,28 +478,28 @@ export function ChatView() {
       {previewImage && (
         <div className="p-4 border-t border-border bg-muted/50">
           <div className="flex items-center gap-4">
-            <img 
-              src={previewImage} 
-              alt="Vorschau" 
+            <img
+              src={previewImage}
+              alt={t('chat.preview')}
               className="h-20 w-20 object-cover rounded-lg"
             />
             <div className="flex-1">
-              <p className="text-sm font-medium">Bild senden?</p>
-              <p className="text-xs text-muted-foreground">Klicken Sie auf Senden</p>
+              <p className="text-sm font-medium">{t('chat.sendImage')}</p>
+              <p className="text-xs text-muted-foreground">{t('chat.clickToSend')}</p>
             </div>
             <div className="flex gap-2">
-              <Button 
-                variant="ghost" 
-                size="icon" 
+              <Button
+                variant="ghost"
+                size="icon"
                 onClick={() => setPreviewImage(null)}
-                aria-label="Bildvorschau schließen"
+                aria-label={t('chat.closePreview')}
               >
                 <X className="h-5 w-5" aria-hidden="true" />
               </Button>
-              <Button 
-                onClick={handleSendImage} 
+              <Button
+                onClick={handleSendImage}
                 disabled={isUploading}
-                aria-label={isUploading ? 'Wird gesendet...' : 'Bild senden'}
+                aria-label={isUploading ? t('chat.sendingImage') : t('chat.sendImage')}
               >
                 {isUploading ? (
                   <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
@@ -520,14 +521,14 @@ export function ChatView() {
             accept="image/*"
             className="hidden"
             onChange={handleFileSelect}
-            aria-label="Bild auswählen"
+            aria-label={t('chat.selectImage')}
           />
-          <Button 
-            variant="ghost" 
-            size="icon" 
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => fileInputRef.current?.click()}
             disabled={encryptionState !== 'encrypted'}
-            aria-label="Bild anhängen"
+            aria-label={t('chat.attachImage')}
           >
             <ImageIcon className="h-5 w-5" aria-hidden="true" />
           </Button>
@@ -540,32 +541,32 @@ export function ChatView() {
               if (f) handleFileTransfer(f);
               e.target.value = '';
             }}
-            aria-label="Datei auswählen"
+            aria-label={t('chat.selectFile')}
           />
           <Button
             variant="ghost"
             size="icon"
             onClick={() => fileTransferInputRef.current?.click()}
             disabled={encryptionState !== 'encrypted'}
-            aria-label="Datei senden"
+            aria-label={t('chat.sendFile')}
           >
             <Paperclip className="h-5 w-5" aria-hidden="true" />
           </Button>
           <Input
-            placeholder="Nachricht schreiben..."
+            placeholder={t('chat.messagePlaceholder')}
             value={messageText}
             onChange={handleInputChange}
             onKeyDown={handleKeyDown}
             className="flex-1"
             disabled={encryptionState !== 'encrypted'}
-            aria-label="Nachricht eingeben"
+            aria-label={t('chat.enterMessage')}
           />
           {messageText.trim() ? (
-            <Button 
-              onClick={handleSend} 
+            <Button
+              onClick={handleSend}
               disabled={encryptionState !== 'encrypted'}
               size="icon"
-              aria-label="Nachricht senden"
+              aria-label={t('chat.sendMessage')}
             >
               <Send className="h-5 w-5" aria-hidden="true" />
             </Button>
@@ -578,12 +579,12 @@ export function ChatView() {
         </div>
         {encryptionState !== 'encrypted' && (
           <p className="text-xs text-muted-foreground mt-2 text-center">
-            Entsperren Sie die App, um Nachrichten zu senden
+            {t('chat.unlockToSend')}
           </p>
         )}
         {encryptionState === 'encrypted' && !i2pStatus?.samConnected && (
           <p className="text-xs text-yellow-500 mt-2 text-center">
-            I2P nicht verbunden — Nachrichten werden lokal gespeichert
+            {t('chat.i2pNotConnectedLocal')}
           </p>
         )}
       </div>
@@ -594,9 +595,9 @@ export function ChatView() {
           <DialogTitle className="sr-only">Image viewer</DialogTitle>
           {selectedImage && (
             <div className="relative">
-              <img 
-                src={selectedImage} 
-                alt="Vollbildansicht" 
+              <img
+                src={selectedImage}
+                alt={t('chat.fullView')}
                 className="w-full h-auto"
               />
               <Button
@@ -609,7 +610,7 @@ export function ChatView() {
                   link.download = 'image.png';
                   link.click();
                 }}
-                aria-label="Bild herunterladen"
+                aria-label={t('chat.downloadImage')}
               >
                 <Download className="h-5 w-5" aria-hidden="true" />
               </Button>
@@ -625,7 +626,7 @@ export function ChatView() {
       {fileTransferProgress && fileTransferProgress.status !== 'completed' && (
         <div className="px-4 py-2 border-t border-border bg-muted/50">
           <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-            <span>{fileTransferProgress.direction === 'send' ? 'Sende Datei...' : 'Empfange Datei...'}</span>
+            <span>{fileTransferProgress.direction === 'send' ? t('chat.sendingFile') : t('chat.receivingFile')}</span>
             <span>{fileTransferProgress.percent}%</span>
           </div>
           <div className="h-1 bg-muted rounded-full overflow-hidden">
@@ -650,24 +651,24 @@ export function ChatView() {
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Chat löschen?</AlertDialogTitle>
+            <AlertDialogTitle>{t('chat.deleteChatConfirm')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Möchtest du diesen Chat wirklich löschen? Alle Nachrichten werden unwiderruflich gelöscht.
+              {t('chat.deleteChatDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
               onClick={async () => {
                 if (activeChat) {
                   await deleteChat(activeChat.id);
                   setShowDeleteDialog(false);
-                  toast.success('Chat gelöscht');
+                  toast.success(t('chat.chatDeleted'));
                 }
               }}
               className="bg-destructive"
             >
-              Löschen
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

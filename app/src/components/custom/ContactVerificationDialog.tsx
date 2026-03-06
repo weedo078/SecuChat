@@ -1,10 +1,11 @@
 /**
  * Contact Verification Dialog — Safety Numbers UI
- * 
+ *
  * Shows QR code, 6-word phrase, and fingerprint for out-of-band verification.
  */
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Shield, ShieldCheck, ShieldAlert, QrCode, Copy, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -43,6 +44,7 @@ export function ContactVerificationDialog({
   contactFingerprint,
   myFingerprint,
 }: Props) {
+  const { t } = useTranslation();
   const [qrCodeUrl, setQrCodeUrl] = useState<string>('');
   const [verification, setVerification] = useState<ContactVerification | null>(null);
   const [copied, setCopied] = useState(false);
@@ -68,7 +70,7 @@ export function ContactVerificationDialog({
     };
     await VerificationStore.save(v);
     setVerification(v);
-    toast.success(`${contactName} wurde verifiziert`);
+    toast.success(t('verification.contactVerified', { name: contactName }));
   };
 
   const handleUnverify = async () => {
@@ -86,7 +88,7 @@ export function ContactVerificationDialog({
     navigator.clipboard.writeText(wordPhrase);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-    toast.success('Sicherheitsphrase kopiert');
+    toast.success(t('verification.safetyPhraseCopied'));
   };
 
   const trustLevel: TrustLevel = verification?.trustLevel || 'unverified';
@@ -101,10 +103,10 @@ export function ContactVerificationDialog({
             ) : (
               <ShieldAlert className="h-5 w-5 text-yellow-500" />
             )}
-            Kontaktverifikation
+            {t('verification.title')}
           </DialogTitle>
           <DialogDescription>
-            Verifiziere {contactName} durch Vergleich der Sicherheitsphrase
+            {t('verification.description', { name: contactName })}
           </DialogDescription>
         </DialogHeader>
 
@@ -112,10 +114,10 @@ export function ContactVerificationDialog({
           {/* Status Badge */}
           <div className="flex justify-center">
             <Badge variant={trustLevel === 'verified' ? 'default' : 'secondary'}>
-              {trustLevel === 'verified' ? '✓ Verifiziert' : 'Nicht verifiziert'}
+              {trustLevel === 'verified' ? '✓ ' + t('verification.verified') : t('verification.notVerified')}
               {verification?.verifiedAt && (
                 <span className="ml-1 text-xs opacity-70">
-                  seit {new Date(verification.verifiedAt).toLocaleDateString('de-DE')}
+                  {t('verification.verifiedSince', { date: new Date(verification.verifiedAt).toLocaleDateString() })}
                 </span>
               )}
             </Badge>
@@ -125,7 +127,7 @@ export function ContactVerificationDialog({
           <div className="flex justify-center">
             {qrCodeUrl ? (
               <div className="bg-white p-3 rounded-lg">
-                <img src={qrCodeUrl} alt="Sicherheits-QR-Code" className="w-48 h-48" />
+                <img src={qrCodeUrl} alt={t('verification.securityQrCode')} className="w-48 h-48" />
               </div>
             ) : (
               <div className="w-48 h-48 bg-muted rounded-lg flex items-center justify-center">
@@ -137,7 +139,7 @@ export function ContactVerificationDialog({
           {/* 6-Word Phrase */}
           <div className="bg-muted p-4 rounded-lg">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm font-medium">Sicherheitsphrase</span>
+              <span className="text-sm font-medium">{t('verification.safetyPhrase')}</span>
               <Button variant="ghost" size="sm" onClick={handleCopy}>
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
               </Button>
@@ -147,14 +149,13 @@ export function ContactVerificationDialog({
 
           {/* Fingerprint */}
           <div className="bg-muted/50 p-3 rounded-lg">
-            <span className="text-xs text-muted-foreground block mb-1">Fingerprint von {contactName}</span>
+            <span className="text-xs text-muted-foreground block mb-1">{t('verification.fingerprintOf', { name: contactName })}</span>
             <p className="text-xs font-mono break-all">{formattedFingerprint}</p>
           </div>
 
           {/* Instructions */}
           <p className="text-xs text-muted-foreground text-center">
-            Vergleiche diese Phrase mit deinem Kontakt über einen sicheren Kanal
-            (persönlich, Telefon). Wenn sie übereinstimmt, klicke "Verifizieren".
+            {t('verification.instructions')}
           </p>
 
           {/* Actions */}
@@ -162,12 +163,12 @@ export function ContactVerificationDialog({
             {trustLevel !== 'verified' ? (
               <Button onClick={handleVerify} className="gap-2">
                 <Shield className="h-4 w-4" />
-                Als verifiziert markieren
+                {t('verification.markVerified')}
               </Button>
             ) : (
               <Button variant="outline" onClick={handleUnverify} className="gap-2">
                 <ShieldAlert className="h-4 w-4" />
-                Verifikation aufheben
+                {t('verification.removeVerification')}
               </Button>
             )}
           </div>
@@ -181,6 +182,7 @@ export function ContactVerificationDialog({
  * Inline verification badge for chat header
  */
 export function VerificationBadge({ contactId }: { contactId: string }) {
+  const { t } = useTranslation();
   const [trustLevel, setTrustLevel] = useState<TrustLevel>('unverified');
 
   useEffect(() => {
@@ -193,7 +195,7 @@ export function VerificationBadge({ contactId }: { contactId: string }) {
     return (
       <span className="text-green-500 flex items-center gap-1 text-xs">
         <ShieldCheck className="h-3 w-3" />
-        Verifiziert
+        {t('verification.verified')}
       </span>
     );
   }
@@ -201,7 +203,7 @@ export function VerificationBadge({ contactId }: { contactId: string }) {
   return (
     <span className="text-yellow-500 flex items-center gap-1 text-xs">
       <ShieldAlert className="h-3 w-3" />
-      Nicht verifiziert
+      {t('verification.notVerified')}
     </span>
   );
 }

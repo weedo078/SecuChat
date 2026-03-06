@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -17,6 +18,7 @@ interface UnlockDialogProps {
 }
 
 export function UnlockDialog({ isOpen, onClose, onUnlock, error }: UnlockDialogProps) {
+  const { t } = useTranslation();
   const [passphrase, setPassphrase] = useState('');
   const [localError, setLocalError] = useState('');
 
@@ -27,7 +29,7 @@ export function UnlockDialog({ isOpen, onClose, onUnlock, error }: UnlockDialogP
       setLocalError('');
       onClose();
     } else {
-      setLocalError('Falsche Passphrase');
+      setLocalError(t('unlock.wrongPassphrase'));
     }
   };
 
@@ -43,25 +45,25 @@ export function UnlockDialog({ isOpen, onClose, onUnlock, error }: UnlockDialogP
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>App entsperren</DialogTitle>
+          <DialogTitle>{t('unlock.title')}</DialogTitle>
           <DialogDescription>
-            Geben Sie Ihre Passphrase ein, um auf Ihre Nachrichten zuzugreifen.
+            {t('unlock.description')}
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4 pt-4">
           <Input
             type="password"
-            placeholder="Passphrase"
+            placeholder={t('unlock.passphrasePlaceholder')}
             value={passphrase}
             onChange={(e) => setPassphrase(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
-            aria-label="Passphrase eingeben"
+            aria-label={t('unlock.enterPassphrase')}
           />
           {displayError && (
             <p className="text-sm text-destructive" role="alert">{displayError}</p>
           )}
           <Button onClick={handleUnlock} className="w-full">
-            Entsperren
+            {t('unlock.unlock')}
           </Button>
         </div>
       </DialogContent>

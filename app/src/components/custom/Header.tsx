@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Shield, Lock, Unlock, Menu, Settings, User as UserIcon, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useApp } from '@/contexts/AppContext';
@@ -17,6 +18,7 @@ interface HeaderProps {
 }
 
 export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
+  const { t } = useTranslation();
   const { user, encryptionState, isLocked, lockApp, unlockApp, i2pStatus } = useApp();
   const [showUnlockDialog, setShowUnlockDialog] = useState(false);
 
@@ -36,53 +38,53 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
   };
 
   const getEncryptionLabel = () => {
-    return encryptionState === 'encrypted' ? 'Verschlüsselt' : 'Nicht verschlüsselt';
+    return encryptionState === 'encrypted' ? t('header.encrypted') : t('header.notEncrypted');
   };
 
   const getConnectionStatus = () => {
     if (i2pStatus?.samConnected) {
       return (
-        <span 
-          className="h-2 w-2 rounded-full bg-green-500" 
-          aria-label="I2P verbunden"
+        <span
+          className="h-2 w-2 rounded-full bg-green-500"
+          aria-label={t('header.i2pConnected')}
           role="status"
         />
       );
     }
     if (i2pStatus?.samAvailable) {
       return (
-        <span 
-          className="h-2 w-2 rounded-full bg-yellow-500" 
-          aria-label="I2P verbindet"
+        <span
+          className="h-2 w-2 rounded-full bg-yellow-500"
+          aria-label={t('header.i2pConnecting')}
           role="status"
         />
       );
     }
     return (
-      <span 
-        className="h-2 w-2 rounded-full bg-red-500" 
-        aria-label="I2P getrennt"
+      <span
+        className="h-2 w-2 rounded-full bg-red-500"
+        aria-label={t('header.i2pDisconnected')}
         role="status"
       />
     );
   };
 
   const getConnectionLabel = () => {
-    if (i2pStatus?.samConnected) return 'I2P Verbunden';
-    if (i2pStatus?.samAvailable) return 'Verbinde...';
-    return 'Getrennt';
+    if (i2pStatus?.samConnected) return t('header.i2pConnected');
+    if (i2pStatus?.samAvailable) return t('header.i2pConnecting');
+    return t('header.i2pDisconnected');
   };
 
   return (
     <>
       <header className="h-16 border-b border-border bg-card flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            onClick={onMenuClick} 
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onMenuClick}
             className="lg:hidden"
-            aria-label="Menü öffnen"
+            aria-label={t('header.openMenu')}
           >
             <Menu className="h-5 w-5" aria-hidden="true" />
           </Button>
@@ -94,9 +96,9 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
 
         <div className="flex items-center gap-4">
           {/* Connection Status */}
-          <div 
+          <div
             className="flex items-center gap-2 text-sm text-muted-foreground"
-            aria-label={`Verbindungsstatus: ${getConnectionLabel()}`}
+            aria-label={t('header.connectionStatus', { status: getConnectionLabel() })}
           >
             {getConnectionStatus()}
             <span className="hidden sm:inline">
@@ -105,9 +107,9 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
           </div>
 
           {/* Encryption Status */}
-          <div 
+          <div
             className="flex items-center gap-2 text-sm text-muted-foreground"
-            aria-label={`Verschlüsselungsstatus: ${getEncryptionLabel()}`}
+            aria-label={t('header.encryptionStatus', { status: getEncryptionLabel() })}
           >
             {getEncryptionIcon()}
             <span className="hidden sm:inline">
@@ -119,11 +121,11 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
           {user && (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button 
-                  variant="ghost" 
-                  size="icon" 
+                <Button
+                  variant="ghost"
+                  size="icon"
                   className="rounded-full"
-                  aria-label="Benutzermenü öffnen"
+                  aria-label={t('header.openUserMenu')}
                 >
                   <UserIcon className="h-5 w-5" aria-hidden="true" />
                 </Button>
@@ -138,25 +140,25 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onSettingsClick}>
                   <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
-                  Einstellungen
+                  {t('common.settings')}
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={isLocked ? () => setShowUnlockDialog(true) : lockApp}>
                   {isLocked ? (
                     <>
                       <Unlock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      Entsperren
+                      {t('header.unlock')}
                     </>
                   ) : (
                     <>
                       <Lock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      Sperren
+                      {t('header.lock')}
                     </>
                   )}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive">
                   <LogOut className="h-4 w-4 mr-2" aria-hidden="true" />
-                  Abmelden
+                  {t('header.logout')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

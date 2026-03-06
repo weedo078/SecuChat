@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,7 @@ interface OnboardingProps {
 }
 
 export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps) {
+  const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [username, setUsername] = useState('');
   const [deviceName, setDeviceName] = useState('');
@@ -93,19 +95,19 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
   const generateKeys = async () => {
     if (passphrase !== confirmPassphrase) {
-      setError('Passphrases stimmen nicht überein');
+      setError(t('onboarding.passphraseMismatch'));
       return;
     }
-    
+
     setIsGenerating(true);
     setError(null);
-    
+
     try {
       // Generate PGP keys
       const keys = await cryptoService.generateKeyPair(username, passphrase);
       if (!isMountedRef.current) return;
       setKeyPair(keys);
-      
+
       // Generate I2P identity
       const i2p = await i2pService.generateIdentity();
       if (!isMountedRef.current) return;
@@ -114,11 +116,11 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         privateKey: uint8ArrayToBase64(i2p.privateKey),
         b32Address: i2p.b32Address,
       });
-      
+
       handleNext();
     } catch (err) {
       if (!isMountedRef.current) return;
-      setError(err instanceof Error ? err.message : 'Fehler bei der Generierung');
+      setError(err instanceof Error ? err.message : t('onboarding.generationError'));
     } finally {
       if (isMountedRef.current) {
         setIsGenerating(false);
@@ -171,13 +173,13 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
       // Set encryption passphrase before saving user with private keys
       storageService.setEncryptionPassphrase(passphrase);
-      
+
       await storageService.saveUser(user);
       setUser(user);
       onComplete();
     } catch (err) {
       console.error('[Onboarding] Save error:', err);
-      setError('Fehler beim Speichern: ' + (err instanceof Error ? err.message : 'Unbekannter Fehler'));
+      setError(t('onboarding.saveError', { error: err instanceof Error ? err.message : t('onboarding.unknownError') }));
     }
   };
 
@@ -187,12 +189,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
     // Electron has bundled i2pd that may need a moment to start — give it more time
     const timeoutMs = platformService.isElectron() ? 30000 : 10000;
-    
+
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('TIMEOUT')), timeoutMs);
       });
-      
+
       const available = await Promise.race([
         samService.isAvailable({
           host: '127.0.0.1',
@@ -201,21 +203,21 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         }),
         timeoutPromise,
       ]);
-      
+
       setI2pTestStatus(available ? 'success' : 'error');
       if (!available) {
-        setError('i2pd nicht erreichbar. Bitte überprüfen Sie, ob i2pd mit SAM-Proxy läuft (Port 7657).');
+        setError(t('onboarding.i2pdNotReachable'));
       }
     } catch (err) {
       setI2pTestStatus('error');
       if (err instanceof Error && err.message === 'TIMEOUT') {
         if (platformService.isElectron()) {
-          setError(`i2pd ist noch nicht bereit (${timeoutMs / 1000}s Timeout). Beim ersten Start dauert es 1–2 Minuten. Klicken Sie auf "Weiter" und testen Sie später in Einstellungen → I2P, oder versuchen Sie es gleich nochmal.`);
+          setError(t('onboarding.i2pdElectronTimeout', { timeout: timeoutMs / 1000 }));
         } else {
-          setError(`Verbindungstimeout nach ${timeoutMs / 1000}s. Bitte überprüfen Sie:\n1. Läuft i2pd?\n2. Ist der SAM-Proxy auf Port 7657 erreichbar?\n3. Firewall-Einstellungen prüfen`);
+          setError(t('onboarding.i2pdBrowserTimeout', { timeout: timeoutMs / 1000 }));
         }
       } else {
-        setError('Fehler beim Verbindungstest. Bitte überprüfen Sie die i2pd-Konfiguration.');
+        setError(t('onboarding.i2pdTestError'));
       }
     }
   };
@@ -279,9 +281,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Smartphone className="h-8 w-8 text-primary" />
             </div>
-            <h1 className="text-2xl font-bold mb-2">Gerät hinzufügen</h1>
+            <h1 className="text-2xl font-bold mb-2">{t('onboarding.addDevice')}</h1>
             <p className="text-muted-foreground">
-              Verbinden Sie dieses Gerät mit Ihrem bestehenden Account
+              {t('onboarding.connectExistingAccount')}
             </p>
           </div>
 
@@ -289,11 +291,11 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="scan">
                 <QrCode className="h-4 w-4 mr-2" />
-                QR-Code scannen
+                {t('onboarding.scanQr')}
               </TabsTrigger>
               <TabsTrigger value="manual">
                 <UserPlus className="h-4 w-4 mr-2" />
-                Manuell
+                {t('onboarding.manual')}
               </TabsTrigger>
             </TabsList>
 
@@ -306,7 +308,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             <TabsContent value="manual">
               <div className="bg-card rounded-xl border border-border p-6 space-y-4">
                 <p className="text-sm text-muted-foreground">
-                  Fügen Sie Ihre Backup-Datei ein oder geben Sie Ihre Schlüssel manuell ein.
+                  {t('onboarding.manualImportDescription')}
                 </p>
                 <DeviceManualImport onComplete={onComplete} />
               </div>
@@ -327,11 +329,11 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       const validation = backupService.validateBackupFile(content);
       setRestoreValidation(validation);
       if (!validation.valid) {
-        setError(validation.error || 'Ungültige Backup-Datei');
+        setError(validation.error || t('onboarding.invalidBackup'));
       }
     } catch {
       setRestoreValidation(null);
-      setError('Datei konnte nicht gelesen werden');
+      setError(t('onboarding.fileReadError'));
     }
   };
 
@@ -378,7 +380,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       setUser(restored.user);
       onComplete();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Wiederherstellung fehlgeschlagen');
+      setError(err instanceof Error ? err.message : t('onboarding.restoreFailed'));
     } finally {
       setIsRestoring(false);
     }
@@ -393,9 +395,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Upload className="h-8 w-8 text-primary" />
             </div>
-            <h1 className="text-2xl font-bold mb-2">Backup wiederherstellen</h1>
+            <h1 className="text-2xl font-bold mb-2">{t('onboarding.restoreTitle')}</h1>
             <p className="text-muted-foreground">
-              Stellen Sie Ihr Profil aus einer Backup-Datei wieder her
+              {t('onboarding.restoreSubtitle')}
             </p>
           </div>
 
@@ -410,17 +412,16 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             {/* Info */}
             <div className="bg-amber-50 border border-amber-200 p-4 rounded-lg">
               <p className="text-amber-800 text-sm font-medium">
-                ⚠️ Zwei Dateien erforderlich
+                {t('onboarding.twoFilesRequired')}
               </p>
               <p className="text-amber-700 text-xs mt-1">
-                Sie benötigen sowohl die Backup-Datei als auch die BackupKey-Datei.
-                Ohne die Key-Datei können die Daten nicht entschlüsselt werden.
+                {t('onboarding.twoFilesDescription')}
               </p>
             </div>
 
             {/* Backup file picker */}
             <div>
-              <label className="text-sm font-medium mb-2 block">1. Backup-Datei (*.secuchat)</label>
+              <label className="text-sm font-medium mb-2 block">{t('onboarding.backupFile')}</label>
               <div className="relative">
                 <input
                   type="file"
@@ -430,14 +431,14 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 />
                 <Button variant="outline" className="w-full">
                   <Upload className="h-4 w-4 mr-2" />
-                  {restoreBackupFile ? restoreBackupFile.name : 'Backup-Datei auswählen...'}
+                  {restoreBackupFile ? restoreBackupFile.name : t('onboarding.selectBackupFile')}
                 </Button>
               </div>
             </div>
 
             {/* Key file picker */}
             <div>
-              <label className="text-sm font-medium mb-2 block">2. BackupKey-Datei (*.secuchat)</label>
+              <label className="text-sm font-medium mb-2 block">{t('onboarding.keyFile')}</label>
               <div className="relative">
                 <input
                   type="file"
@@ -445,18 +446,18 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   onChange={handleKeyFileSelect}
                   className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                 />
-                <Button 
-                  variant="outline" 
+                <Button
+                  variant="outline"
                   className="w-full"
                   disabled={!restoreValidation?.valid}
                 >
                   <Key className="h-4 w-4 mr-2" />
-                  {restoreKeyFile ? restoreKeyFile.name : 'Key-Datei auswählen...'}
+                  {restoreKeyFile ? restoreKeyFile.name : t('onboarding.selectKeyFile')}
                 </Button>
               </div>
               {!restoreValidation?.valid && (
                 <p className="text-xs text-muted-foreground mt-1">
-                  Wählen Sie zuerst die Backup-Datei aus
+                  {t('onboarding.selectBackupFirst')}
                 </p>
               )}
             </div>
@@ -466,10 +467,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-4 bg-green-500/10 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
                   <Check className="h-4 w-4 text-green-500" />
-                  <span className="font-medium text-green-500">Gültige Backup-Datei erkannt</span>
+                  <span className="font-medium text-green-500">{t('onboarding.validBackup')}</span>
                 </div>
                 {restoreValidation.username && (
-                  <p className="text-sm text-muted-foreground">Benutzer: {restoreValidation.username}</p>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.user', { name: restoreValidation.username })}</p>
                 )}
               </div>
             )}
@@ -477,15 +478,15 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
             {/* Passphrase for key encryption in storage */}
             {restoreValidation?.valid && (
               <div>
-                <label className="text-sm font-medium mb-2 block">Passphrase für Verschlüsselung</label>
+                <label className="text-sm font-medium mb-2 block">{t('onboarding.passphraseForEncryption')}</label>
                 <Input
                   type="password"
-                  placeholder="Mindestens 8 Zeichen"
+                  placeholder={t('onboarding.minChars')}
                   value={restorePassphrase}
                   onChange={(e) => setRestorePassphrase(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Schützt Ihre privaten Schlüssel auf diesem Gerät
+                  {t('onboarding.protectsKeys')}
                 </p>
               </div>
             )}
@@ -499,12 +500,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               {isRestoring ? (
                 <>
                   <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                  Wiederherstellen...
+                  {t('onboarding.restoring')}
                 </>
               ) : (
                 <>
                   <Upload className="h-4 w-4 mr-2" />
-                  Backup wiederherstellen
+                  {t('onboarding.restoreBackup')}
                 </>
               )}
             </Button>
@@ -513,7 +514,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           <div className="flex justify-center mt-6">
             <Button variant="outline" onClick={() => { setShowRestoreFlow(false); setError(null); setRestoreBackupFile(null); setRestoreKeyFile(null); setRestoreValidation(null); }}>
               <ChevronLeft className="h-4 w-4 mr-2" />
-              Zurück zur Neueinrichtung
+              {t('onboarding.backToSetup')}
             </Button>
           </div>
         </div>
@@ -530,9 +531,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
             <Shield className="h-8 w-8 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold mb-2">Willkommen bei SecureChat</h1>
+          <h1 className="text-2xl font-bold mb-2">{t('onboarding.welcomeTitle')}</h1>
           <p className="text-muted-foreground">
-            Einrichtung Ihrer sicheren Messaging-App
+            {t('onboarding.welcomeSubtitle')}
           </p>
         </div>
 
@@ -540,9 +541,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         <div className="mb-8">
           <Progress value={progress} className="h-2" />
           <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-            <span>Start</span>
-            <span>Schritt {step} von {totalSteps}</span>
-            <span>Fertig</span>
+            <span>{t('onboarding.start')}</span>
+            <span>{t('onboarding.stepOf', { step, total: totalSteps })}</span>
+            <span>{t('onboarding.done')}</span>
           </div>
         </div>
 
@@ -563,15 +564,15 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <span className="font-semibold text-primary">1</span>
                 </div>
                 <div>
-                  <h2 className="font-semibold">Profil erstellen</h2>
-                  <p className="text-sm text-muted-foreground">Wie sollen andere Sie sehen?</p>
+                  <h2 className="font-semibold">{t('onboarding.step1Title')}</h2>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.step1Subtitle')}</p>
                 </div>
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">Ihr Name</label>
+                <label className="text-sm font-medium mb-2 block">{t('onboarding.yourName')}</label>
                 <Input
-                  placeholder="z.B. Max Mustermann"
+                  placeholder={t('onboarding.namePlaceholder')}
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   className="text-lg"
@@ -579,14 +580,14 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               </div>
 
               <div>
-                <label className="text-sm font-medium mb-2 block">Gerätename</label>
+                <label className="text-sm font-medium mb-2 block">{t('onboarding.deviceName')}</label>
                 <Input
-                  placeholder="z.B. iPhone von Max"
+                  placeholder={t('onboarding.deviceNamePlaceholder')}
                   value={deviceName}
                   onChange={(e) => setDeviceName(e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground mt-1">
-                  Hilft Ihnen, Ihre Geräte zu unterscheiden
+                  {t('onboarding.deviceNameHelp')}
                 </p>
               </div>
 
@@ -597,10 +598,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   onClick={() => setShowRestoreFlow(true)}
                 >
                   <Upload className="h-4 w-4 mr-2" />
-                  Vorhandenes Backup laden
+                  {t('onboarding.loadBackup')}
                 </Button>
                 <p className="text-xs text-muted-foreground mt-1 text-center">
-                  Haben Sie bereits ein Backup? Stellen Sie Ihr Profil wieder her.
+                  {t('onboarding.loadBackupHelp')}
                 </p>
               </div>
             </div>
@@ -613,18 +614,18 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <span className="font-semibold text-primary">2</span>
                 </div>
                 <div>
-                  <h2 className="font-semibold">Passphrase festlegen</h2>
-                  <p className="text-sm text-muted-foreground">Schützt Ihre privaten Schlüssel</p>
+                  <h2 className="font-semibold">{t('onboarding.step2Title')}</h2>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.step2Subtitle')}</p>
                 </div>
               </div>
 
               <div className="space-y-4">
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Passphrase</label>
+                  <label className="text-sm font-medium mb-2 block">{t('common.passphrase')}</label>
                   <div className="relative">
                     <Input
                       type={showPassphrase ? 'text' : 'password'}
-                      placeholder="Starke Passphrase eingeben"
+                      placeholder={t('onboarding.passphrasePlaceholder')}
                       value={passphrase}
                       onChange={(e) => setPassphrase(e.target.value)}
                     />
@@ -638,10 +639,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 </div>
 
                 <div>
-                  <label className="text-sm font-medium mb-2 block">Passphrase bestätigen</label>
+                  <label className="text-sm font-medium mb-2 block">{t('onboarding.confirmPassphrase')}</label>
                   <Input
                     type={showPassphrase ? 'text' : 'password'}
-                    placeholder="Passphrase wiederholen"
+                    placeholder={t('onboarding.confirmPassphrasePlaceholder')}
                     value={confirmPassphrase}
                     onChange={(e) => setConfirmPassphrase(e.target.value)}
                   />
@@ -651,10 +652,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <div className="flex items-start gap-2">
                     <Lock className="h-4 w-4 text-yellow-500 mt-0.5" />
                     <div className="text-sm">
-                      <p className="font-medium text-yellow-500">Wichtig!</p>
+                      <p className="font-medium text-yellow-500">{t('onboarding.passphraseImportant')}</p>
                       <p className="text-muted-foreground">
-                        Diese Passphrase kann nicht zurückgesetzt werden. 
-                        Bewahren Sie sie sicher auf!
+                        {t('onboarding.passphraseWarning')}
                       </p>
                     </div>
                   </div>
@@ -670,8 +670,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <span className="font-semibold text-primary">3</span>
                 </div>
                 <div>
-                  <h2 className="font-semibold">Schlüssel generieren</h2>
-                  <p className="text-sm text-muted-foreground">Ihre verschlüsselte Identität</p>
+                  <h2 className="font-semibold">{t('onboarding.step3Title')}</h2>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.step3Subtitle')}</p>
                 </div>
               </div>
 
@@ -679,22 +679,22 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 <div className="text-center py-8">
                   <Key className="h-16 w-16 mx-auto mb-4 text-primary/50" />
                   <p className="text-muted-foreground mb-6">
-                    Es werden PGP- und I2P-Schlüssel generiert...
+                    {t('onboarding.generatingKeys')}
                   </p>
-                  <Button 
-                    onClick={generateKeys} 
+                  <Button
+                    onClick={generateKeys}
                     disabled={isGenerating}
                     className="w-full"
                   >
                     {isGenerating ? (
                       <>
                         <div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />
-                        Generiere...
+                        {t('common.generating')}
                       </>
                     ) : (
                       <>
                         <Key className="h-4 w-4 mr-2" />
-                        Schlüssel generieren
+                        {t('onboarding.generateKeys')}
                       </>
                     )}
                   </Button>
@@ -703,18 +703,18 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 <div className="space-y-4">
                   <div className="p-4 bg-green-500/10 rounded-lg text-center">
                     <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                    <p className="font-medium">Schlüssel erstellt!</p>
+                    <p className="font-medium">{t('onboarding.keysCreated')}</p>
                   </div>
-                  
+
                   {i2pIdentity && (
                     <div className="p-3 bg-muted rounded-lg">
-                      <p className="text-xs text-muted-foreground">Ihre I2P-Adresse</p>
+                      <p className="text-xs text-muted-foreground">{t('onboarding.yourI2pAddress')}</p>
                       <p className="text-sm font-mono break-all">{i2pIdentity.b32Address}</p>
                     </div>
                   )}
 
                   <div className="p-3 bg-muted rounded-lg">
-                    <p className="text-xs text-muted-foreground">Fingerabdruck</p>
+                    <p className="text-xs text-muted-foreground">{t('onboarding.fingerprint')}</p>
                     <p className="text-sm font-mono break-all">{keyPair.fingerprint}</p>
                   </div>
                 </div>
@@ -729,8 +729,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <span className="font-semibold text-primary">4</span>
                 </div>
                 <div>
-                  <h2 className="font-semibold">I2P-Netzwerk</h2>
-                  <p className="text-sm text-muted-foreground">i2pd ist erforderlich</p>
+                  <h2 className="font-semibold">{t('onboarding.step4Title')}</h2>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.step4Subtitle')}</p>
                 </div>
               </div>
 
@@ -739,11 +739,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 <div className="p-4 bg-red-500/10 rounded-lg border border-red-500/30">
                   <p className="text-sm text-red-500 font-medium flex items-center gap-2">
                     <AlertCircle className="h-4 w-4" />
-                    iOS nicht unterstützt
+                    {t('onboarding.iosNotSupported')}
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Diese App erfordert i2pd, das auf iOS nicht verfügbar ist. 
-                    Bitte verwenden Sie Android oder Desktop.
+                    {t('onboarding.iosWarning')}
                   </p>
                 </div>
               )}
@@ -776,7 +775,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                         className="inline-flex items-center gap-2 text-sm text-primary hover:underline mb-4"
                       >
                         <ExternalLink className="h-4 w-4" />
-                        i2pd herunterladen
+                        {t('onboarding.downloadI2pd')}
                       </a>
                     )}
 
@@ -790,22 +789,22 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                         {i2pTestStatus === 'testing' ? (
                           <>
                             <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-                            Teste Verbindung...
+                            {t('onboarding.testingConnection')}
                           </>
                         ) : i2pTestStatus === 'success' ? (
                           <>
                             <Check className="h-4 w-4 mr-2" />
-                            i2pd verbunden!
+                            {t('onboarding.i2pdConnected')}
                           </>
                         ) : i2pTestStatus === 'error' ? (
                           <>
                             <AlertCircle className="h-4 w-4 mr-2" />
-                            i2pd nicht gefunden - bitte installieren
+                            {t('onboarding.i2pdNotFound')}
                           </>
                         ) : (
                           <>
                             <RefreshCw className="h-4 w-4 mr-2" />
-                            Verbindung testen
+                            {t('onboarding.testConnection')}
                           </>
                         )}
                       </Button>
@@ -815,7 +814,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <div className="p-3 bg-red-500/10 rounded-lg">
                     <p className="text-sm text-red-500 flex items-center gap-2">
                       <AlertCircle className="h-4 w-4" />
-                      Plattform nicht unterstützt
+                      {t('onboarding.platformNotSupported')}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
                       {platformInfo.instructions.configHelp}
@@ -827,12 +826,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
                 <p className="text-sm text-yellow-500 font-medium flex items-center gap-2">
                   <Lock className="h-4 w-4" />
-                  {platformService.isElectron() ? 'i2pd integriert' : 'i2pd + SAM-Proxy erforderlich'}
+                  {platformService.isElectron() ? t('onboarding.i2pdIntegrated') : t('onboarding.i2pdSamRequired')}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {platformService.isElectron()
-                    ? 'i2pd ist direkt in SecuChat Desktop integriert und startet automatisch. Beim ersten Start bitte 5–10 Minuten warten.'
-                    : 'Für anonyme Kommunikation benötigen Sie i2pd (SAM auf Port 7656) und den SAM-Proxy (Port 7657). Sie können dies auch später in den Einstellungen konfigurieren.'}
+                    ? t('onboarding.i2pdIntegratedDesc')
+                    : t('onboarding.i2pdSamRequiredDesc')}
                 </p>
               </div>
             </div>
@@ -845,8 +844,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   <span className="font-semibold text-primary">5</span>
                 </div>
                 <div>
-                  <h2 className="font-semibold">Backup & Geräte</h2>
-                  <p className="text-sm text-muted-foreground">Speichern Sie Ihre Schlüssel</p>
+                  <h2 className="font-semibold">{t('onboarding.step5Title')}</h2>
+                  <p className="text-sm text-muted-foreground">{t('onboarding.step5Subtitle')}</p>
                 </div>
               </div>
 
@@ -854,9 +853,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 <div className="flex items-start gap-2">
                   <Lock className="h-4 w-4 text-yellow-500 mt-0.5" />
                   <div className="text-sm">
-                    <p className="font-medium text-yellow-500">Wichtig!</p>
+                    <p className="font-medium text-yellow-500">{t('onboarding.backupImportant')}</p>
                     <p className="text-muted-foreground">
-                      Ohne dieses Backup können Sie Ihre Nachrichten nicht wiederherstellen!
+                      {t('onboarding.backupWarning')}
                     </p>
                   </div>
                 </div>
@@ -865,27 +864,27 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="space-y-3">
                 <Button variant="outline" className="w-full" onClick={handleCopyPublicKey}>
                   {copied ? (
-                    <><Check className="h-4 w-4 mr-2" /> Kopiert!</>
+                    <><Check className="h-4 w-4 mr-2" /> {t('common.copied')}</>
                   ) : (
-                    <><Copy className="h-4 w-4 mr-2" /> Public Key kopieren</>
+                    <><Copy className="h-4 w-4 mr-2" /> {t('onboarding.copyPublicKey')}</>
                   )}
                 </Button>
 
                 <Button variant="outline" className="w-full" onClick={handleDownloadKeys}>
                   <Download className="h-4 w-4 mr-2" />
-                  Backup herunterladen
+                  {t('onboarding.downloadBackup')}
                 </Button>
 
                 <Button variant="secondary" className="w-full" onClick={() => setShowPairing(true)}>
                   <Smartphone className="h-4 w-4 mr-2" />
-                  Weiteres Gerät verbinden
+                  {t('onboarding.connectDevice')}
                 </Button>
               </div>
 
               {showPairing && i2pIdentity && keyPair && (
                 <div className="mt-4 p-4 border border-border rounded-lg">
-                  <p className="text-sm font-medium mb-2">QR-Code für neues Gerät</p>
-                  <DeviceQRCode 
+                  <p className="text-sm font-medium mb-2">{t('onboarding.qrForDevice')}</p>
+                  <DeviceQRCode
                     userData={{
                       username,
                       deviceName,
@@ -906,17 +905,17 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           <div className="flex justify-between mt-6">
             <Button variant="outline" onClick={handleBack} disabled={step === 1 || isGenerating}>
               <ChevronLeft className="h-4 w-4 mr-2" />
-              Zurück
+              {t('common.back')}
             </Button>
 
             {step < totalSteps ? (
               <Button onClick={step === 2 ? generateKeys : handleNext} disabled={!canProceed() || isGenerating}>
-                {step === 2 ? 'Generieren' : 'Weiter'}
+                {step === 2 ? t('onboarding.generate') : t('common.next')}
                 <ChevronRight className="h-4 w-4 ml-2" />
               </Button>
             ) : (
               <Button onClick={handleComplete}>
-                Fertigstellen
+                {t('onboarding.finish')}
                 <Check className="h-4 w-4 ml-2" />
               </Button>
             )}
@@ -929,17 +928,18 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
 // Device Scanner Component - uses external component
 function DeviceScanner({ onDevicePaired }: { onDevicePaired: () => void }) {
+  const { t } = useTranslation();
   void onDevicePaired;
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Scannen Sie den QR-Code von Ihrem anderen Gerät.
+        {t('onboarding.scanQrDescription')}
       </p>
       <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
         <QrCode className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-        <p className="text-muted-foreground">Kamera-Zugriff erforderlich</p>
+        <p className="text-muted-foreground">{t('onboarding.cameraRequired')}</p>
         <p className="text-sm text-muted-foreground mt-2">
-          Diese Funktion wird in Kürze verfügbar sein.
+          {t('onboarding.comingSoon')}
         </p>
       </div>
     </div>
@@ -948,6 +948,7 @@ function DeviceScanner({ onDevicePaired }: { onDevicePaired: () => void }) {
 
 // Manual Import Component - imports device keys as contact
 function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
+  const { t } = useTranslation();
   const [importData, setImportData] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
@@ -955,32 +956,32 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
   const handleImport = async () => {
     try {
       const parsed = JSON.parse(importData);
-      
+
       // Validate required fields according to Device-Import format
       if (!parsed.version || !parsed.metadata || !parsed.keys || !parsed.network) {
-        throw new Error('Ungültiges Format: version, metadata, keys und network erforderlich');
+        throw new Error(t('onboarding.invalidFormat'));
       }
-      
+
       // Validate version
       if (parsed.version !== '1.0') {
-        throw new Error(`Nicht unterstützte Version: ${parsed.version}`);
+        throw new Error(t('onboarding.unsupportedVersion', { version: parsed.version }));
       }
-      
+
       // Validate metadata
       if (!parsed.metadata.timestamp || !parsed.metadata.username || !parsed.metadata.deviceId) {
-        throw new Error('Ungültige metadata: timestamp, username und deviceId erforderlich');
+        throw new Error(t('onboarding.invalidMetadata'));
       }
-      
+
       // Validate keys
       if (!parsed.keys.pgpPublicKey || !parsed.keys.fingerprint || !parsed.keys.i2pAddress || !parsed.keys.i2pPublicKey) {
-        throw new Error('Ungültige keys: pgpPublicKey, fingerprint, i2pAddress und i2pPublicKey erforderlich');
+        throw new Error(t('onboarding.invalidKeys'));
       }
-      
+
       // Validate network
       if (!parsed.network.p2pIdentifier || !parsed.network.protocol || !parsed.network.i2pAddress) {
-        throw new Error('Ungültige network: p2pIdentifier, protocol und i2pAddress erforderlich');
+        throw new Error(t('onboarding.invalidNetwork'));
       }
-      
+
       // Create contact from imported device data
       const contact = {
         id: crypto.randomUUID(),
@@ -992,22 +993,22 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
         status: 'offline' as const,
         lastSeen: parsed.metadata.timestamp,
       };
-      
+
       // Save contact to storage
       await storageService.saveContact(contact);
-      
+
       setSuccess(true);
       setError(null);
-      
+
       // Complete after short delay to show success message
       setTimeout(() => {
         onComplete();
       }, 1500);
     } catch (err) {
       if (err instanceof SyntaxError) {
-        setError('Ungültiges JSON-Format. Bitte überprüfen Sie die Eingabe.');
+        setError(t('onboarding.invalidJson'));
       } else {
-        setError(err instanceof Error ? err.message : 'Fehler beim Import. Überprüfen Sie Ihre Backup-Datei.');
+        setError(err instanceof Error ? err.message : t('onboarding.importError'));
       }
       setSuccess(false);
     }
@@ -1021,23 +1022,23 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
         value={importData}
         onChange={(e) => setImportData(e.target.value)}
       />
-      
+
       {error && (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
-      
+
       {success && (
         <Alert className="bg-green-500/10 border-green-500/30">
           <Check className="h-4 w-4 text-green-500" />
-          <AlertDescription className="text-green-500">Kontakt erfolgreich importiert!</AlertDescription>
+          <AlertDescription className="text-green-500">{t('onboarding.contactImported')}</AlertDescription>
         </Alert>
       )}
 
       <Button onClick={handleImport} disabled={!importData || success} className="w-full">
-        {success ? 'Importiert!' : 'Importieren'}
+        {success ? t('common.imported') : t('common.import')}
       </Button>
     </div>
   );

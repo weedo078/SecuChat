@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Shield, AlertTriangle, Wifi } from 'lucide-react';
 
 interface AnonymityBadgeProps {
@@ -7,30 +8,32 @@ interface AnonymityBadgeProps {
 }
 
 export function AnonymityBadge({ level, size = 'sm', showText = false }: AnonymityBadgeProps) {
+  const { t } = useTranslation();
+
   const config = {
     green: {
       icon: Shield,
       color: 'text-green-500',
       bgColor: 'bg-green-500/10',
       borderColor: 'border-green-500/30',
-      text: 'Anonym',
-      description: 'IP durch I2P verborgen',
+      text: t('anonymity.anonymous'),
+      description: t('anonymity.anonymousDesc'),
     },
     yellow: {
       icon: Wifi,
       color: 'text-yellow-500',
       bgColor: 'bg-yellow-500/10',
       borderColor: 'border-yellow-500/30',
-      text: 'LAN',
-      description: 'Nur im lokalen Netzwerk',
+      text: t('anonymity.lan'),
+      description: t('anonymity.lanDesc'),
     },
     red: {
       icon: AlertTriangle,
       color: 'text-red-500',
       bgColor: 'bg-red-500/10',
       borderColor: 'border-red-500/30',
-      text: 'Nicht anonym',
-      description: 'IP-Adresse sichtbar',
+      text: t('anonymity.notAnonymous'),
+      description: t('anonymity.notAnonymousDesc'),
     },
   };
 

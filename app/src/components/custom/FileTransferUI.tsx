@@ -1,10 +1,11 @@
 /**
  * File Transfer UI Components
- * 
+ *
  * Accept/Reject dialog, progress bar, drag-and-drop.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { File, Download, Upload, Image as ImageIcon } from 'lucide-react';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -27,6 +28,7 @@ import {
  * File transfer accept/reject dialog
  */
 export function FileTransferDialog() {
+  const { t } = useTranslation();
   const [pendingOffer, setPendingOffer] = useState<{
     from: string;
     meta: FileTransferMeta;
@@ -69,9 +71,9 @@ export function FileTransferDialog() {
     <AlertDialog open={!!pendingOffer}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Datei empfangen</AlertDialogTitle>
+          <AlertDialogTitle>{t('fileTransfer.receiveFile')}</AlertDialogTitle>
           <AlertDialogDescription>
-            Möchtest du diese Datei empfangen?
+            {t('fileTransfer.receiveFileConfirm')}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
@@ -81,7 +83,7 @@ export function FileTransferDialog() {
             <div className="flex justify-center">
               <img
                 src={meta.thumbnailDataUrl}
-                alt="Vorschau"
+                alt={t('chat.preview')}
                 className="max-h-32 rounded-lg"
               />
             </div>
@@ -103,10 +105,10 @@ export function FileTransferDialog() {
         </div>
 
         <AlertDialogFooter>
-          <AlertDialogCancel onClick={handleReject}>Ablehnen</AlertDialogCancel>
+          <AlertDialogCancel onClick={handleReject}>{t('fileTransfer.reject')}</AlertDialogCancel>
           <AlertDialogAction onClick={handleAccept}>
             <Download className="h-4 w-4 mr-2" />
-            Empfangen
+            {t('fileTransfer.receive')}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -122,6 +124,7 @@ export function FileTransferProgressBar({
 }: {
   transferId: string;
 }) {
+  const { t } = useTranslation();
   const [progress, setProgress] = useState<FileTransferProgress | null>(null);
 
   useEffect(() => {
@@ -144,7 +147,7 @@ export function FileTransferProgressBar({
     <div className="space-y-1">
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>
-          {progress.direction === 'send' ? 'Senden' : 'Empfangen'}
+          {progress.direction === 'send' ? t('fileTransfer.sending') : t('fileTransfer.receiving')}
           {progress.status === 'completed' && ' ✓'}
           {progress.status === 'failed' && ' ✗'}
         </span>
@@ -165,6 +168,7 @@ export function FileDropZone({
   onFileDrop: (file: File) => void;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
 
@@ -206,7 +210,7 @@ export function FileDropZone({
         <div className="absolute inset-0 bg-primary/10 border-2 border-dashed border-primary rounded-lg flex items-center justify-center z-50">
           <div className="text-center">
             <Upload className="h-8 w-8 text-primary mx-auto mb-2" />
-            <p className="text-sm font-medium text-primary">Datei hier ablegen</p>
+            <p className="text-sm font-medium text-primary">{t('fileTransfer.dropFileHere')}</p>
           </div>
         </div>
       )}

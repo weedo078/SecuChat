@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Download, Share2, Check, Copy, Image as ImageIcon } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import QRCode from 'qrcode';
@@ -17,6 +18,7 @@ interface DeviceQRCodeProps {
 }
 
 export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
+  const { t } = useTranslation();
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [copied, setCopied] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -98,7 +100,7 @@ export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
 
   const copyToClipboard = async () => {
     if (!qrDataUrl) return;
-    
+
     try {
       const response = await fetch(qrDataUrl);
       const blob = await response.blob();
@@ -122,8 +124,8 @@ export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
 
       if (navigator.share && navigator.canShare({ files: [file] })) {
         await navigator.share({
-          title: 'SecureChat Gerät verbinden',
-          text: `Scanne diesen QR-Code, um ${userData.username} auf einem neuen Gerät hinzuzufügen.`,
+          title: t('deviceQr.connectDevice'),
+          text: t('deviceQr.scanToAdd', { name: userData.username }),
           files: [file],
         });
       } else {
@@ -141,14 +143,14 @@ export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
       <div className="flex justify-center">
         <div className="p-4 bg-white rounded-lg shadow-lg">
           {qrDataUrl ? (
-            <img 
-              src={qrDataUrl} 
-              alt="Device QR Code" 
+            <img
+              src={qrDataUrl}
+              alt="Device QR Code"
               className="w-64 h-64"
             />
           ) : (
             <div className="w-64 h-64 flex items-center justify-center bg-muted">
-              <span className="text-muted-foreground">Generiere...</span>
+              <span className="text-muted-foreground">{t('common.generating')}</span>
             </div>
           )}
         </div>
@@ -165,7 +167,7 @@ export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
 
       {/* Expiry Warning */}
       <p className="text-xs text-center text-yellow-500">
-        Dieser QR-Code ist 5 Minuten gültig.
+        {t('deviceQr.qrValidFor')}
       </p>
 
       {/* Action Buttons */}
@@ -180,14 +182,14 @@ export function DeviceQRCode({ userData }: DeviceQRCodeProps) {
         </Button>
         <Button variant="outline" size="sm" onClick={copyToClipboard}>
           {copied ? (
-            <><Check className="h-4 w-4 mr-2" /> Kopiert</>
+            <><Check className="h-4 w-4 mr-2" /> {t('common.copied')}</>
           ) : (
-            <><Copy className="h-4 w-4 mr-2" /> Kopieren</>
+            <><Copy className="h-4 w-4 mr-2" /> {t('common.copy')}</>
           )}
         </Button>
         <Button variant="outline" size="sm" onClick={shareImage}>
           <Share2 className="h-4 w-4 mr-2" />
-          Teilen
+          {t('common.share')}
         </Button>
       </div>
 

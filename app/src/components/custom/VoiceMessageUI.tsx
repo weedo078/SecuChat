@@ -1,11 +1,12 @@
 /**
  * Voice Message UI Components
- * 
+ *
  * Recording button with hold/toggle, waveform visualization,
  * playback with scrubbing.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Mic, Play, Pause, Square, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { voiceMessageManager, type VoiceMessage, type VoicePlaybackState } from '@/services/voiceMessages';
@@ -74,6 +75,7 @@ export function VoiceRecordButton({
   onRecorded: (message: VoiceMessage) => void;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
   const [liveWaveform, setLiveWaveform] = useState<number[]>([]);
@@ -144,7 +146,7 @@ export function VoiceRecordButton({
   if (isRecording) {
     return (
       <div className="flex items-center gap-2">
-        <Button variant="ghost" size="icon" onClick={cancelRecording} aria-label="Aufnahme abbrechen">
+        <Button variant="ghost" size="icon" onClick={cancelRecording} aria-label={t('voice.cancelRecording')}>
           <Trash2 className="h-4 w-4 text-destructive" />
         </Button>
         <div className="flex items-center gap-2 bg-muted rounded-full px-3 py-1">
@@ -161,7 +163,7 @@ export function VoiceRecordButton({
           size="icon"
           onClick={handleClick}
           onMouseUp={handleMouseUp}
-          aria-label="Aufnahme stoppen"
+          aria-label={t('voice.stopRecording')}
         >
           <Square className="h-4 w-4" />
         </Button>
@@ -178,7 +180,7 @@ export function VoiceRecordButton({
       onMouseDown={handleMouseDown}
       onMouseUp={handleMouseUp}
       onMouseLeave={() => { isHolding.current = false; }}
-      aria-label="Sprachnachricht aufnehmen"
+      aria-label={t('voice.recordVoice')}
     >
       <Mic className="h-5 w-5" />
     </Button>
@@ -199,6 +201,7 @@ export function VoiceMessagePlayer({
   duration: number;
   blob?: Blob;
 }) {
+  const { t } = useTranslation();
   const [playback, setPlayback] = useState<VoicePlaybackState | null>(null);
 
   useEffect(() => {
@@ -240,7 +243,7 @@ export function VoiceMessagePlayer({
         className="h-8 w-8 shrink-0"
         onClick={handlePlay}
         disabled={!blob}
-        aria-label={isPlaying ? 'Pause' : 'Abspielen'}
+        aria-label={isPlaying ? t('voice.pause') : t('voice.play')}
       >
         {isPlaying ? (
           <Pause className="h-4 w-4" />
