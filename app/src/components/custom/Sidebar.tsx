@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { MessageSquare, Settings, Plus, Search, Share2, UserPlus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -34,12 +35,13 @@ interface SidebarProps {
 }
 
 export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: SidebarProps) {
+  const { t } = useTranslation();
   const { chats, activeChat, setActiveChat, contacts, createChat, user, deleteChat } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
   const [showNewChatDialog, setShowNewChatDialog] = useState(false);
   const [chatToDelete, setChatToDelete] = useState<string | null>(null);
 
-  const filteredChats = chats.filter(chat => 
+  const filteredChats = chats.filter(chat =>
     chat.contact?.name?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
@@ -57,18 +59,18 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
     if (!timestamp) return '';
     const date = new Date(timestamp);
     const now = new Date();
-    
+
     if (date.toDateString() === now.toDateString()) {
-      return date.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+      return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
     }
-    
+
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
     if (date.toDateString() === yesterday.toDateString()) {
-      return 'Gestern';
+      return t('sidebar.yesterday');
     }
-    
-    return date.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
+
+    return date.toLocaleDateString(undefined, { day: '2-digit', month: '2-digit' });
   };
 
   const getInitials = (name: string) => {
@@ -85,23 +87,23 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       {/* Header */}
       <div className="p-4 border-b border-border">
         <div className="flex items-center justify-between mb-4">
-          <h2 className="font-semibold text-lg">Chats</h2>
+          <h2 className="font-semibold text-lg">{t('sidebar.chats')}</h2>
           <div className="flex gap-1">
             <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
               <DialogTrigger asChild>
-                <Button 
-                  variant="ghost" 
+                <Button
+                  variant="ghost"
                   size="icon"
-                  aria-label="Neuen Chat erstellen"
+                  aria-label={t('sidebar.createNewChat')}
                 >
                   <Plus className="h-5 w-5" aria-hidden="true" />
                 </Button>
               </DialogTrigger>
               <DialogContent>
                 <DialogHeader>
-                  <DialogTitle>Neuer Chat</DialogTitle>
+                  <DialogTitle>{t('sidebar.newChat')}</DialogTitle>
                   <DialogDescription>
-                    Wählen Sie einen Kontakt aus, um einen neuen Chat zu starten.
+                    {t('sidebar.newChatDescription')}
                   </DialogDescription>
                 </DialogHeader>
                 <ScrollArea className="max-h-[300px] mt-4">
@@ -111,7 +113,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                         key={contact.id}
                         onClick={() => handleNewChat(contact)}
                         className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors text-left"
-                        aria-label={`Chat mit ${contact.name} starten`}
+                        aria-label={t('sidebar.startChatWith', { name: contact.name })}
                       >
                         <Avatar className="h-10 w-10">
                           <AvatarFallback>{getInitials(contact.name)}</AvatarFallback>
@@ -126,67 +128,67 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                     ))}
                     {contacts.filter(c => !chats.find(ch => ch.contactId === c.id)).length === 0 && (
                       <p className="text-center text-muted-foreground py-4">
-                        Keine weiteren Kontakte verfügbar
+                        {t('sidebar.noMoreContacts')}
                       </p>
                     )}
                   </div>
                 </ScrollArea>
               </DialogContent>
             </Dialog>
-            <Button 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={onAddContact}
-              aria-label="Kontakt hinzufügen"
+              aria-label={t('sidebar.addContact')}
             >
               <UserPlus className="h-5 w-5" aria-hidden="true" />
             </Button>
-            <Button 
-              variant="ghost" 
-              size="icon" 
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={onShareContact}
-              aria-label="Kontakt teilen"
+              aria-label={t('sidebar.shareContact')}
             >
               <Share2 className="h-5 w-5" aria-hidden="true" />
             </Button>
           </div>
         </div>
-        
+
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" aria-hidden="true" />
           <Input
-            placeholder="Chats durchsuchen..."
+            placeholder={t('sidebar.searchChats')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-9"
-            aria-label="Chats durchsuchen"
+            aria-label={t('sidebar.searchChats')}
           />
         </div>
       </div>
 
       {/* Chat List */}
-      <ScrollArea className="flex-1" role="navigation" aria-label="Chat-Liste">
+      <ScrollArea className="flex-1" role="navigation" aria-label={t('chat.chatList')}>
         <div className="p-2">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <MessageSquare className="h-12 w-12 mx-auto mb-3 opacity-50" aria-hidden="true" />
-              <p>Keine Chats vorhanden</p>
-              <p className="text-sm">Fügen Sie Kontakte hinzu, um zu starten</p>
+              <p>{t('sidebar.noChats')}</p>
+              <p className="text-sm">{t('sidebar.addContactsToStart')}</p>
             </div>
           ) : (
             filteredChats.map(chat => (
               <div
                 key={chat.id}
                 className={`group w-full flex items-center gap-3 p-3 rounded-lg transition-colors ${
-                  activeChat?.id === chat.id 
-                    ? 'bg-primary text-primary-foreground' 
+                  activeChat?.id === chat.id
+                    ? 'bg-primary text-primary-foreground'
                     : 'hover:bg-accent'
                 }`}
               >
                 <button
                   onClick={() => handleChatClick(chat)}
                   className="flex-1 flex items-center gap-3 text-left"
-                  aria-label={`Chat mit ${chat.contact?.name}, Status: ${chat.contact?.status === 'online' ? 'Online' : 'Offline'}${chat.unreadCount > 0 ? `, ${chat.unreadCount} ungelesene Nachrichten` : ''}`}
+                  aria-label={`${chat.contact?.name}, ${chat.contact?.status === 'online' ? t('common.online') : t('common.offline')}${chat.unreadCount > 0 ? `, ${t('sidebar.unreadMessages', { count: chat.unreadCount })}` : ''}`}
                   aria-current={activeChat?.id === chat.id ? 'page' : undefined}
                 >
                 <div className="relative">
@@ -194,9 +196,9 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                     <AvatarFallback>{getInitials(chat.contact?.name || '??')}</AvatarFallback>
                   </Avatar>
                   {chat.contact?.status === 'online' && (
-                    <span 
+                    <span
                       className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-card"
-                      aria-label="Online"
+                      aria-label={t('common.online')}
                       role="status"
                     />
                   )}
@@ -212,13 +214,13 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                   </div>
                   <div className="flex items-center justify-between">
                     <p className={`text-sm truncate ${activeChat?.id === chat.id ? 'text-primary-foreground/70' : 'text-muted-foreground'}`}>
-                      {chat.contact?.status === 'online' ? 'Online' : 'Offline'}
+                      {chat.contact?.status === 'online' ? t('common.online') : t('common.offline')}
                     </p>
                     {chat.unreadCount > 0 && (
                       <Badge
                         variant={activeChat?.id === chat.id ? 'secondary' : 'default'}
                         className="text-xs"
-                        aria-label={`${chat.unreadCount} ungelesene Nachrichten`}
+                        aria-label={t('sidebar.unreadMessages', { count: chat.unreadCount })}
                       >
                         {chat.unreadCount}
                       </Badge>
@@ -236,7 +238,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                     e.stopPropagation();
                     setChatToDelete(chat.id);
                   }}
-                  aria-label={`Chat mit ${chat.contact?.name} löschen`}
+                  aria-label={t('sidebar.deleteChat', { name: chat.contact?.name })}
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>
@@ -250,24 +252,24 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       <AlertDialog open={!!chatToDelete} onOpenChange={() => setChatToDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Chat löschen?</AlertDialogTitle>
+            <AlertDialogTitle>{t('chat.deleteChatConfirm')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Möchtest du diesen Chat wirklich löschen? Alle Nachrichten werden unwiderruflich gelöscht.
+              {t('chat.deleteChatDescription')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
-            <AlertDialogAction 
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
               onClick={async () => {
                 if (chatToDelete) {
                   await deleteChat(chatToDelete);
                   setChatToDelete(null);
-                  toast.success('Chat gelöscht');
+                  toast.success(t('chat.chatDeleted'));
                 }
               }}
               className="bg-destructive"
             >
-              Löschen
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -276,20 +278,20 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       {/* Footer */}
       <div className="p-4 border-t border-border">
         <div className="flex items-center justify-between">
-          <Button 
-            variant="ghost" 
-            size="sm" 
-            className="flex-1" 
+          <Button
+            variant="ghost"
+            size="sm"
+            className="flex-1"
             onClick={onSettingsClick}
           >
             <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
-            Einstellungen
+            {t('common.settings')}
           </Button>
         </div>
         {user && (
           <div className="mt-3 pt-3 border-t border-border">
             <div className="flex items-center gap-3">
-              <Avatar className="h-8 w-8" aria-label={`Mein Avatar: ${user.username}`}>
+              <Avatar className="h-8 w-8" aria-label={t('sidebar.myAvatar', { name: user.username })}>
                 <AvatarFallback>{getInitials(user.username)}</AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">

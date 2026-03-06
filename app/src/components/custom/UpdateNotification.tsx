@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/button';
 import { Download, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -10,6 +11,7 @@ interface UpdateState {
 }
 
 export function UpdateNotification() {
+  const { t } = useTranslation();
   const [updateState, setUpdateState] = useState<UpdateState>({ status: 'idle' });
   const [isVisible, setIsVisible] = useState(false);
 
@@ -89,7 +91,7 @@ export function UpdateNotification() {
         {updateState.status === 'checking' && (
           <div className="flex items-center gap-3 text-muted-foreground">
             <RefreshCw className="h-4 w-4 animate-spin" />
-            <span className="text-sm">Suche nach Updates...</span>
+            <span className="text-sm">{t('update.checking')}</span>
           </div>
         )}
 
@@ -98,18 +100,18 @@ export function UpdateNotification() {
             <div className="flex items-start gap-3">
               <Download className="h-5 w-5 text-primary mt-0.5" />
               <div className="flex-1">
-                <p className="font-medium text-sm">Update verfügbar</p>
+                <p className="font-medium text-sm">{t('update.available')}</p>
                 <p className="text-xs text-muted-foreground">
-                  Version {updateState.version} ist verfügbar. Möchten Sie jetzt aktualisieren?
+                  {t('update.availableDesc', { version: updateState.version })}
                 </p>
               </div>
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" size="sm" onClick={handleDismiss}>
-                Später
+                {t('common.later')}
               </Button>
               <Button size="sm" onClick={handleDownload}>
-                Herunterladen
+                {t('common.download')}
               </Button>
             </div>
           </div>
@@ -118,11 +120,11 @@ export function UpdateNotification() {
         {updateState.status === 'downloading' && (
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
-              <span>Update wird heruntergeladen...</span>
+              <span>{t('update.downloading')}</span>
               <span className="text-muted-foreground">{updateState.progress?.toFixed(0)}%</span>
             </div>
             <div className="h-2 bg-secondary rounded-full overflow-hidden">
-              <div 
+              <div
                 className="h-full bg-primary transition-all duration-300"
                 style={{ width: `${updateState.progress || 0}%` }}
               />
@@ -135,18 +137,18 @@ export function UpdateNotification() {
             <div className="flex items-start gap-3">
               <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
               <div className="flex-1">
-                <p className="font-medium text-sm">Update bereit</p>
+                <p className="font-medium text-sm">{t('update.ready')}</p>
                 <p className="text-xs text-muted-foreground">
-                  Version {updateState.version} wurde heruntergeladen. Neu starten zum Installieren?
+                  {t('update.readyDesc', { version: updateState.version })}
                 </p>
               </div>
             </div>
             <div className="flex gap-2 justify-end">
               <Button variant="ghost" size="sm" onClick={handleDismiss}>
-                Später
+                {t('common.later')}
               </Button>
               <Button size="sm" onClick={handleInstall}>
-                Jetzt neu starten
+                {t('update.restartNow')}
               </Button>
             </div>
           </div>
@@ -156,7 +158,7 @@ export function UpdateNotification() {
           <div className="flex items-start gap-3">
             <AlertCircle className="h-5 w-5 text-destructive mt-0.5" />
             <div>
-              <p className="font-medium text-sm">Update-Fehler</p>
+              <p className="font-medium text-sm">{t('update.error')}</p>
               <p className="text-xs text-muted-foreground">{updateState.error}</p>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { UserPlus, Trash2, Search, User, Network } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -33,6 +34,7 @@ interface ContactManagerProps {
 }
 
 export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
+  const { t } = useTranslation();
   const { contacts, addContact, removeContact, i2pStatus } = useApp();
   const [showAddDialog, setShowAddDialog] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState<string | null>(null);
@@ -78,9 +80,9 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
       <Dialog open={isOpen} onOpenChange={onClose}>
         <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
           <DialogHeader>
-            <DialogTitle>Kontakte verwalten</DialogTitle>
+            <DialogTitle>{t('contacts.title')}</DialogTitle>
             <DialogDescription>
-              Verwalten Sie Ihre Kontakte und deren Verschlüsselungsschlüssel.
+              {t('contacts.description')}
             </DialogDescription>
           </DialogHeader>
 
@@ -88,7 +90,7 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
             <div className="relative flex-1">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Kontakte suchen..."
+                placeholder={t('contacts.searchContacts')}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className="pl-9"
@@ -96,7 +98,7 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
             </div>
             <Button onClick={() => setShowAddDialog(true)}>
               <UserPlus className="h-4 w-4 mr-2" />
-              Hinzufügen
+              {t('common.add')}
             </Button>
           </div>
 
@@ -105,7 +107,7 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
               {filteredContacts.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground">
                   <User className="h-12 w-12 mx-auto mb-3 opacity-50" />
-                  <p>Keine Kontakte gefunden</p>
+                  <p>{t('contacts.noContacts')}</p>
                 </div>
               ) : (
                 filteredContacts.map(contact => (
@@ -122,9 +124,9 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
                         {contact.status === 'online' && (
                           <Badge variant="secondary" className="text-xs">Online</Badge>
                         )}
-                        <AnonymityBadge 
-                          level={getContactAnonymityLevel(contact)} 
-                          size="sm" 
+                        <AnonymityBadge
+                          level={getContactAnonymityLevel(contact)}
+                          size="sm"
                         />
                         {contact.i2pAddress && (
                           <Badge variant="outline" className="text-xs">
@@ -158,24 +160,24 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
         </DialogContent>
       </Dialog>
 
-      <AddContactDialog 
-        isOpen={showAddDialog} 
-        onClose={() => setShowAddDialog(false)} 
-        onContactAdded={handleContactAdded} 
+      <AddContactDialog
+        isOpen={showAddDialog}
+        onClose={() => setShowAddDialog(false)}
+        onContactAdded={handleContactAdded}
       />
 
       <AlertDialog open={!!showDeleteDialog} onOpenChange={() => setShowDeleteDialog(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Kontakt löschen?</AlertDialogTitle>
+            <AlertDialogTitle>{t('contacts.deleteContact')}</AlertDialogTitle>
             <AlertDialogDescription>
-              Dieser Kontakt wird dauerhaft gelöscht. Alle Nachrichten werden ebenfalls entfernt.
+              {t('contacts.deleteContactDesc')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Abbrechen</AlertDialogCancel>
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
             <AlertDialogAction onClick={handleDelete} className="bg-destructive">
-              Löschen
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -183,5 +185,3 @@ export function ContactManager({ isOpen, onClose }: ContactManagerProps) {
     </>
   );
 }
-
-

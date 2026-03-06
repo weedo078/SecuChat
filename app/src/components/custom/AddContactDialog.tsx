@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -47,6 +48,7 @@ interface ContactDataLegacy {
 }
 
 export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab = 'import' }: AddContactDialogProps) {
+  const { t } = useTranslation();
   const { user, i2pStatus, addContact, updateContact } = useApp();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
 
@@ -72,13 +74,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     try {
       const data = JSON.parse(raw);
       console.log('[Import] Parsed JSON keys:', Object.keys(data));
-      
+
       // New format (v1.0)
       if (data.version === '1.0' && data.metadata && data.keys && data.network) {
         console.log('[Import] Recognized as v1.0 format');
         return data as ContactData;
       }
-      
+
       // Legacy compact format (v2)
       if (data.v === '2' && data.t === 'sc') {
         console.log('[Import] Recognized as legacy v2 format, converting...');
@@ -101,7 +103,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
           },
         };
       }
-      
+
       console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
       return null;
     } catch (e) {
@@ -136,11 +138,11 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         setImportedContact(contact);
       } else {
         console.warn('[Import] Failed to parse file');
-        setImportError('Ungültige Datei. Bitte eine .secuchat Kontaktdatei importieren.');
+        setImportError(t('addContact.invalidFile'));
       }
     } catch (error) {
       console.error('[Import] Exception:', error);
-      setImportError('Fehler beim Import: ' + (error instanceof Error ? error.message : 'Unbekannter Fehler'));
+      setImportError(t('addContact.importError', { error: error instanceof Error ? error.message : 'Unknown error' }));
     } finally {
       setIsImporting(false);
       // Reset input so same file can be selected again
@@ -157,7 +159,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         const validation = await cryptoService.validatePublicKey(importedContact.keys.pgpPublicKey);
         console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
-          setImportError('Ungültiger PGP Public Key in der Kontaktdatei');
+          setImportError(t('addContact.invalidPgpKey'));
           return;
         }
       } else {
@@ -235,14 +237,14 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   const addManualContact = async () => {
     if (!manualName || !manualI2p || !manualPgp) {
-      setManualError('Alle Felder sind erforderlich');
+      setManualError(t('addContact.allFieldsRequired'));
       return;
     }
     setIsAddingContact(true);
     try {
       const validation = await cryptoService.validatePublicKey(manualPgp);
       if (!validation.valid) {
-        setManualError('Ungültiger PGP Public Key');
+        setManualError(t('addContact.invalidPgpKeyManual'));
         return;
       }
       const contact: Contact = {
@@ -285,16 +287,16 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   // ── Anonymity display ──────────────────────────────────────────────────────
 
   const anonymity = i2pStatus?.samConnected
-    ? { icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />, text: 'Anonym (I2P)', color: 'text-green-500', description: 'Ihre IP-Adresse ist durch I2P verborgen' }
-    : { icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />, text: 'Nicht verbunden', color: 'text-red-500', description: 'i2pd nicht verbunden — Kontakt wird gespeichert, aber nicht erreichbar' };
+    ? { icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />, text: t('addContact.anonymous'), color: 'text-green-500', description: t('addContact.anonymousDesc') }
+    : { icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />, text: t('addContact.notConnected'), color: 'text-red-500', description: t('addContact.notConnectedDesc') };
 
   return (
     <Dialog open={isOpen} onOpenChange={resetAndClose}>
       <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Kontakt hinzufügen</DialogTitle>
+          <DialogTitle>{t('addContact.title')}</DialogTitle>
           <DialogDescription>
-            Kontakt über .secuchat Datei oder manuell hinzufügen.
+            {t('addContact.description')}
           </DialogDescription>
         </DialogHeader>
 
@@ -311,15 +313,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
           <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="import">
               <Upload className="h-4 w-4 mr-2" aria-hidden="true" />
-              Importieren
+              {t('addContact.importTab')}
             </TabsTrigger>
             <TabsTrigger value="share">
               <FileDown className="h-4 w-4 mr-2" aria-hidden="true" />
-              Meine Datei
+              {t('addContact.shareTab')}
             </TabsTrigger>
             <TabsTrigger value="manual">
               <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
-              Manuell
+              {t('addContact.manualTab')}
             </TabsTrigger>
           </TabsList>
 
@@ -330,15 +332,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   className="w-full p-6 rounded-lg border-2 border-dashed border-border hover:border-primary hover:bg-accent transition-colors flex flex-col items-center gap-3"
-                  aria-label=".secuchat Kontaktdatei importieren"
+                  aria-label={t('addContact.importSecuchat')}
                 >
                   <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
                     <Upload className="h-6 w-6 text-primary" aria-hidden="true" />
                   </div>
                   <div className="text-center">
-                    <p className="font-medium">Kontaktdatei öffnen</p>
+                    <p className="font-medium">{t('addContact.openContactFile')}</p>
                     <p className="text-sm text-muted-foreground mt-1">
-                      .secuchat Datei vom Kontakt importieren
+                      {t('addContact.importSecuchat')}
                     </p>
                   </div>
                 </button>
@@ -354,7 +356,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 {isImporting && (
                   <div className="text-center py-4">
                     <div className="h-6 w-6 border-2 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-                    <p className="text-sm text-muted-foreground">Lese Datei...</p>
+                    <p className="text-sm text-muted-foreground">{t('addContact.readingFile')}</p>
                   </div>
                 )}
 
@@ -369,14 +371,14 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
                   <div className="flex items-center gap-2 mb-3">
                     <Check className="h-5 w-5 text-green-500" aria-hidden="true" />
-                    <p className="font-medium text-green-500">Kontakt erkannt</p>
+                    <p className="font-medium text-green-500">{t('addContact.contactDetected')}</p>
                   </div>
                   <div className="space-y-1.5 text-sm">
                     <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.metadata.username}</span></p>
                     <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.network.i2pAddress.slice(0, 40)}…</p>
                     <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.keys.fingerprint.slice(0, 16)}…</p>
                     {!importedContact.keys.pgpPublicKey && (
-                      <p className="text-xs text-yellow-500 mt-2">Kein PGP-Key in der Datei — verschlüsselte Kommunikation erst nach Schlüsselaustausch möglich.</p>
+                      <p className="text-xs text-yellow-500 mt-2">{t('addContact.noPgpKey')}</p>
                     )}
                   </div>
                 </div>
@@ -389,13 +391,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
                 <div className="flex gap-2">
                   <Button variant="outline" className="flex-1" onClick={() => { setImportedContact(null); setImportError(null); }} disabled={isAddingContact}>
-                    Zurück
+                    {t('common.back')}
                   </Button>
                   <Button className="flex-1" onClick={addImportedContact} disabled={isAddingContact}>
                     {isAddingContact ? (
-                      <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Wird hinzugefügt…</>
+                      <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />{t('addContact.adding')}</>
                     ) : (
-                      <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />Hinzufügen</>
+                      <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />{t('common.add')}</>
                     )}
                   </Button>
                 </div>
@@ -410,18 +412,16 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 {/* I2P address guard */}
                 {!user.i2pSamDestination ? (
                   <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm space-y-1" role="alert">
-                    <p className="font-medium text-destructive">Export nicht möglich — I2P noch nie verbunden</p>
+                    <p className="font-medium text-destructive">{t('addContact.exportNotPossible')}</p>
                     <p className="text-destructive/80 text-xs">
-                      Deine I2P-Adresse wird erst vergeben wenn du dich <strong>einmalig mit I2P verbindest</strong>.
-                      Verbinde dich zuerst (Einstellungen → I2P → Verbinden) und exportiere danach die Datei.
+                      {t('addContact.exportNotPossibleDesc')}
                     </p>
                   </div>
                 ) : !i2pStatus?.samConnected ? (
                   <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-sm space-y-1" role="status">
-                    <p className="font-medium text-yellow-600 dark:text-yellow-400">I2P aktuell nicht verbunden</p>
+                    <p className="font-medium text-yellow-600 dark:text-yellow-400">{t('addContact.i2pNotConnected')}</p>
                     <p className="text-yellow-600/80 dark:text-yellow-400/80 text-xs">
-                      Die gespeicherte Adresse aus der letzten Session wird exportiert.
-                      Für die aktuellste Adresse verbinde dich zuerst mit I2P.
+                      {t('addContact.i2pNotConnectedDesc')}
                     </p>
                   </div>
                 ) : null}
@@ -434,17 +434,17 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
                 <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pSamDestination}>
                   <Download className="h-4 w-4 mr-2" aria-hidden="true" />
-                  {user.username}.secuchat speichern
+                  {t('addContact.saveFile', { name: user.username })}
                 </Button>
 
                 {user.i2pSamDestination && (
                   <p className="text-xs text-muted-foreground text-center">
-                    Schick diese Datei deinem Kontakt — er kann sie direkt importieren.
+                    {t('addContact.sendFileToContact')}
                   </p>
                 )}
               </>
             ) : (
-              <p className="text-sm text-muted-foreground text-center py-8">Kein Profil gefunden.</p>
+              <p className="text-sm text-muted-foreground text-center py-8">{t('addContact.noProfile')}</p>
             )}
           </TabsContent>
 
@@ -454,13 +454,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
               <div>
                 <label className="text-sm font-medium mb-1 block">Name</label>
                 <Input
-                  placeholder="Name des Kontakts"
+                  placeholder={t('addContact.contactName')}
                   value={manualName}
                   onChange={(e) => setManualName(e.target.value)}
                 />
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">I2P-Adresse</label>
+                <label className="text-sm font-medium mb-1 block">{t('addContact.i2pAddress')}</label>
                 <Input
                   placeholder="xxxx...xxxx.b32.i2p"
                   value={manualI2p}
@@ -469,7 +469,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 />
               </div>
               <div>
-                <label className="text-sm font-medium mb-1 block">PGP Public Key</label>
+                <label className="text-sm font-medium mb-1 block">{t('addContact.pgpPublicKey')}</label>
                 <textarea
                   className="w-full h-32 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
                   placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
@@ -483,9 +483,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 disabled={!manualName || !manualI2p || !manualPgp || isAddingContact}
               >
                 {isAddingContact ? (
-                  <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />Wird hinzugefügt…</>
+                  <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />{t('addContact.adding')}</>
                 ) : (
-                  <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />Kontakt hinzufügen</>
+                  <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />{t('addContact.addContact')}</>
                 )}
               </Button>
             </div>

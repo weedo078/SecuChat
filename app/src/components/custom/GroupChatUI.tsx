@@ -1,10 +1,11 @@
 /**
  * Group Chat UI Components
- * 
+ *
  * Group creation dialog, member list, group chat view.
  */
 
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Users, Crown, LogOut, UserMinus, UserPlus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,6 +39,7 @@ export function CreateGroupDialog({
   contacts: Contact[];
   onCreated: (group: Group) => void;
 }) {
+  const { t } = useTranslation();
   const [groupName, setGroupName] = useState('');
   const [selectedContacts, setSelectedContacts] = useState<Set<string>>(new Set());
   const [isCreating, setIsCreating] = useState(false);
@@ -46,17 +48,17 @@ export function CreateGroupDialog({
     const next = new Set(selectedContacts);
     if (next.has(id)) next.delete(id);
     else if (next.size < 9) next.add(id); // Max 9 + self = 10
-    else toast.error('Maximum 10 Mitglieder pro Gruppe');
+    else toast.error(t('group.maxMembers'));
     setSelectedContacts(next);
   };
 
   const handleCreate = async () => {
     if (!groupName.trim()) {
-      toast.error('Bitte Gruppenname eingeben');
+      toast.error(t('group.enterGroupName'));
       return;
     }
     if (selectedContacts.size === 0) {
-      toast.error('Mindestens einen Kontakt auswählen');
+      toast.error(t('group.selectAtLeastOne'));
       return;
     }
 
@@ -78,9 +80,9 @@ export function CreateGroupDialog({
       onOpenChange(false);
       setGroupName('');
       setSelectedContacts(new Set());
-      toast.success(`Gruppe "${group.name}" erstellt`);
+      toast.success(t('group.groupCreated', { name: group.name }));
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Fehler beim Erstellen');
+      toast.error(err instanceof Error ? err.message : t('group.createError'));
     } finally {
       setIsCreating(false);
     }
@@ -95,23 +97,23 @@ export function CreateGroupDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Users className="h-5 w-5" />
-            Neue Gruppe erstellen
+            {t('group.createGroup')}
           </DialogTitle>
           <DialogDescription>
-            Wähle einen Namen und Mitglieder (max. 10)
+            {t('group.selectNameAndMembers')}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
           <Input
-            placeholder="Gruppenname"
+            placeholder={t('group.groupName')}
             value={groupName}
             onChange={e => setGroupName(e.target.value)}
           />
 
           <div>
             <p className="text-sm text-muted-foreground mb-2">
-              Kontakte auswählen ({selectedContacts.size}/9)
+              {t('group.selectContacts', { count: selectedContacts.size })}
             </p>
             <ScrollArea className="h-48">
               <div className="space-y-2">
@@ -132,7 +134,7 @@ export function CreateGroupDialog({
                 ))}
                 {contacts.length === 0 && (
                   <p className="text-sm text-muted-foreground text-center py-4">
-                    Keine Kontakte vorhanden
+                    {t('group.noContacts')}
                   </p>
                 )}
               </div>
@@ -142,10 +144,10 @@ export function CreateGroupDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Abbrechen
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={isCreating || !groupName.trim() || selectedContacts.size === 0}>
-            {isCreating ? 'Erstelle...' : 'Gruppe erstellen'}
+            {isCreating ? t('group.creating') : t('group.create')}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -169,6 +171,7 @@ export function GroupMemberList({
   onRemoveMember?: (contactId: string) => void;
   onLeave?: () => void;
 }) {
+  const { t } = useTranslation();
   const isAdmin = group.members.find(m => m.contactId === selfId)?.role === 'admin';
 
   const getInitials = (name: string) =>
@@ -177,11 +180,11 @@ export function GroupMemberList({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">{group.members.length} Mitglieder</p>
+        <p className="text-sm font-medium">{t('group.members', { count: group.members.length })}</p>
         {isAdmin && onAddMember && (
           <Button variant="ghost" size="sm" onClick={onAddMember}>
             <UserPlus className="h-4 w-4 mr-1" />
-            Hinzufügen
+            {t('common.add')}
           </Button>
         )}
       </div>
@@ -202,7 +205,7 @@ export function GroupMemberList({
                   </Badge>
                 )}
                 {member.contactId === selfId && (
-                  <span className="text-xs text-muted-foreground">(Du)</span>
+                  <span className="text-xs text-muted-foreground">{t('group.you')}</span>
                 )}
               </div>
               {isAdmin && member.contactId !== selfId && onRemoveMember && (
@@ -223,7 +226,7 @@ export function GroupMemberList({
       {onLeave && (
         <Button variant="outline" size="sm" className="w-full text-destructive" onClick={onLeave}>
           <LogOut className="h-4 w-4 mr-2" />
-          Gruppe verlassen
+          {t('group.leaveGroup')}
         </Button>
       )}
     </div>

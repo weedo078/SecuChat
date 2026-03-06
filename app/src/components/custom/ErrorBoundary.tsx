@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import i18n from '@/i18n';
 
 interface Props {
   children: ReactNode;
@@ -15,7 +16,7 @@ interface State {
 /**
  * Error Boundary Component to catch errors in child components
  * and display a fallback UI instead of crashing the entire app.
- * 
+ *
  * Note: Error Boundaries must be class components as functional
  * components cannot implement componentDidCatch.
  */
@@ -44,15 +45,17 @@ export class ErrorBoundary extends Component<Props, State> {
         return this.props.fallback;
       }
 
+      const t = i18n.t.bind(i18n);
+
       // Default fallback UI
       return (
         <div className="min-h-[200px] flex flex-col items-center justify-center p-6 text-center">
           <AlertTriangle className="h-12 w-12 text-destructive mb-4" />
           <h2 className="text-lg font-semibold mb-2">
-            Etwas ist schiefgelaufen
+            {t('errorBoundary.title')}
           </h2>
           <p className="text-sm text-muted-foreground mb-4 max-w-md">
-            Ein unerwarteter Fehler ist aufgetreten. Bitte versuchen Sie es erneut.
+            {t('errorBoundary.description')}
           </p>
           {this.state.error && (
             <pre className="text-xs text-muted-foreground bg-muted p-2 rounded mb-4 max-w-full overflow-auto">
@@ -60,7 +63,7 @@ export class ErrorBoundary extends Component<Props, State> {
             </pre>
           )}
           <Button onClick={this.handleReset} variant="outline">
-            Erneut versuchen
+            {t('common.retry')}
           </Button>
         </div>
       );
