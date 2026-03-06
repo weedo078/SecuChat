@@ -4,10 +4,12 @@ on:
   push:
     branches: [main]
 
-# Prevent concurrent version bumps
+# Batch concurrent merges: if another PR is merged while this job is waiting,
+# the running job gets cancelled and the new one takes over.
+# Only the last merge in a burst will produce a release.
 concurrency:
   group: version-bump
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   bump:
@@ -21,6 +23,11 @@ jobs:
       actions: write
 
     steps:
+      - name: Wait for potential additional merges
+        run: |
+          echo "Waiting 5 minutes to batch any concurrent PR merges..."
+          sleep 300
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
