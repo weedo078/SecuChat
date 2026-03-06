@@ -1,4 +1,4 @@
-name: PR Build
+name: PR
 
 on:
   pull_request:
@@ -12,9 +12,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Lint
+        working-directory: ./app
+        run: npm run lint
+
+      - name: Type Check
+        working-directory: ./app
+        run: npx tsc --noEmit
+
+  build-web:
+    name: Build Web App
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build
+        working-directory: ./app
+        run: npm run build
+
   build-windows-pr:
     name: Build Windows PR
     runs-on: windows-latest
+    needs: build-web
     if: github.event.pull_request.draft == false
     permissions:
       pull-requests: write
@@ -29,19 +77,19 @@ jobs:
           # Get latest tag
           LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
           echo "Latest tag: $LATEST_TAG"
-          
+
           # Parse version (remove 'v' prefix)
           VERSION=${LATEST_TAG#v}
           MAJOR=$(echo $VERSION | cut -d. -f1)
           MINOR=$(echo $VERSION | cut -d. -f2)
           PATCH=$(echo $VERSION | cut -d. -f3)
-          
+
           # Increment patch
           NEW_PATCH=$((PATCH + 1))
           NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
-          
+
           PR_NUM=${{ github.event.pull_request.number }}
-          
+
           echo "New version: ${NEW_VERSION}-beta (PR${PR_NUM})"
           echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
           echo "pr_num=${PR_NUM}" >> $GITHUB_OUTPUT
@@ -108,16 +156,16 @@ jobs:
             const version = '${{ steps.version.outputs.version }}';
             const artifactName = `SecuChat-PR${prNum}-Windows`;
             const fileName = `SecuChat.Setup.PR${prNum}.${version}-beta.exe`;
-            
+
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
               body: `🪟 **Windows Build fertig!**
-              
+
               **Datei:** \`${fileName}\`
-              
+
               ⬇️ [Hier herunterladen](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})
-              
+
               > ⚠️ Dies ist ein PR-Build für Testzwecke.`
             })
