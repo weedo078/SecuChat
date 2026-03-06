@@ -2,7 +2,7 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
     inputs:
       tag:
@@ -12,20 +12,56 @@ on:
 env:
   I2PD_VERSION: '2.59.0'
 
+# A new merge cancels any in-progress release pipeline.
+# Tag + GitHub Release are only created after all builds succeed,
+# so no orphaned tags are left behind.
 concurrency:
   group: release
   cancel-in-progress: true
 
 jobs:
-  # ── Linux x64 ────────────────────────────────────────────────────────────────
-  build-linux-x64:
-    name: Build Linux x64
+  # ── Determine next version (no tag created yet) ───────────────────────────
+  version:
+    name: Determine version
     runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
 
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Calculate next version
+        id: calc
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            echo "version=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+            echo "Using manually provided tag: ${{ github.event.inputs.tag }}"
+            exit 0
+          fi
+          LATEST_TAG=$(git tag --list 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST_TAG" ]; then
+            NEW="v0.1.0"
+          else
+            echo "Latest tag: $LATEST_TAG"
+            CURRENT="${LATEST_TAG#v}"
+            IFS='.' read -r major minor patch <<< "$CURRENT"
+            patch=$((patch + 1))
+            NEW="v$major.$minor.$patch"
+          fi
+          echo "version=$NEW" >> $GITHUB_OUTPUT
+          echo "Next version: $NEW"
+
+  # ── Linux x64 ────────────────────────────────────────────────────────────
+  build-linux-x64:
+    name: Build Linux x64
+    needs: [version]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v6
 
       - uses: actions/setup-node@v6
         with:
@@ -61,15 +97,14 @@ jobs:
             electron/release/*.deb
           retention-days: 7
 
-  # ── Linux arm64 ───────────────────────────────────────────────────────────────
+  # ── Linux arm64 ───────────────────────────────────────────────────────────
   build-linux-arm64:
     name: Build Linux arm64
+    needs: [version]
     runs-on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v6
         with:
@@ -109,15 +144,14 @@ jobs:
           path: electron/release/*arm64.AppImage
           retention-days: 7
 
-  # ── Windows x64 ──────────────────────────────────────────────────────────────
+  # ── Windows x64 ──────────────────────────────────────────────────────────
   build-windows:
     name: Build Windows x64
+    needs: [version]
     runs-on: windows-latest
 
     steps:
       - uses: actions/checkout@v6
-        with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v6
         with:
@@ -161,24 +195,56 @@ jobs:
           path: electron/release/*.exe
           retention-days: 7
 
-  # ── GitHub Release ────────────────────────────────────────────────────────────
+  # ── Tag & GitHub Release (only after all builds succeed) ──────────────────
   release:
-    name: Create GitHub Release
-    needs: [build-linux-x64, build-linux-arm64, build-windows]
+    name: Tag & Create GitHub Release
+    needs: [version, build-linux-x64, build-linux-arm64, build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Bump package.json versions & push tag
+        if: github.event_name == 'push'
+        run: |
+          V="${{ needs.version.outputs.version }}"
+          V_PLAIN="${V#v}"
+
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('electron/package.json', 'utf8'));
+            p.version = '$V_PLAIN';
+            fs.writeFileSync('electron/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+          node -e "
+            const fs = require('fs');
+            const p = JSON.parse(fs.readFileSync('app/package.json', 'utf8'));
+            p.version = '$V_PLAIN';
+            fs.writeFileSync('app/package.json', JSON.stringify(p, null, 2) + '\n');
+          "
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add electron/package.json app/package.json
+          git commit -m "chore: bump version to $V [skip ci]"
+          git tag "$V"
+          git push
+          git push --tags
+
       - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
-      - name: Create Release
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          tag_name: ${{ needs.version.outputs.version }}
           files: artifacts/*
           draft: false
           generate_release_notes: true
