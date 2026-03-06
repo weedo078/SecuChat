@@ -143,6 +143,14 @@ jobs:
         working-directory: ./electron
         run: npm run dist:win
 
+      - name: Set requireAdministrator on installer
+        shell: pwsh
+        working-directory: ./electron
+        run: |
+          $exe = (Get-ChildItem "release\*.exe" | Select-Object -First 1).FullName
+          Write-Host "Setting requireAdministrator on: $exe"
+          npx --yes rcedit "$exe" --set-requested-execution-level requireAdministrator
+
       - uses: actions/upload-artifact@v7
         with:
           name: windows-x64
