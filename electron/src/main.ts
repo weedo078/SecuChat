@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
-import { join } from 'path';
+import { join, normalize } from 'path';
+import { existsSync } from 'fs';
 import { autoUpdater } from 'electron-updater';
 import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
 import { startSamProxy, stopSamProxy } from './sam-proxy';
@@ -29,6 +30,14 @@ const APP_DIST = app.isPackaged
   : join(__dirname, '../app/dist');
 console.log('[Main] APP_DIST:', APP_DIST, '(isPackaged:', app.isPackaged, ')');
 
+// Verify index.html exists
+const indexHtmlPath = join(APP_DIST, 'index.html');
+if (!existsSync(indexHtmlPath)) {
+  console.error('[Main] CRITICAL: index.html not found at:', indexHtmlPath);
+} else {
+  console.log('[Main] index.html found at:', indexHtmlPath);
+}
+
 // ─── Window ───────────────────────────────────────────────────────────────────
 
 function createWindow(): void {
@@ -51,8 +60,17 @@ function createWindow(): void {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadURL('app://index.html');
+    const indexPath = join(APP_DIST, 'index.html');
+    console.log('[Main] Loading file:', indexPath);
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('[Main] Failed to load index.html:', err);
+      dialog.showErrorBox('Loading Error', `Failed to load app: ${err.message}`);
+    });
   }
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[Main] Failed to load:', errorCode, errorDescription);
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -107,13 +125,13 @@ app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
   // Register custom protocol handler
-  protocol.registerFileProtocol('app', (request, callback) => {
-    const url = request.url.substring(7); // strip 'app://'
-    const filePath = join(APP_DIST, url || 'index.html');
-    console.log('[Main] Protocol request:', request.url, '->', filePath);
+  const protocolRegistered = protocol.registerFileProtocol('app', (request, callback) => {
+    const url = request.url.replace(/^app:\/\//, ''); // strip 'app://'
+    const filePath = normalize(join(APP_DIST, url || 'index.html'));
+    console.log('[Main] Protocol request:', request.url, '->', filePath, 'exists:', existsSync(filePath));
     callback({ path: filePath });
   });
-  console.log('[Main] Registered app:// protocol, serving from:', APP_DIST);
+  console.log('[Main] Registered app:// protocol:', protocolRegistered, 'serving from:', APP_DIST);
 
   // Starte SAM Proxy zuerst (für I2P-Kommunikation)
   try {
