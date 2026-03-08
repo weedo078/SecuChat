@@ -76,7 +76,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "requestExecutionLevel": "requireAdministrator"
+      "perMachine": true
     },
     "linux": {
       "target": [
