@@ -1,10 +1,8 @@
 ; Custom NSIS installer script for SecuChat
 ; Adds Windows Defender exclusion for i2pd.exe (legitimate open-source
 ; privacy tool, see https://i2pd.website — flagged as false positive).
-;
-; Note: Admin elevation is enforced via the exe manifest (rcedit in CI),
-; not here — placing RequestExecutionLevel in an include conflicts with
-; electron-builder's generated script and breaks the directory picker.
+
+; Note: Admin elevation is enforced via the exe manifest (rcedit in CI).
 
 !macro customInstall
   ; Add install directory as Defender exclusion (persistent)

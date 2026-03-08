@@ -149,13 +149,14 @@ export function ChatView() {
 
     try {
       await sendMessage(messageText.trim());
+      setMessageText('');
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : t('chat.unknownError');
       toast.error(t('chat.sendError'), {
         description: errorMsg,
       });
+      // Keep message text so user can retry without retyping
     }
-    setMessageText('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

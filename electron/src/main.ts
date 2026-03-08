@@ -192,6 +192,12 @@ autoUpdater.on('update-not-available', () => {
 });
 
 autoUpdater.on('error', (err) => {
+  // Ignore 404 errors - means no update is available or release doesn't have latest.yml yet
+  const message = err.message || '';
+  if (message.includes('404') || message.includes('latest.yml')) {
+    console.log('[Auto-Update] No update channel available (404)');
+    return;
+  }
   console.error('[Auto-Update] Error:', err);
   mainWindow?.webContents.send('update:error', err.message);
 });

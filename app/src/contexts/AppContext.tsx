@@ -112,6 +112,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Refs for tracking listener registration state
   const listenersRegisteredRef = useRef(false);
 
+  // Stable message handler ref — always points to the latest handleIncomingMessage.
+  // This avoids stale closure issues when activeChat/user change after initial registration.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const handleIncomingMessageRef = useRef<(from: string, data: any) => void>(() => {});
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const stableMessageHandler = useCallback((from: string, data: any) => {
+    handleIncomingMessageRef.current(from, data);
+  }, []);
+
   // User state
   const [user, setUser] = useState<User | null>(null);
   
@@ -219,12 +228,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // Deregister old listeners if already registered (prevents memory leak)
         if (listenersRegisteredRef.current) {
-          i2pService.offMessage(handleIncomingMessage);
+          i2pService.offMessage(stableMessageHandler);
           i2pService.offStatusChange(setI2pStatus);
         }
 
         // Register new listeners
-        i2pService.onMessage(handleIncomingMessage);
+        i2pService.onMessage(stableMessageHandler);
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
@@ -236,7 +245,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...savedUser };
             // Always persist the SAM private key when a new destination was generated
-            if (status.newDestinationGenerated && identity?.samDestination) {
+            // OR when we have one in identity but user doesn't have it stored yet
+            if (identity?.samDestination && (!savedUser.i2pSamDestination || status.newDestinationGenerated)) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             // Sync the real SAM b32 address into the user record.
@@ -363,6 +373,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [activeChat, user]);
 
+  // Keep the ref in sync so the stable handler always calls the latest version
+  handleIncomingMessageRef.current = handleIncomingMessage;
+
   // Handle sync messages (multi-device) - TODO: Implement for I2P
   // This would require a sync protocol over I2P SAM streams
   // For now, sync is disabled in pure I2P mode
@@ -475,6 +488,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const contact = activeChat.contact;
     if (!contact) return;
 
+    // Track whether the message was persisted so the catch block can mark it 'failed'
+    let savedMessage: Message | null = null;
+    let statusAlreadyUpdated = false;
+
     try {
       // Require PGP key — no plaintext fallback (Bug 2 fix)
       if (!contact.pgpPublicKey) {
@@ -499,6 +516,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Save to storage and update UI immediately
       await storageService.saveMessage(message);
+      savedMessage = message;
       setMessages(prev => [...prev, message]);
 
       // Try to send via I2P (i2pService.sendMessage handles JSON.stringify internally)
@@ -518,9 +536,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       }
 
       // Update message status
-      const updatedMessage = { ...message, status: (sent ? 'sent' : 'failed') as Message['status'] };
+      const newStatus: Message['status'] = sent ? 'sent' : 'failed';
+      const updatedMessage = { ...message, status: newStatus };
       await storageService.saveMessage(updatedMessage);
       setMessages(prev => prev.map(m => m.id === message.id ? updatedMessage : m));
+      statusAlreadyUpdated = true;
 
       // Update chat last message timestamp
       const updatedChat = { ...activeChat, lastMessageTimestamp: message.timestamp };
@@ -529,8 +549,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
         c.id === activeChat.id ? { ...c, lastMessageTimestamp: message.timestamp } : c
       ));
 
+      // Surface failure to the caller so the UI can show an error toast
+      if (!sent) {
+        const reason = !i2pStatus?.samConnected
+          ? 'I2P nicht verbunden. Starten Sie i2pd und sam-proxy.'
+          : 'Peer nicht erreichbar. Kontakt ist möglicherweise offline oder I2P baut die Verbindung noch auf.';
+        throw new Error(reason);
+      }
+
     } catch (error) {
       console.error('Error sending message:', error);
+      // If the message was saved but status update didn't complete, mark it failed
+      if (savedMessage && !statusAlreadyUpdated) {
+        const failedMessage = { ...savedMessage, status: 'failed' as Message['status'] };
+        storageService.saveMessage(failedMessage).catch((e) => console.error('[sendMessage] Failed to persist failed status:', e));
+        setMessages(prev => prev.map(m => m.id === savedMessage!.id ? failedMessage : m));
+      }
+      // Rethrow so ChatView.handleSend can show the error toast
+      throw error;
     }
   }, [activeChat, user, i2pStatus]);
 
@@ -627,10 +663,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
         // Register I2P listeners
         if (listenersRegisteredRef.current) {
-          i2pService.offMessage(handleIncomingMessage);
+          i2pService.offMessage(stableMessageHandler);
           i2pService.offStatusChange(setI2pStatus);
         }
-        i2pService.onMessage(handleIncomingMessage);
+        i2pService.onMessage(stableMessageHandler);
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
@@ -642,7 +678,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...decryptedUser };
-            if (status.newDestinationGenerated && identity?.samDestination) {
+            // Always persist the SAM private key when a new destination was generated
+            // OR when we have one in identity but user doesn't have it stored yet
+            if (identity?.samDestination && (!decryptedUser.i2pSamDestination || status.newDestinationGenerated)) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             if (status.address && status.address !== decryptedUser.i2pAddress) {
@@ -666,7 +704,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       storageService.clearEncryptionPassphrase();
       return false;
     }
-  }, [handleIncomingMessage]);
+  // stableMessageHandler has a stable identity (useCallback with []).
+  // All other deps (storageService, cryptoService, i2pService, setters) are stable singletons/refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load active chat messages when changed
   useEffect(() => {
