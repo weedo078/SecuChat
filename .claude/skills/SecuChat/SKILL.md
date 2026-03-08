@@ -118,8 +118,8 @@ app/src/services/storage.ts
 app/src/services/i2p.ts
 
 // Component fixes
-app/src/components/custom/ChatWindow.tsx
-app/src/components/custom/MessageInput.tsx
+app/src/components/custom/ChatView.tsx
+app/src/components/custom/AddContactDialog.tsx
 ```
 
 ## Testing Patterns
@@ -148,8 +148,8 @@ src/
     storage.ts
     storage.test.ts
   components/
-    ChatWindow.tsx
-    ChatWindow.test.ts
+    ChatView.tsx
+    ChatView.test.ts
 ```
 
 ## Commands
