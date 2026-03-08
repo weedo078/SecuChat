@@ -203,18 +203,6 @@ jobs:
         working-directory: ./electron
         run: npm run dist:win
 
-      - name: Set requireAdministrator on installer
-        shell: pwsh
-        working-directory: ./electron
-        run: |
-          $exe = (Get-ChildItem "release\*.exe" | Select-Object -First 1).FullName
-          if (-not $exe) { Write-Error "No installer .exe found in release\"; exit 1 }
-          Write-Host "Found installer: $exe"
-          $rcedit = "$env:TEMP\rcedit.exe"
-          Invoke-WebRequest -Uri "https://github.com/electron/rcedit/releases/download/v2.0.0/rcedit-x64.exe" -OutFile $rcedit
-          & $rcedit "$exe" --set-requested-execution-level requireAdministrator
-          Write-Host "requireAdministrator set successfully"
-
       - uses: actions/upload-artifact@v7
         with:
           name: windows-x64
