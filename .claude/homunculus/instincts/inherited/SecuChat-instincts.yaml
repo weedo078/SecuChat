@@ -1,0 +1,556 @@
+# Instincts generated from https://github.com/weedo078/SecuChat
+# Generated: 2026-03-08T12:30:06.332Z
+# Version: 2.0
+
+---
+id: SecuChat-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: chore, fix, ci, feat
+
+## Evidence
+
+- 200 commits analyzed
+- Detected conventional commit pattern
+- Examples: chore: bump version to v0.1.24 [skip ci], fix(ci): set version in package.json before building installers (#86)
+
+---
+id: SecuChat-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Commit Length
+
+## Action
+
+Write moderate-length commit messages (~50 characters)
+
+## Evidence
+
+- Average commit message length: 52 chars
+- Based on 200 commits
+
+---
+id: SecuChat-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: SecuChat-import-alias
+trigger: "when importing modules"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Import Alias
+
+## Action
+
+Use path aliases (@/, ~/) instead of relative imports
+
+## Evidence
+
+- Import analysis shows alias pattern
+- Example: import { x } from '@/lib/x'
+
+---
+id: SecuChat-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Export Style
+
+## Action
+
+Prefer mixed exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: mixed
+
+---
+id: SecuChat-arch-type-based
+trigger: "when adding new code"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Arch Type Based
+
+## Action
+
+Place code in the appropriate type folder (components/, services/, utils/, etc.)
+
+## Evidence
+
+- Type-based module organization detected
+- Folders: 
+
+---
+id: SecuChat-test-framework
+trigger: "when writing tests"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Test Framework
+
+## Action
+
+Use vitest as the test framework
+
+## Evidence
+
+- Test framework detected: vitest
+- File pattern: *.test.ts
+
+---
+id: SecuChat-test-naming
+trigger: "when creating a test file"
+confidence: 0.85
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Test Naming
+
+## Action
+
+Name test files using the pattern: *.test.ts
+
+## Evidence
+
+- File pattern: *.test.ts
+- Consistent across test files
+
+---
+id: SecuChat-test-mocking
+trigger: "when mocking dependencies in tests"
+confidence: 0.75
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Test Mocking
+
+## Action
+
+Use vi.mock for mocking
+
+## Evidence
+
+- Mocking pattern detected: vi.mock
+- Consistent across test files
+
+---
+id: SecuChat-workflow-feature-development
+trigger: "when implementing a new feature"
+confidence: 0.7
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Workflow Feature Development
+
+## Action
+
+Follow the feature-development workflow:
+1. Add feature implementation
+2. Add tests for feature
+3. Update documentation
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~4x per month
+- Files: app/src/services/*, app/src/components/custom/*, app/src/*
+
+---
+id: SecuChat-workflow-version-bump-release
+trigger: "when doing version bump release"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Workflow Version Bump Release
+
+## Action
+
+Follow the version-bump-release workflow:
+1. Increment version number
+2. Update app/package.json
+3. Update electron/package.json
+4. Create commit with [skip ci] tag
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~20x per month
+- Files: app/package.json, electron/package.json
+
+---
+id: SecuChat-workflow-dependency-update
+trigger: "when doing dependency update"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Workflow Dependency Update
+
+## Action
+
+Follow the dependency-update workflow:
+1. Update package.json
+2. Update package-lock.json
+3. Merge dependency changes
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~12x per month
+- Files: app/package.json, app/package-lock.json, electron/package.json
+
+---
+id: SecuChat-workflow-ci-workflow-update
+trigger: "when doing ci workflow update"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Workflow Ci Workflow Update
+
+## Action
+
+Follow the ci-workflow-update workflow:
+1. Modify workflow files
+2. Update action versions
+3. Adjust build/release steps
+4. Fix CI permissions or configurations
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~8x per month
+- Files: .github/workflows/release.yml, .github/workflows/ci.yml, .github/workflows/pr-build.yml
+
+---
+id: SecuChat-workflow-bug-fix-implementation
+trigger: "when doing bug fix implementation"
+confidence: 0.8
+domain: workflow
+source: repo-analysis
+source_repo: https://github.com/weedo078/SecuChat
+---
+
+# SecuChat Workflow Bug Fix Implementation
+
+## Action
+
+Follow the bug-fix-implementation workflow:
+1. Identify root cause
+2. Update affected components
+3. Fix service layer issues
+4. Update context/storage as needed
+
+## Evidence
+
+- Workflow detected from commit patterns
+- Frequency: ~6x per month
+- Files: app/src/contexts/AppContext.tsx, app/src/services/storage.ts, app/src/services/i2p.ts
+
+---
+id: secuchat-camel-case-files
+trigger: "When creating new TypeScript files"
+confidence: 0.85
+domain: code-style
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Camel Case Files
+
+## Action
+
+Use camelCase naming convention for file names
+
+## Evidence
+
+- Pattern observed in existing file structure
+- Consistent camelCase in component and service files
+
+---
+id: secuchat-pascal-case-classes
+trigger: "When defining new classes or React components"
+confidence: 0.9
+domain: code-style
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Pascal Case Classes
+
+## Action
+
+Use PascalCase naming convention
+
+## Evidence
+
+- React components follow PascalCase pattern
+- Class definitions use PascalCase throughout codebase
+
+---
+id: secuchat-screaming-snake-constants
+trigger: "When defining module-level constants"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Screaming Snake Constants
+
+## Action
+
+Use SCREAMING_SNAKE_CASE for constant names
+
+## Evidence
+
+- Constants pattern observed in configuration files
+- Consistent uppercase constants in service files
+
+---
+id: secuchat-alias-imports
+trigger: "When importing modules from different directories"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Alias Imports
+
+## Action
+
+Use alias-style imports with path aliases
+
+## Evidence
+
+- Import style pattern in existing components
+- tsconfig.json and vite.config.ts suggest alias usage
+
+---
+id: secuchat-vitest-testing
+trigger: "When writing unit tests for TypeScript functions or components"
+confidence: 0.9
+domain: testing
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Vitest Testing
+
+## Action
+
+Create *.test.ts files using vitest framework with vi.mock for mocking
+
+## Evidence
+
+- Testing framework explicitly set to vitest
+- Mock style documented as vi.mock
+- *.test.ts pattern specified
+
+---
+id: secuchat-conventional-commits
+trigger: "When making git commits"
+confidence: 0.95
+domain: git
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Conventional Commits
+
+## Action
+
+Use conventional commit format with prefixes: chore, fix, ci, feat, docs
+
+## Evidence
+
+- All commit examples follow conventional format
+- Consistent use of prefixes across 20+ version bumps
+- Average length of 52 characters maintained
+
+---
+id: secuchat-skip-ci-version
+trigger: "When committing version bump changes"
+confidence: 0.9
+domain: git
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Skip Ci Version
+
+## Action
+
+Add [skip ci] tag to version bump commits
+
+## Evidence
+
+- chore: bump version to v0.1.24 [skip ci]
+- chore: bump version to v0.1.23 [skip ci]
+- Pattern in 20x/month version bumps
+
+---
+id: secuchat-version-bump-workflow
+trigger: "When changes are merged to main and ready for release"
+confidence: 0.95
+domain: workflow
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Version Bump Workflow
+
+## Action
+
+Update both app/package.json and electron/package.json version numbers simultaneously
+
+## Evidence
+
+- 20x/month frequency
+- Both package.json files consistently updated together
+- Automated workflow pattern
+
+---
+id: secuchat-dependency-update-workflow
+trigger: "When dependabot creates PRs for package updates"
+confidence: 0.9
+domain: workflow
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Dependency Update Workflow
+
+## Action
+
+Update package.json and package-lock.json in both app and electron directories
+
+## Evidence
+
+- 12x/month frequency
+- Consistent pattern across app and electron packages
+- Dependabot automation detected
+
+---
+id: secuchat-ci-workflow-update
+trigger: "When CI/CD pipeline needs modifications"
+confidence: 0.88
+domain: workflow
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Ci Workflow Update
+
+## Action
+
+Update GitHub Actions workflow files in .github/workflows/ directory
+
+## Evidence
+
+- 8x/month frequency
+- 5 workflow files identified
+- CI-focused commit patterns
+
+---
+id: secuchat-bug-fix-services
+trigger: "When fixing bugs in application functionality"
+confidence: 0.82
+domain: workflow
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Bug Fix Services
+
+## Action
+
+Focus on app/src/services/ directory and contexts/AppContext.tsx for core fixes
+
+## Evidence
+
+- 6x/month frequency
+- storage.ts and i2p.ts frequently modified
+- AppContext.tsx as central coordination point
+
+---
+id: secuchat-error-boundaries
+trigger: "When handling errors in React components"
+confidence: 0.8
+domain: architecture
+source: repo-analysis
+source_repo: weedo078/SecuChat
+---
+
+# Secuchat Error Boundaries
+
+## Action
+
+Implement error boundaries rather than try-catch blocks
+
+## Evidence
+
+- Error handling style documented as error-boundaries
+- errorBoundaries: true in configuration
+- React-based architecture
+
