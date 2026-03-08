@@ -97,14 +97,6 @@ async function initializeI2P(): Promise<boolean> {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
-// Register custom protocol handler (must be before app.whenReady)
-app.on('ready', () => {
-  protocol.registerFileProtocol('app', (request, callback) => {
-    const url = request.url.substr(6); // strip 'app://'
-    callback({ path: join(APP_DIST, url) });
-  });
-});
-
 // Ensure userData is in a persistent location (not temp/portable mode)
 const userDataPath = join(app.getPath('appData'), 'SecuChat');
 app.setPath('userData', userDataPath);
@@ -112,6 +104,13 @@ console.log('[Main] userData path:', userDataPath);
 
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
+
+  // Register custom protocol handler
+  protocol.registerFileProtocol('app', (request, callback) => {
+    const url = request.url.substr(6); // strip 'app://'
+    callback({ path: join(APP_DIST, url) });
+  });
+  console.log('[Main] Registered app:// protocol');
 
   // Starte SAM Proxy zuerst (für I2P-Kommunikation)
   try {
