@@ -245,7 +245,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...savedUser };
             // Always persist the SAM private key when a new destination was generated
-            if (status.newDestinationGenerated && identity?.samDestination) {
+            // OR when we have one in identity but user doesn't have it stored yet
+            if (identity?.samDestination && (!savedUser.i2pSamDestination || status.newDestinationGenerated)) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             // Sync the real SAM b32 address into the user record.
@@ -677,7 +678,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...decryptedUser };
-            if (status.newDestinationGenerated && identity?.samDestination) {
+            // Always persist the SAM private key when a new destination was generated
+            // OR when we have one in identity but user doesn't have it stored yet
+            if (identity?.samDestination && (!decryptedUser.i2pSamDestination || status.newDestinationGenerated)) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             if (status.address && status.address !== decryptedUser.i2pAddress) {
