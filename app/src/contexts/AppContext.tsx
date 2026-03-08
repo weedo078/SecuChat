@@ -701,7 +701,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       storageService.clearEncryptionPassphrase();
       return false;
     }
-  }, [handleIncomingMessage]);
+  // stableMessageHandler has a stable identity (useCallback with []).
+  // All other deps (storageService, cryptoService, i2pService, setters) are stable singletons/refs.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load active chat messages when changed
   useEffect(() => {

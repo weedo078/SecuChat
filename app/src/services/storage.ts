@@ -421,6 +421,10 @@ export class StorageService {
         }
       } catch (error) {
         console.error('Failed to decrypt user data:', error);
+        // Rethrow so callers (e.g. unlockApp) know decryption failed (wrong passphrase).
+        // Swallowing here would return a user with an encrypted blob as pgpPrivateKey,
+        // which then causes a misleading "Misformed armored text" error downstream.
+        throw new Error('Falsches Passwort oder Daten beschädigt');
       }
     }
     return user;
