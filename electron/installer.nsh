@@ -2,12 +2,7 @@
 ; Adds Windows Defender exclusion for i2pd.exe (legitimate open-source
 ; privacy tool, see https://i2pd.website — flagged as false positive).
 
-; Request admin elevation at the NSIS script level via customHeader macro.
-; This is the correct approach — avoids rcedit post-processing which
-; invalidates NSIS's internal CRC check.
-!macro customHeader
-  RequestExecutionLevel admin
-!macroend
+; Note: Admin elevation is enforced via the exe manifest (rcedit in CI).
 
 !macro customInstall
   ; Add install directory as Defender exclusion (persistent)
