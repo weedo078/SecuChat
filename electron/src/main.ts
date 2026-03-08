@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import { autoUpdater } from 'electron-updater';
 import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
 import { startSamProxy, stopSamProxy } from './sam-proxy';
+import { registerStorageIpcHandlers, unregisterStorageIpcHandlers } from './storage';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -124,6 +125,9 @@ console.log('[Main] userData path:', userDataPath);
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
+  // Register storage IPC handlers
+  registerStorageIpcHandlers();
+
   // Register custom protocol handler
   const protocolRegistered = protocol.registerFileProtocol('app', (request, callback) => {
     const url = request.url.replace(/^app:\/\//, ''); // strip 'app://'
@@ -186,6 +190,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', async () => {
   console.log('[Main] All windows closed');
+  unregisterStorageIpcHandlers();
   await stopSamProxy();
   await stopI2pd();
   if (process.platform !== 'darwin') app.quit();
@@ -193,6 +198,7 @@ app.on('window-all-closed', async () => {
 
 app.on('before-quit', async () => {
   console.log('[Main] Before quit');
+  unregisterStorageIpcHandlers();
   await stopSamProxy();
   await stopI2pd();
 });
