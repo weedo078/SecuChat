@@ -19,14 +19,15 @@ const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 // Must be done before app is ready
 
 protocol.registerSchemesAsPrivileged([
-  { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } },
+  { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } },
 ]);
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const APP_DIST = app.isPackaged
   ? join(process.resourcesPath, 'app')
-  : join(__dirname, '../../app/dist');
+  : join(__dirname, '../app/dist');
+console.log('[Main] APP_DIST:', APP_DIST, '(isPackaged:', app.isPackaged, ')');
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
@@ -107,10 +108,12 @@ app.whenReady().then(async () => {
 
   // Register custom protocol handler
   protocol.registerFileProtocol('app', (request, callback) => {
-    const url = request.url.substr(6); // strip 'app://'
-    callback({ path: join(APP_DIST, url) });
+    const url = request.url.substring(7); // strip 'app://'
+    const filePath = join(APP_DIST, url || 'index.html');
+    console.log('[Main] Protocol request:', request.url, '->', filePath);
+    callback({ path: filePath });
   });
-  console.log('[Main] Registered app:// protocol');
+  console.log('[Main] Registered app:// protocol, serving from:', APP_DIST);
 
   // Starte SAM Proxy zuerst (für I2P-Kommunikation)
   try {
