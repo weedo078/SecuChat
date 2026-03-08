@@ -105,6 +105,11 @@ app.on('ready', () => {
   });
 });
 
+// Ensure userData is in a persistent location (not temp/portable mode)
+const userDataPath = join(app.getPath('appData'), 'SecuChat');
+app.setPath('userData', userDataPath);
+console.log('[Main] userData path:', userDataPath);
+
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
 
