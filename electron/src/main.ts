@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
 import { join } from 'path';
 import { autoUpdater } from 'electron-updater';
 import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
@@ -14,6 +14,13 @@ let i2pStatus = {
 };
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// ─── Protocol Registration ────────────────────────────────────────────────────
+// Must be done before app is ready
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true } },
+]);
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
@@ -43,7 +50,7 @@ function createWindow(): void {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(join(APP_DIST, 'index.html'));
+    mainWindow.loadURL('app://index.html');
   }
 
   mainWindow.once('ready-to-show', () => {
@@ -89,6 +96,14 @@ async function initializeI2P(): Promise<boolean> {
 }
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
+
+// Register custom protocol handler (must be before app.whenReady)
+app.on('ready', () => {
+  protocol.registerFileProtocol('app', (request, callback) => {
+    const url = request.url.substr(6); // strip 'app://'
+    callback({ path: join(APP_DIST, url) });
+  });
+});
 
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
