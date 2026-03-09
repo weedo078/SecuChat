@@ -7,12 +7,15 @@ declare global {
       version: string;
       isElectron: boolean;
       i2pdBundled: boolean;
-      
+
+      // Storage IPC
+      storageInvoke: (channel: string, ...args: unknown[]) => Promise<unknown>;
+
       // Auto-updater
       checkForUpdates?: () => Promise<void>;
       downloadUpdate?: () => Promise<{ success: boolean; error?: string }>;
       installUpdate?: () => Promise<void>;
-      
+
       // Event listeners
       onUpdateChecking?: (callback: () => void) => (() => void);
       onUpdateAvailable?: (callback: (event: unknown, data: { version: string; releaseDate: string }) => void) => (() => void);

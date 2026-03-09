@@ -29,6 +29,11 @@ export {
   BrowserStorageProvider,
 } from './browser/provider';
 
+// Electron implementation
+export {
+  ElectronStorageProvider,
+} from './electron/provider';
+
 export {
   encryptData,
   decryptData,

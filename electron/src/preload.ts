@@ -5,12 +5,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   version: process.env.npm_package_version ?? '0.0.1',
   isElectron: true,
   i2pdBundled: true,
-  
+
+  // Storage IPC methods
+  storageInvoke: (channel: string, ...args: unknown[]) => ipcRenderer.invoke(channel, ...args),
+
   // Auto-updater methods
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   downloadUpdate: () => ipcRenderer.invoke('update:download'),
   installUpdate: () => ipcRenderer.invoke('update:install'),
-  
+
   // Auto-updater event listeners
   onUpdateChecking: (callback: () => void) => {
     ipcRenderer.on('update:checking', callback);

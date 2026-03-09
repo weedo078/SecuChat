@@ -15,6 +15,7 @@ import type {
 import type { StorageProvider, StoragePlatform } from './storage/types';
 import { getStoragePlatform } from './storage/platform';
 import { BrowserStorageProvider } from './storage/browser/provider';
+import { ElectronStorageProvider } from './storage/electron/provider';
 
 /**
  * StorageService is a singleton facade that delegates to the appropriate
@@ -117,13 +118,7 @@ export class StorageService {
         provider = new BrowserStorageProvider();
         break;
       case 'electron':
-        // ElectronStorageProvider would be instantiated here when implemented
-        // For now, fall through to browser provider as fallback
-        console.warn(
-          '[StorageService] Electron platform detected but ElectronStorageProvider not yet implemented. ' +
-            'Falling back to BrowserStorageProvider.'
-        );
-        provider = new BrowserStorageProvider();
+        provider = new ElectronStorageProvider();
         break;
       default: {
         // Exhaustiveness check - ensures all platform values are handled
