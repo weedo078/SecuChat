@@ -103,7 +103,7 @@ jobs:
         run: npm run build
 
       - name: Upload Build Artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: web-build
           path: app/dist
@@ -214,14 +214,14 @@ jobs:
             Rename-Item $file.FullName -NewName $newName
           }
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-pr-build
           path: electron/release/*.exe
           retention-days: 7
 
       - name: Comment PR
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           script: |
             github.rest.issues.createComment({
@@ -305,7 +305,7 @@ jobs:
 
       - name: Upload APK
         if: steps.check-android.outputs.exists == 'true'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
           path: android/android/app/build/outputs/apk/debug/app-debug.apk
@@ -370,7 +370,7 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Post review comment
-        uses: actions/github-script@v8
+        uses: actions/github-script@v7
         with:
           script: |
             const review = `${{ steps.review.outputs.review }}`;
@@ -468,7 +468,7 @@ jobs:
         working-directory: ./electron
         run: npm ci && npm run build && npx electron-builder --linux --x64 --publish never
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-x64-release
           path: |
@@ -512,7 +512,7 @@ jobs:
         working-directory: ./electron
         run: npm ci && npm run build && npx electron-builder --linux AppImage --arm64 --publish never
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: linux-arm64-release
           path: electron/release/*arm64.AppImage
@@ -560,7 +560,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm ci && npm run build && npx electron-builder --win --publish never
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v4
         with:
           name: windows-release
           path: electron/release/*.exe
@@ -595,7 +595,7 @@ jobs:
           git push
           git push --tags
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
