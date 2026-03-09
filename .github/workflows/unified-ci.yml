@@ -374,18 +374,33 @@ jobs:
             --arg diff "$DIFF_CONTENT" \
             '{model: "kimi-for-coding", max_tokens: 4000, messages: [{role: "user", content: ($prompt + "\n\nHere is the code diff:\n\n```diff\n" + $diff + "\n```")}]}' > payload.json
 
-          # Call Kimi API for review
-          curl -s -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
+          # Call Kimi API for review with HTTP status check
+          HTTP_STATUS=$(curl -s -w "%{http_code}" -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
             -H "Content-Type: application/json" \
             -H "x-api-key: ${ANTHROPIC_API_KEY}" \
             -H "anthropic-version: 2023-06-01" \
-            -d @payload.json > kimi_response.json
+            -d @payload.json \
+            -o kimi_response.json)
 
+          echo "=== HTTP Status: ${HTTP_STATUS} ==="
           echo "=== API Response ==="
           cat kimi_response.json
 
-          # Extract review comment
-          jq -r '.content[0].text // "Kimi review failed or returned no content"' kimi_response.json > review_comment.md
+          # Validate HTTP status and response structure
+          if [ "${HTTP_STATUS}" != "200" ]; then
+            echo "❌ API request failed with HTTP status ${HTTP_STATUS}" >&2
+            echo "Kimi review failed: HTTP ${HTTP_STATUS}" > review_comment.md
+          elif jq -e '.error' kimi_response.json > /dev/null 2>&1; then
+            echo "❌ API returned error:" >&2
+            jq '.error' kimi_response.json >&2
+            echo "Kimi review failed: API error - $(jq -r '.error.message // "Unknown error"' kimi_response.json)" > review_comment.md
+          elif jq -e '.content[0].text' kimi_response.json > /dev/null 2>&1; then
+            # Valid response with content
+            jq -r '.content[0].text' kimi_response.json > review_comment.md
+          else
+            echo "⚠️ Unexpected API response structure" >&2
+            echo "Kimi review failed: Unexpected response structure" > review_comment.md
+          fi
 
       - name: Post Kimi Review Comment
         if: steps.pr-diff.outputs.diff_size != '0'
