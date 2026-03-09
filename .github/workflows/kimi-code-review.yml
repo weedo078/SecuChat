@@ -203,7 +203,7 @@ jobs:
           # Endpoint: POST /inboxes/{inbox_id}/messages/send
           jq -n \
             --arg inbox_id "$SENDER_INBOX" \
-            --arg to "secuchat-fixes@agentmail.to" \
+            --arg to "claudeclaw-openclaw@agentmail.to" \
             --arg subject "$SUBJECT" \
             --arg text "$EMAIL_BODY" \
             --arg repo "$REPO_NAME" \
