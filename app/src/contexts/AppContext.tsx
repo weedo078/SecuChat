@@ -223,7 +223,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await i2pService.restoreIdentity(
           savedUser.i2pPublicKey,
           savedUser.i2pPrivateKey,
-          savedUser.i2pSamDestination
+          savedUser.i2pSamDestination,
+          savedUser.i2pAddress  // Pass the stored I2P address (SAM b32)
         );
 
         // Deregister old listeners if already registered (prevents memory leak)
@@ -813,7 +814,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await i2pService.restoreIdentity(
           decryptedUser.i2pPublicKey,
           decryptedUser.i2pPrivateKey,
-          decryptedUser.i2pSamDestination
+          decryptedUser.i2pSamDestination,
+          decryptedUser.i2pAddress  // Pass the stored I2P address (SAM b32)
         );
 
         // Register I2P listeners

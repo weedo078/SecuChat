@@ -191,11 +191,15 @@ class I2PService {
   /**
    * Restore identity from stored keys
    */
-  async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string): Promise<I2PIdentity> {
-    console.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination);
+  async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string, i2pAddress?: string): Promise<I2PIdentity> {
+    console.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination, 'i2pAddress present:', !!i2pAddress);
     const publicKey = base64ToUint8Array(publicKeyB64);
     const privateKey = base64ToUint8Array(privateKeyB64);
-    const b32Address = toBase32(publicKey) + '.b32.i2p';
+
+    // Use the stored I2P address (which should be the SAM b32) if available
+    // Otherwise fall back to Ed25519-derived address for backwards compatibility
+    const b32Address = i2pAddress || (toBase32(publicKey) + '.b32.i2p');
+    console.log('[I2P] Using b32 address:', b32Address.slice(0, 30) + '...');
 
     this.identity = {
       publicKey,
