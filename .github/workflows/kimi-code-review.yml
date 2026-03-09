@@ -72,6 +72,12 @@ jobs:
           Provide specific, actionable feedback with file names and line numbers where applicable.
           Format your response as markdown suitable for a GitHub PR comment.'
 
+          # Validate diff for prompt injection attempts
+          if grep -iE '(ignore.*previous|system.*prompt|forget.*instructions|disregard.*above|override.*settings)' pr_diff.txt; then
+            echo "Error: Potential prompt injection detected in diff" >&2
+            exit 1
+          fi
+
           # Prepare diff content (escape for JSON)
           # Enforce both line count and file count limits strictly
           DIFF_CONTENT=$(awk '
@@ -82,19 +88,25 @@ jobs:
             { print }
           ' pr_diff.txt | jq -Rs '.')
 
-          # Create request JSON
+          # Create request JSON using jq --arg for proper escaping
           jq -n \
             --arg prompt "$REVIEW_PROMPT" \
             --arg diff "$DIFF_CONTENT" \
             '{model: "kimi-for-coding", max_tokens: 4000, messages: [{role: "user", content: ($prompt + "\n\nHere is the code diff:\n\n```diff\n" + $diff + "\n```")}]}' > request.json
 
-          # Call Kimi API for review (with 60s timeout)
-          curl -s --fail-with-body -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
-            -H "Content-Type: application/json" \
-            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
-            -H "anthropic-version: 2023-06-01" \
-            -d @request.json \
-            --max-time 60 > kimi_response.json
+          # Create curl config file with API key (avoids exposing key in process list)
+          cat > curl_config.txt << CURL_CONFIG
+header "Content-Type: application/json"
+header "x-api-key: ${ANTHROPIC_API_KEY}"
+header "anthropic-version: 2023-06-01"
+request POST
+url "${ANTHROPIC_BASE_URL}/v1/messages"
+data @request.json
+max-time 60
+CURL_CONFIG
+
+          # Call Kimi API for review using config file
+          curl -s --fail-with-body --config curl_config.txt > kimi_response.json
 
           # Validate response and extract review comment
           if [ ! -s kimi_response.json ]; then
@@ -218,9 +230,15 @@ jobs:
               }
             }' > email_payload.json
 
-          curl -s --fail-with-body -X POST "https://api.agentmail.to/v1/inboxes/send" \
-            -H "Content-Type: application/json" \
-            -H "Authorization: Bearer ${AGENTMAIL_API_KEY}" \
-            -d @email_payload.json
+          # Create curl config file for AgentMail API (avoids exposing key in process list)
+          cat > agentmail_curl_config.txt << AGENTMAIL_CURL_CONFIG
+header "Content-Type: application/json"
+header "Authorization: Bearer ${AGENTMAIL_API_KEY}"
+request POST
+url "https://api.agentmail.to/v1/inboxes/send"
+data @email_payload.json
+AGENTMAIL_CURL_CONFIG
+
+          curl -s --fail-with-body --config agentmail_curl_config.txt
 
           echo "OpenClaw email notification sent successfully"
