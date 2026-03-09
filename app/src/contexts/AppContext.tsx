@@ -188,6 +188,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           } catch (error) {
             console.error('Error loading key pair:', error);
           }
+        } else {
+          // No PGP private key found - this shouldn't happen for existing users
+          // Set encryption state to allow UI to function, but log warning
+          console.warn('[AppContext] User exists but pgpPrivateKey is missing - setting encryptionState to allow UI');
+          setEncryptionState('encrypted');
+          setIsAuthenticated(true);
         }
       }
       
