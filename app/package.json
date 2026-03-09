@@ -9,9 +9,23 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cap:sync": "npx cap sync android",
+    "cap:copy": "npx cap copy android",
+    "cap:open": "npx cap open android",
+    "cap:run": "npx cap run android",
+    "build:android": "npm run build && npx cap sync android",
+    "android": "npm run build && npx cap run android"
   },
   "dependencies": {
+    "@capacitor-community/file-opener": "^8.0.0",
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/cli": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.1",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -69,6 +83,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@eslint/js": "^9.39.1",
     "@types/node": "^25.3.5",
     "@types/react": "^19.2.5",

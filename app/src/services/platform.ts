@@ -4,8 +4,14 @@
  * Supports: Android (with i2pd), Desktop Browser (with i2pd), Other (WebRTC fallback)
  */
 
+import type { CapacitorPlatform } from '@/types/platform';
+
 export type PlatformType = 'android' | 'desktop' | 'other';
 export type I2PSupportLevel = 'native' | 'external-required' | 'unsupported';
+
+// Capacitor native platform detection state
+let capacitorPlatform: CapacitorPlatform | null = null;
+let capacitorChecked = false;
 
 export interface PlatformInfo {
   type: PlatformType;
@@ -25,6 +31,70 @@ export interface I2PInstructions {
 
 class PlatformService {
   private cachedInfo: PlatformInfo | null = null;
+
+  /**
+   * Detect if running in a Capacitor native environment
+   * Lazy-loads Capacitor to avoid errors in browser
+   */
+  async detectCapacitor(): Promise<CapacitorPlatform | null> {
+    if (capacitorChecked) {
+      return capacitorPlatform;
+    }
+
+    try {
+      // Lazy load Capacitor to avoid errors in browser
+      const { Capacitor } = await import('@capacitor/core');
+      const info = Capacitor.getPlatform();
+
+      if (Capacitor.isNativePlatform()) {
+        capacitorPlatform = info as CapacitorPlatform;
+        console.log('[Platform] Capacitor native platform detected:', info);
+      } else {
+        capacitorPlatform = null;
+      }
+    } catch {
+      // Capacitor not available (running in browser)
+      capacitorPlatform = null;
+    }
+
+    capacitorChecked = true;
+    return capacitorPlatform;
+  }
+
+  /**
+   * Synchronous check for Capacitor (use after detectCapacitor has been called)
+   */
+  isCapacitorNative(): boolean {
+    return capacitorPlatform !== null;
+  }
+
+  /**
+   * Check if running on Android native
+   */
+  isAndroidNative(): boolean {
+    return capacitorPlatform === 'android';
+  }
+
+  /**
+   * Check if running on iOS native
+   */
+  isIOSNative(): boolean {
+    return capacitorPlatform === 'ios';
+  }
+
+  /**
+   * Check if running in any native environment (Capacitor or Electron)
+   */
+  isNative(): boolean {
+    return this.isCapacitorNative() || this.isElectron();
+  }
+
+  /**
+   * Check if running in web browser (not native)
+   */
+  isWeb(): boolean {
+    return !this.isNative();
+  }
 
   isElectron(): boolean {
     // Primary: contextBridge API set by preload.ts
@@ -228,8 +298,38 @@ class PlatformService {
 
   // Get user-friendly platform name
   getPlatformName(): string {
+    // Check for native platforms first
+    if (this.isAndroidNative()) return 'SecuChat Android';
+    if (this.isIOSNative()) return 'SecuChat iOS';
+    if (this.isElectron()) return 'SecuChat Desktop';
+
     const info = this.getPlatformInfo();
     return info.name;
+  }
+
+  /**
+   * Get detailed platform info for logging/debugging
+   */
+  async getDetailedPlatformInfo(): Promise<{
+    type: string;
+    isNative: boolean;
+    isCapacitor: boolean;
+    capacitorPlatform: string | null;
+    isElectron: boolean;
+    isWeb: boolean;
+    userAgent: string;
+  }> {
+    const capPlatform = await this.detectCapacitor();
+
+    return {
+      type: this.detectPlatform(),
+      isNative: this.isNative(),
+      isCapacitor: this.isCapacitorNative(),
+      capacitorPlatform: capPlatform,
+      isElectron: this.isElectron(),
+      isWeb: this.isWeb(),
+      userAgent: navigator.userAgent,
+    };
   }
 
   // Quick check if I2P is supported
@@ -240,3 +340,9 @@ class PlatformService {
 }
 
 export const platformService = new PlatformService();
+
+// Convenience exports for direct function access
+export const isNative = () => platformService.isNative();
+export const isAndroid = () => platformService.isAndroidNative();
+export const isWeb = () => platformService.isWeb();
+export const platform = platformService;

@@ -1,7 +1,11 @@
-// Platform Detection - Phase 1
+// Platform Detection - Phase 1 + Capacitor Support
 // Detects the runtime environment and selects appropriate storage provider
 
 import type { StoragePlatform } from './types';
+
+// Capacitor detection state
+let capacitorChecked = false;
+let isCapacitorNative = false;
 
 /**
  * Detect if running in Electron main process
@@ -42,6 +46,35 @@ export function isElectron(): boolean {
 }
 
 /**
+ * Detect if running in Capacitor native environment
+ * Lazy-loads Capacitor to avoid errors in browser
+ */
+export async function isCapacitor(): Promise<boolean> {
+  if (capacitorChecked) {
+    return isCapacitorNative;
+  }
+
+  try {
+    // Lazy load Capacitor to avoid errors in browser
+    const { Capacitor } = await import('@capacitor/core');
+    isCapacitorNative = Capacitor.isNativePlatform();
+  } catch {
+    // Capacitor not available
+    isCapacitorNative = false;
+  }
+
+  capacitorChecked = true;
+  return isCapacitorNative;
+}
+
+/**
+ * Synchronous check for Capacitor (use after isCapacitor has been called)
+ */
+export function isCapacitorSync(): boolean {
+  return isCapacitorNative;
+}
+
+/**
  * Detect if running in browser environment
  */
 export function isBrowser(): boolean {
@@ -50,12 +83,32 @@ export function isBrowser(): boolean {
 
 /**
  * Get the current storage platform
- * Returns 'electron' if in Electron, 'browser' otherwise
+ * Returns 'capacitor' if in Capacitor native, 'electron' if in Electron, 'browser' otherwise
  */
-export function getStoragePlatform(): StoragePlatform {
+export async function getStoragePlatform(): Promise<StoragePlatform> {
   if (isElectron()) {
     return 'electron';
   }
+
+  if (await isCapacitor()) {
+    return 'capacitor';
+  }
+
+  return 'browser';
+}
+
+/**
+ * Synchronous version - use only after platform has been detected
+ */
+export function getStoragePlatformSync(): StoragePlatform {
+  if (isElectron()) {
+    return 'electron';
+  }
+
+  if (isCapacitorSync()) {
+    return 'capacitor';
+  }
+
   return 'browser';
 }
 
@@ -85,7 +138,7 @@ export interface PlatformCapabilities {
   /** Supports encryption at rest */
   encryption: boolean;
   /** Uses IndexedDB (browser) or SQLite (electron) */
-  backend: 'indexeddb' | 'sqlite' | 'localstorage';
+  backend: 'indexeddb' | 'sqlite' | 'localstorage' | 'native';
   /** Supports synchronous operations */
   syncOperations: boolean;
   /** Maximum storage size (approximate) */
@@ -95,8 +148,8 @@ export interface PlatformCapabilities {
 /**
  * Get platform capabilities
  */
-export function getPlatformCapabilities(): PlatformCapabilities {
-  const platform = getStoragePlatform();
+export async function getPlatformCapabilities(): Promise<PlatformCapabilities> {
+  const platform = await getStoragePlatform();
 
   if (platform === 'electron') {
     return {
@@ -105,6 +158,16 @@ export function getPlatformCapabilities(): PlatformCapabilities {
       backend: 'sqlite',
       syncOperations: true,
       maxStorageSize: 'unlimited (disk space)',
+    };
+  }
+
+  if (platform === 'capacitor') {
+    return {
+      platform: 'capacitor',
+      encryption: true,
+      backend: 'native',
+      syncOperations: false,
+      maxStorageSize: 'unlimited (device storage)',
     };
   }
 
@@ -124,10 +187,11 @@ export function getPlatformCapabilities(): PlatformCapabilities {
 /**
  * Log platform detection results for debugging
  */
-export function logPlatformDetection(): void {
-  const caps = getPlatformCapabilities();
+export async function logPlatformDetection(): Promise<void> {
+  const caps = await getPlatformCapabilities();
   console.log('[Storage] Platform detection:', {
     isElectron: isElectron(),
+    isCapacitor: isCapacitorSync(),
     isBrowser: isBrowser(),
     platform: caps.platform,
     backend: caps.backend,
