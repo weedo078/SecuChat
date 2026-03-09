@@ -322,6 +322,77 @@ jobs:
           retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════
+  # KIMI CODE REVIEW (PRs only)
+  # ═══════════════════════════════════════════════════════════════
+  kimi-review:
+    name: Kimi Code Review
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false &&
+      (needs.detect-changes.outputs.app-core == 'true' ||
+       needs.detect-changes.outputs.electron == 'true' ||
+       needs.detect-changes.outputs.android == 'true')
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|json)$' | head -50 || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Kimi Code Review
+        id: review
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        run: |
+          REVIEW_CONTENT=""
+          for file in ${{ steps.changed-files.outputs.files }}; do
+            if [ -f "$file" ]; then
+              REVIEW_CONTENT+="\n=== $file ===\n"
+              REVIEW_CONTENT+=$(cat "$file" | head -100)
+            fi
+          done
+
+          PAYLOAD=$(jq -n \
+            --arg content "$REVIEW_CONTENT" \
+            --arg pr "${{ github.event.pull_request.number }}" \
+            '{model: "kimi-coding/k2p5", messages: [{role: "system", content: "You are a code reviewer. Review the following code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
+
+          RESPONSE=$(curl -s -X POST "https://api.openrouter.ai/v1/chat/completions" \
+            -H "Authorization: Bearer $KIMI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          REVIEW_TEXT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No review generated"')
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$REVIEW_TEXT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post review comment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const review = `${{ steps.review.outputs.review }}`;
+            const prNumber = context.issue.number;
+            github.rest.issues.createComment({
+              issue_number: prNumber,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🤖 **Kimi Code Review**\n\n${review}\n\n---\n*Powered by Kimi via Claude Code integration*`
+            });
+
+  # ═══════════════════════════════════════════════════════════════
   # RELEASE JOBS (Only on main push or workflow_dispatch)
   # ═══════════════════════════════════════════════════════════════
   determine-version:
