@@ -170,6 +170,7 @@ jobs:
         env:
           AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
           REVIEW_UUID: ${{ steps.review-uuid.outputs.uuid }}
+          SENDER_INBOX: ${{ secrets.AGENTMAIL_SENDER_INBOX }}
         run: |
           set -euo pipefail
 
@@ -195,38 +196,26 @@ jobs:
           SUBJECT="[${REVIEW_UUID}] PR #${PR_NUMBER} - Kimi Review"
 
           # Build email body with metadata
-          EMAIL_BODY=$(cat <<EOF
-          Kimi Code Review completed for PR #${PR_NUMBER}
-
-          Repository: ${REPO_NAME}
-          Branch: ${BRANCH_NAME}
-          Review UUID: ${REVIEW_UUID}
-
-          ---
-
-          ${REVIEW_CONTENT}
-          EOF
-          )
+          EMAIL_BODY=$(printf 'Kimi Code Review completed for PR #%s\n\nRepository: %s\nBranch: %s\nReview UUID: %s\n\n---\n\n%s' \
+            "$PR_NUMBER" "$REPO_NAME" "$BRANCH_NAME" "$REVIEW_UUID" "$REVIEW_CONTENT")
 
           # Send email via AgentMail API
+          # Endpoint: POST /inboxes/{inbox_id}/messages/send
           jq -n \
+            --arg inbox_id "$SENDER_INBOX" \
             --arg to "secuchat-fixes@agentmail.to" \
             --arg subject "$SUBJECT" \
-            --arg body "$EMAIL_BODY" \
+            --arg text "$EMAIL_BODY" \
             --arg repo "$REPO_NAME" \
             --arg pr "$PR_NUMBER" \
             --arg branch "$BRANCH_NAME" \
             --arg uuid "$REVIEW_UUID" \
             '{
-              to: $to,
+              inbox_id: $inbox_id,
+              to: [$to],
               subject: $subject,
-              body: $body,
-              headers: {
-                "X-GitHub-Repo": $repo,
-                "X-PR-Number": $pr,
-                "X-Branch": $branch,
-                "X-Review-UUID": $uuid
-              }
+              text: $text,
+              labels: ["kimi-review", $repo, "pr-" + $pr]
             }' > email_payload.json
 
           # Create curl config file for AgentMail API (avoids exposing key in process list)
@@ -234,7 +223,7 @@ jobs:
             echo 'header "Content-Type: application/json"'
             echo "header \"Authorization: Bearer ${AGENTMAIL_API_KEY}\""
             echo 'request POST'
-            echo 'url "https://api.agentmail.to/v1/inboxes/send"'
+            echo "url \"https://api.agentmail.to/inboxes/${SENDER_INBOX}/messages/send\""
             echo 'data @email_payload.json'
           } > agentmail_curl_config.txt
 
