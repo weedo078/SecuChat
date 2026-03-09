@@ -18,6 +18,35 @@ import { LocalStorageFallback, STORE_KEY_FIELDS } from './fallback';
 const DB_NAME = 'SecureChatDB';
 const DB_VERSION = 2;
 
+/** Encryption format version marker */
+const ENCRYPTION_VERSION_MARKER = 'v2:';
+
+/**
+ * Detect if data is in legacy encrypted format (no version marker)
+ * Legacy format: base64(salt + iv + ciphertext) without prefix
+ * New format: 'v2:' + base64(salt + iv + ciphertext)
+ */
+function isLegacyEncryptedData(encryptedData: string): boolean {
+  return !encryptedData.startsWith(ENCRYPTION_VERSION_MARKER);
+}
+
+/**
+ * Add version marker to encrypted data
+ */
+function addEncryptionVersion(encryptedData: string): string {
+  return ENCRYPTION_VERSION_MARKER + encryptedData;
+}
+
+/**
+ * Remove version marker from encrypted data for decryption
+ */
+function stripEncryptionVersion(encryptedData: string): string {
+  if (encryptedData.startsWith(ENCRYPTION_VERSION_MARKER)) {
+    return encryptedData.slice(ENCRYPTION_VERSION_MARKER.length);
+  }
+  return encryptedData;
+}
+
 /**
  * Browser storage provider using IndexedDB
  * Falls back to localStorage if IndexedDB is unavailable
@@ -248,16 +277,64 @@ export class BrowserStorageProvider implements StorageProvider {
     return this.encryptionPassphrase !== null;
   }
 
+  /**
+   * Migrate stored data to current encryption format.
+   * Detects legacy encrypted data (without version marker) and re-encrypts with version marker.
+   * This is a stub for future migration needs - currently handles v1 (legacy) to v2 (versioned).
+   */
+  async migrateEncryptionFormat(passphrase: string): Promise<{ migrated: boolean; message: string }> {
+    const users = (await this.getAllRecords('user')) as User[];
+    if (users.length === 0) {
+      return { migrated: false, message: 'No user data to migrate' };
+    }
+
+    const user = users[0];
+    let needsMigration = false;
+
+    // Check if keys are in legacy format (encrypted but no version marker)
+    if (user.pgpPrivateKey && isLegacyEncryptedData(user.pgpPrivateKey)) {
+      needsMigration = true;
+    }
+    if (user.i2pPrivateKey && isLegacyEncryptedData(user.i2pPrivateKey)) {
+      needsMigration = true;
+    }
+
+    if (!needsMigration) {
+      return { migrated: false, message: 'Data already in current format' };
+    }
+
+    try {
+      // Decrypt with legacy format (no version marker stripping needed)
+      const migratedUser = { ...user };
+      if (user.pgpPrivateKey) {
+        migratedUser.pgpPrivateKey = await decryptData(user.pgpPrivateKey, passphrase);
+      }
+      if (user.i2pPrivateKey) {
+        migratedUser.i2pPrivateKey = await decryptData(user.i2pPrivateKey, passphrase);
+      }
+
+      // Re-encrypt with new format (adds version marker)
+      await this.saveUser(migratedUser);
+
+      return { migrated: true, message: 'Successfully migrated to v2 encryption format' };
+    } catch (error) {
+      console.error('[Storage] Migration failed:', error);
+      throw new Error('Migration failed: unable to decrypt legacy data');
+    }
+  }
+
   // User operations
   async saveUser(user: User): Promise<void> {
     let userToStore = user;
     if (this.encryptionPassphrase && (user.pgpPrivateKey || user.i2pPrivateKey)) {
       userToStore = { ...user };
       if (user.pgpPrivateKey) {
-        userToStore.pgpPrivateKey = await encryptData(user.pgpPrivateKey, this.encryptionPassphrase);
+        const encrypted = await encryptData(user.pgpPrivateKey, this.encryptionPassphrase);
+        userToStore.pgpPrivateKey = addEncryptionVersion(encrypted);
       }
       if (user.i2pPrivateKey) {
-        userToStore.i2pPrivateKey = await encryptData(user.i2pPrivateKey, this.encryptionPassphrase);
+        const encrypted = await encryptData(user.i2pPrivateKey, this.encryptionPassphrase);
+        userToStore.i2pPrivateKey = addEncryptionVersion(encrypted);
       }
     }
     await this.putRecord('user', userToStore as unknown as Record<string, unknown>);
@@ -271,10 +348,12 @@ export class BrowserStorageProvider implements StorageProvider {
       try {
         user = { ...user };
         if (user.pgpPrivateKey) {
-          user.pgpPrivateKey = await decryptData(user.pgpPrivateKey, this.encryptionPassphrase);
+          const encryptedKey = stripEncryptionVersion(user.pgpPrivateKey);
+          user.pgpPrivateKey = await decryptData(encryptedKey, this.encryptionPassphrase);
         }
         if (user.i2pPrivateKey) {
-          user.i2pPrivateKey = await decryptData(user.i2pPrivateKey, this.encryptionPassphrase);
+          const encryptedKey = stripEncryptionVersion(user.i2pPrivateKey);
+          user.i2pPrivateKey = await decryptData(encryptedKey, this.encryptionPassphrase);
         }
       } catch (error) {
         console.error('Failed to decrypt user data:', error);
