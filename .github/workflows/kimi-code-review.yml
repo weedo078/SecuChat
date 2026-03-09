@@ -9,11 +9,11 @@ jobs:
     env:
       LOG_PREVIEW_LINES: 100
       MAX_DIFF_LINES: 500
+      MAX_DIFF_FILES: 50
     runs-on: ubuntu-latest
     permissions:
       contents: read
       pull-requests: write
-      issues: read
 
     steps:
       - name: Checkout repository
@@ -32,6 +32,26 @@ jobs:
           git fetch origin "${{ github.base_ref }}"
           git diff "origin/${{ github.base_ref }}...HEAD" > pr_diff.txt
           echo "diff_lines=$(wc -l < pr_diff.txt)" >> "$GITHUB_OUTPUT"
+          echo "diff_files=$(grep -c '^diff --git' pr_diff.txt || echo 0)" >> "$GITHUB_OUTPUT"
+
+      - name: Check diff size limits
+        id: check-limits
+        run: |
+          DIFF_LINES=${{ steps.pr-diff.outputs.diff_lines }}
+          DIFF_FILES=${{ steps.pr-diff.outputs.diff_files }}
+          LIMITS_EXCEEDED=false
+
+          if [ "$DIFF_FILES" -gt "$MAX_DIFF_FILES" ]; then
+            echo "::warning::Diff file count ($DIFF_FILES) exceeds limit ($MAX_DIFF_FILES). Only first $MAX_DIFF_FILES files will be reviewed."
+            LIMITS_EXCEEDED=true
+          fi
+
+          if [ "$DIFF_LINES" -gt "$MAX_DIFF_LINES" ]; then
+            echo "::warning::Diff line count ($DIFF_LINES) exceeds limit ($MAX_DIFF_LINES). Only first $MAX_DIFF_LINES lines will be reviewed."
+            LIMITS_EXCEEDED=true
+          fi
+
+          echo "limits_exceeded=$LIMITS_EXCEEDED" >> "$GITHUB_OUTPUT"
 
       - name: Run Kimi Code Review
         if: steps.pr-diff.outputs.diff_lines != '0'
@@ -53,7 +73,14 @@ jobs:
           Format your response as markdown suitable for a GitHub PR comment.'
 
           # Prepare diff content (escape for JSON)
-          DIFF_CONTENT=$(head -n "$MAX_DIFF_LINES" pr_diff.txt | jq -Rs '.')
+          # Enforce both line count and file count limits strictly
+          DIFF_CONTENT=$(awk '
+            /^diff --git/ { file_count++ }
+            file_count > '"$MAX_DIFF_FILES"' { exit }
+            { lines++ }
+            lines > '"$MAX_DIFF_LINES"' { exit }
+            { print }
+          ' pr_diff.txt | jq -Rs '.')
 
           # Create request JSON
           jq -n \
@@ -61,12 +88,13 @@ jobs:
             --arg diff "$DIFF_CONTENT" \
             '{model: "kimi-for-coding", max_tokens: 4000, messages: [{role: "user", content: ($prompt + "\n\nHere is the code diff:\n\n```diff\n" + $diff + "\n```")}]}' > request.json
 
-          # Call Kimi API for review
+          # Call Kimi API for review (with 60s timeout)
           curl -s --fail-with-body -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
             -H "Content-Type: application/json" \
             -H "x-api-key: ${ANTHROPIC_API_KEY}" \
             -H "anthropic-version: 2023-06-01" \
-            -d @request.json > kimi_response.json
+            -d @request.json \
+            --max-time 60 > kimi_response.json
 
           # Validate response and extract review comment
           if [ ! -s kimi_response.json ]; then
@@ -98,9 +126,10 @@ jobs:
               issue_number: context.issue.number
             });
 
-            const existingComment = comments.find(c => c.body.includes('🤖 Kimi Code Review'));
+            const COMMENT_MARKER = '<!-- kimi-code-review-v1 -->';
+            const existingComment = comments.find(c => c.body.includes(COMMENT_MARKER));
 
-            const fullBody = `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`;
+            const fullBody = `${COMMENT_MARKER}\n🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`;
 
             if (existingComment) {
               await github.rest.issues.updateComment({
@@ -117,3 +146,81 @@ jobs:
                 body: fullBody
               });
             }
+
+      - name: Generate Review UUID
+        if: steps.pr-diff.outputs.diff_lines != '0'
+        id: review-uuid
+        run: |
+          UUID=$(openssl rand -hex 16)
+          echo "uuid=$UUID" >> "$GITHUB_OUTPUT"
+
+      - name: Send OpenClaw Email Notification
+        if: steps.pr-diff.outputs.diff_lines != '0'
+        env:
+          AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
+          REVIEW_UUID: ${{ steps.review-uuid.outputs.uuid }}
+        run: |
+          set -euo pipefail
+
+          # Read review content
+          REVIEW_CONTENT=$(cat review_comment.md)
+
+          # Check if there are actual findings (not just empty/no issues messages)
+          if echo "$REVIEW_CONTENT" | grep -qiE "(no issues found|no problems|review unavailable|unable to generate)"; then
+            echo "No significant review findings - skipping email notification"
+            exit 0
+          fi
+
+          # Check if review content is empty or too short
+          if [ -z "$REVIEW_CONTENT" ] || [ "${#REVIEW_CONTENT}" -lt 50 ]; then
+            echo "Review content too short - skipping email notification"
+            exit 0
+          fi
+
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          REPO_NAME="${{ github.repository }}"
+          BRANCH_NAME="${{ github.head_ref }}"
+
+          SUBJECT="[${REVIEW_UUID}] PR #${PR_NUMBER} - Kimi Review"
+
+          # Build email body with metadata
+          EMAIL_BODY=$(cat <<EOF
+          Kimi Code Review completed for PR #${PR_NUMBER}
+
+          Repository: ${REPO_NAME}
+          Branch: ${BRANCH_NAME}
+          Review UUID: ${REVIEW_UUID}
+
+          ---
+
+          ${REVIEW_CONTENT}
+          EOF
+          )
+
+          # Send email via AgentMail API
+          jq -n \
+            --arg to "secuchat-fixes@agentmail.to" \
+            --arg subject "$SUBJECT" \
+            --arg body "$EMAIL_BODY" \
+            --arg repo "$REPO_NAME" \
+            --arg pr "$PR_NUMBER" \
+            --arg branch "$BRANCH_NAME" \
+            --arg uuid "$REVIEW_UUID" \
+            '{
+              to: $to,
+              subject: $subject,
+              body: $body,
+              headers: {
+                "X-GitHub-Repo": $repo,
+                "X-PR-Number": $pr,
+                "X-Branch": $branch,
+                "X-Review-UUID": $uuid
+              }
+            }' > email_payload.json
+
+          curl -s --fail-with-body -X POST "https://api.agentmail.to/v1/inboxes/send" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${AGENTMAIL_API_KEY}" \
+            -d @email_payload.json
+
+          echo "OpenClaw email notification sent successfully"
