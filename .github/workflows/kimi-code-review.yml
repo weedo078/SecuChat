@@ -1,0 +1,110 @@
+name: Kimi Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+jobs:
+  kimi-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Get PR diff
+        id: pr-diff
+        run: |
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+          echo "diff_size=$(wc -c < pr_diff.txt)" >> $GITHUB_OUTPUT
+
+      - name: Run Kimi Code Review
+        if: steps.pr-diff.outputs.diff_size != '0'
+        env:
+          ANTHROPIC_BASE_URL: https://api.kimi.com/coding/
+          ANTHROPIC_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        run: |
+          # Create review prompt
+          cat > review_prompt.txt << 'PROMPT'
+          Review this pull request code changes. Focus on:
+          1. Security issues (SQL injection, XSS, secrets)
+          2. Type safety and potential runtime errors
+          3. Code quality and maintainability
+          4. Performance concerns
+          5. Architecture and design patterns
+
+          Provide specific, actionable feedback with file names and line numbers where applicable.
+          Format your response as markdown suitable for a GitHub PR comment.
+          PROMPT
+
+          echo "=== Changes to review ==="
+          head -100 pr_diff.txt
+          echo "... (truncated if longer)"
+
+          # Call Kimi API for review
+          curl -s -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
+            -H "Content-Type: application/json" \
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -d '{
+              "model": "kimi-for-coding",
+              "max_tokens": 4000,
+              "messages": [
+                {"role": "user", "content": "'$(cat review_prompt.txt | sed 's/"/\\"/g')'\n\nHere is the code diff:\n\n```diff\n'$(head -300 pr_diff.txt | sed 's/"/\\"/g')'\n```"}
+              ]
+            }' > kimi_response.json
+
+          # Extract review comment
+          cat kimi_response.json | jq -r '.content[0].text' > review_comment.md || echo "Kimi review failed"
+
+      - name: Post Kimi Review Comment
+        if: steps.pr-diff.outputs.diff_size != '0'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let reviewBody;
+            try {
+              reviewBody = fs.readFileSync('review_comment.md', 'utf8');
+              if (!reviewBody || reviewBody.trim() === '' || reviewBody === 'null') {
+                reviewBody = '🤖 Kimi Code Review: No issues found or review unavailable.';
+              }
+            } catch (e) {
+              reviewBody = '🤖 Kimi Code Review: Unable to generate review.';
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const existingComment = comments.find(c => c.body.includes('🤖 Kimi Code Review'));
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+              });
+            }
