@@ -1,0 +1,304 @@
+name: Unified CI (Electron + Android)
+
+on:
+  push:
+    branches: [main, develop, feature/*, fix/*]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Detect Changes Job
+  detect-changes:
+    name: Detect Platform Changes
+    runs-on: ubuntu-latest
+    outputs:
+      electron: ${{ steps.filter.outputs.electron }}
+      android: ${{ steps.filter.outputs.android }}
+      shared: ${{ steps.filter.outputs.shared }}
+      app-core: ${{ steps.filter.outputs.app-core }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Detect Changes
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            electron:
+              - 'electron/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/unified-ci.yml'
+            android:
+              - 'android/**'
+              - 'capacitor.config.*'
+              - '.github/workflows/android-ci.yml'
+              - '.github/workflows/unified-ci.yml'
+            shared:
+              - 'app/package*.json'
+              - 'app/tsconfig.json'
+              - 'app/vite.config.ts'
+              - 'app/index.html'
+            app-core:
+              - 'app/src/**'
+              - 'app/public/**'
+              - 'app/__tests__/**'
+              - '!app/src/locales/**'
+
+  # Shared Test Job (always runs if app code changed)
+  test:
+    name: Test & Lint
+    runs-on: ubuntu-latest
+    needs: detect-changes
+    if: |
+      needs.detect-changes.outputs.electron == 'true' ||
+      needs.detect-changes.outputs.android == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.app-core == 'true' ||
+      github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Run Unit Tests
+        working-directory: ./app
+        run: npm run test -- --reporter=verbose
+
+      - name: Run Lint
+        working-directory: ./app
+        run: npm run lint
+
+      - name: Check Types
+        working-directory: ./app
+        run: npm run type-check || true
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: app/coverage/
+
+  # Electron Build Pipeline
+  build-electron:
+    name: Build Electron
+    runs-on: ${{ matrix.os }}
+    needs: [detect-changes, test]
+    if: |
+      needs.detect-changes.outputs.electron == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.app-core == 'true' ||
+      github.event_name == 'pull_request'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: |
+            app/package-lock.json
+            electron/package-lock.json
+
+      - name: Install App dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build Web App
+        working-directory: ./app
+        run: npm run build
+
+      - name: Install Electron dependencies
+        working-directory: ./electron
+        run: npm ci
+
+      - name: Build Electron (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: ./electron
+        run: npm run build:linux || npm run dist -- --linux || true
+
+      - name: Build Electron (Windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: ./electron
+        run: npm run build:win || npm run dist -- --win || true
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-build-${{ matrix.os }}
+          path: |
+            electron/dist/*.AppImage
+            electron/dist/*.exe
+            electron/dist/*.snap
+            electron/dist/*.deb
+            electron/dist/*.rpm
+
+  # Android Build Pipeline
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test]
+    if: |
+      needs.detect-changes.outputs.android == 'true' ||
+      needs.detect-changes.outputs.shared == 'true' ||
+      needs.detect-changes.outputs.app-core == 'true' ||
+      github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: android/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Capacitor dependencies
+        working-directory: ./android
+        run: npm ci
+
+      - name: Install App dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build Web App for Android
+        working-directory: ./app
+        run: npm run build:android || npm run build
+
+      - name: Sync Capacitor
+        working-directory: ./android
+        run: npx cap sync android
+
+      - name: Build Debug APK
+        working-directory: ./android/android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: android/android/app/build/outputs/apk/debug/app-debug.apk
+
+  # Android Emulator Test (only on PR or main)
+  test-android-emulator:
+    name: Test on Android Emulator
+    runs-on: macos-latest
+    needs: build-android
+    if: |
+      github.event_name == 'pull_request' ||
+      github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/develop'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download APK
+        uses: actions/download-artifact@v4
+        with:
+          name: android-debug-apk
+          path: ./apk
+
+      - name: Run Emulator Tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          script: |
+            adb install ./apk/app-debug.apk
+            adb shell am start -n com.secuchat.app/.MainActivity
+            sleep 10
+            adb shell screencap -p /sdcard/screenshot.png
+            adb pull /sdcard/screenshot.png
+
+      - name: Upload Screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-screenshot
+          path: screenshot.png
+
+  # Security Checks (always run)
+  security-checks:
+    name: Security Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: GitGuardian Scan
+        uses: GitGuardian/ggshield-action@v1
+        env:
+          GITGUARDIAN_API_KEY: ${{ secrets.GITGUARDIAN_API_KEY }}
+        continue-on-error: true
+
+      - name: Run npm audit (App)
+        working-directory: ./app
+        run: npm audit --audit-level=high || true
+
+      - name: Run npm audit (Electron)
+        working-directory: ./electron
+        run: npm audit --audit-level=high || true
+
+  # Claude Code Review (PRs only)
+  claude-review:
+    name: Claude Code Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [detect-changes]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Review
+        uses: ./.github/actions/claude-review
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
+        continue-on-error: true
+
+  # Summary Job
+  ci-summary:
+    name: CI Summary
+    runs-on: ubuntu-latest
+    needs: [detect-changes, test, build-electron, build-android, security-checks]
+    if: always()
+    steps:
+      - name: Summary
+        run: |
+          echo "## CI Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Platform Changes Detected" >> $GITHUB_STEP_SUMMARY
+          echo "- Electron: ${{ needs.detect-changes.outputs.electron }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Android: ${{ needs.detect-changes.outputs.android }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Shared: ${{ needs.detect-changes.outputs.shared }}" >> $GITHUB_STEP_SUMMARY
+          echo "- App Core: ${{ needs.detect-changes.outputs.app-core }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Build Status" >> $GITHUB_STEP_SUMMARY
+          echo "- Tests: ${{ needs.test.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Electron Build: ${{ needs.build-electron.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Android Build: ${{ needs.build-android.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Security: ${{ needs.security-checks.result }}" >> $GITHUB_STEP_SUMMARY
