@@ -121,6 +121,10 @@ async function initializeI2P(): Promise<boolean> {
 const userDataPath = join(app.getPath('appData'), 'SecuChat');
 app.setPath('userData', userDataPath);
 console.log('[Main] userData path:', userDataPath);
+console.log('[Main] App path:', app.getAppPath());
+console.log('[Main] Exec path:', process.execPath);
+console.log('[Main] isPackaged:', app.isPackaged);
+console.log('[Main] CWD:', process.cwd());
 
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');

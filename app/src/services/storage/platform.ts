@@ -132,5 +132,7 @@ export function logPlatformDetection(): void {
     platform: caps.platform,
     backend: caps.backend,
     encryption: caps.encryption,
+    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A',
+    hasElectronAPI: typeof window !== 'undefined' && !!(window as unknown as { electronAPI?: unknown }).electronAPI,
   });
 }

@@ -34,6 +34,7 @@ export function initializeDatabase(): DatabaseType {
 
   const dbPath = getDatabasePath();
   console.log('[Storage] Opening database at:', dbPath);
+  console.log('[Storage] Database directory exists:', require('fs').existsSync(require('path').dirname(dbPath)));
 
   // Open database with WAL mode for better concurrency
   const newDb: DatabaseType = new Database(dbPath);
