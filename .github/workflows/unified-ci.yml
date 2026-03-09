@@ -327,78 +327,98 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      issues: read
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Get changed files
-        id: changed-files
+      - name: Get PR diff
+        id: pr-diff
         run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|json)$' | head -30 || true)
-          {
-            echo "files<<KIMI_FILE_EOF"
-            echo "$CHANGED_FILES"
-            echo "KIMI_FILE_EOF"
-          } >> $GITHUB_OUTPUT
+          git fetch origin ${{ github.base_ref }}
+          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+          echo "diff_size=$(wc -c < pr_diff.txt)" >> $GITHUB_OUTPUT
 
       - name: Run Kimi Code Review
-        id: review
+        if: steps.pr-diff.outputs.diff_size != '0'
         env:
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+          ANTHROPIC_BASE_URL: https://api.kimi.com/coding/
+          ANTHROPIC_API_KEY: ${{ secrets.KIMI_API_KEY }}
         run: |
-          # Build review content
-          REVIEW_CONTENT=""
-          IFS=$'\n'
-          for file in ${{ steps.changed-files.outputs.files }}; do
-            if [ -f "$file" ] && [ -s "$file" ]; then
-              CONTENT=$(head -50 "$file" | sed 's/"/\\"/g' | tr '\n' ' ')
-              if [ -n "$CONTENT" ]; then
-                REVIEW_CONTENT="${REVIEW_CONTENT}\\n=== $file ===\\n${CONTENT}\\n"
-              fi
-            fi
-          done
+          # Create review prompt
+          cat > review_prompt.txt << 'PROMPT'
+          Review this pull request code changes. Focus on:
+          1. Security issues (SQL injection, XSS, secrets)
+          2. Type safety and potential runtime errors
+          3. Code quality and maintainability
+          4. Performance concerns
+          5. Architecture and design patterns
 
-          # Check if we have any content
-          if [ -z "$REVIEW_CONTENT" ]; then
-            echo "review=No TypeScript/JavaScript files changed for review." >> $GITHUB_OUTPUT
-            exit 0
-          fi
+          Provide specific, actionable feedback with file names and line numbers where applicable.
+          Format your response as markdown suitable for a GitHub PR comment.
+          PROMPT
 
-          # Call Kimi Code API
-          PAYLOAD=$(jq -n \
-            --arg content "$REVIEW_CONTENT" \
-            '{model: "kimi-k2-coder", messages: [{role: "system", content: "You are an expert code reviewer. Review the code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
+          echo "=== Changes to review ==="
+          head -100 pr_diff.txt
+          echo "... (truncated if longer)"
 
-          RESPONSE=$(curl -s -X POST "https://api.kimi.com/coding/chat/completions" \
-            -H "Authorization: Bearer $KIMI_API_KEY" \
+          # Call Kimi API for review
+          curl -s -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
             -H "Content-Type: application/json" \
-            -d "$PAYLOAD" || echo '{"choices":[{"message":{"content":"API call failed"}}]}')
+            -H "x-api-key: ${ANTHROPIC_API_KEY}" \
+            -H "anthropic-version: 2023-06-01" \
+            -d '{
+              "model": "kimi-for-coding",
+              "max_tokens": 4000,
+              "messages": [
+                {"role": "user", "content": "'$(cat review_prompt.txt | sed 's/"/\\"/g')'\n\nHere is the code diff:\n\n```diff\n'$(head -300 pr_diff.txt | sed 's/"/\\"/g')'\n```"}
+              ]
+            }' > kimi_response.json
 
-          REVIEW_TEXT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No review generated"')
+          # Extract review comment
+          cat kimi_response.json | jq -r '.content[0].text' > review_comment.md || echo "Kimi review failed"
 
-          # Output for GitHub Actions
-          echo "review<<KIMI_EOF" >> $GITHUB_OUTPUT
-          echo "$REVIEW_TEXT" >> $GITHUB_OUTPUT
-          echo "KIMI_EOF" >> $GITHUB_OUTPUT
-
-      - name: Post review comment
+      - name: Post Kimi Review Comment
+        if: steps.pr-diff.outputs.diff_size != '0'
         uses: actions/github-script@v7
         with:
           script: |
-            const review = `${{ steps.review.outputs.review }}`;
-            if (!review || review === 'No review generated') {
-              console.log('No review to post');
-              return;
+            const fs = require('fs');
+            let reviewBody;
+            try {
+              reviewBody = fs.readFileSync('review_comment.md', 'utf8');
+              if (!reviewBody || reviewBody.trim() === '' || reviewBody === 'null') {
+                reviewBody = '🤖 Kimi Code Review: No issues found or review unavailable.';
+              }
+            } catch (e) {
+              reviewBody = '🤖 Kimi Code Review: Unable to generate review.';
             }
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🤖 **Kimi Code Review**\n\n${review}\n\n---\n*Powered by Kimi Code API*`
+              issue_number: context.issue.number
             });
+
+            const existingComment = comments.find(c => c.body.includes('🤖 Kimi Code Review'));
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+              });
+            }
 
   # ═══════════════════════════════════════════════════════════════
   # RELEASE JOBS (Only on main push or workflow_dispatch)
