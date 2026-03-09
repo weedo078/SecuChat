@@ -267,7 +267,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.check-android.outputs.exists == 'true'
         with:
-          node-version: '20'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
@@ -423,30 +423,63 @@ jobs:
 
           echo "=== HTTP Status: ${HTTP_STATUS} ==="
 
-          # Validate HTTP status and response structure (no debug logging to prevent secret leakage)
+          # Validate HTTP status and response structure
           if [ "${HTTP_STATUS}" != "200" ]; then
             echo "❌ API request failed with HTTP status ${HTTP_STATUS}" >&2
+            echo "=== Response body (sanitized) ===" >&2
+            jq 'del(.error.message)' kimi_response.json 2>/dev/null || cat kimi_response.json
             echo "Kimi review failed: HTTP ${HTTP_STATUS}" > review_comment.md
+          elif ! jq -e '.' kimi_response.json > /dev/null 2>&1; then
+            echo "❌ Invalid JSON response" >&2
+            echo "=== Raw response (first 500 chars) ===" >&2
+            head -c 500 kimi_response.json
+            echo ""
+            echo "Kimi review failed: Invalid JSON response" > review_comment.md
           elif jq -e '.type == "error"' kimi_response.json > /dev/null 2>&1; then
             # Sanitize error message to prevent potential secret leakage
             ERROR_MSG=$(jq -r '.error.message // "Unknown error"' kimi_response.json | head -c 200)
-            echo "❌ API returned error (see review comment)" >&2
+            echo "❌ API returned error: ${ERROR_MSG}" >&2
+            echo "=== Response structure ===" >&2
+            jq 'keys' kimi_response.json >&2
             echo "Kimi review failed: API error - ${ERROR_MSG}" > review_comment.md
           elif jq -e '.error' kimi_response.json > /dev/null 2>&1; then
             # Sanitize error message to prevent potential secret leakage
             ERROR_MSG=$(jq -r '.error.message // "Unknown error"' kimi_response.json | head -c 200)
-            echo "❌ API returned error (see review comment)" >&2
+            echo "❌ API returned error: ${ERROR_MSG}" >&2
+            echo "=== Response structure ===" >&2
+            jq 'keys' kimi_response.json >&2
             echo "Kimi review failed: API error - ${ERROR_MSG}" > review_comment.md
-          elif jq -e '.content[0].text' kimi_response.json > /dev/null 2>&1; then
-            # Valid response with content
-            jq -r '.content[0].text' kimi_response.json > review_comment.md
+          elif jq -e '.content | type == "array" and length > 0' kimi_response.json > /dev/null 2>&1; then
+            # Valid response with content array
+            if jq -e '.content[0].text' kimi_response.json > /dev/null 2>&1; then
+              jq -r '.content[0].text' kimi_response.json > review_comment.md
+              echo "✅ Successfully extracted review content" >&2
+            else
+              echo "⚠️ Content array exists but no text field" >&2
+              echo "=== Content structure ===" >&2
+              jq '.content[0]' kimi_response.json >&2
+              echo "Kimi review failed: Missing text in content" > review_comment.md
+            fi
           else
             echo "⚠️ Unexpected API response structure" >&2
+            echo "=== Response keys ===" >&2
+            jq 'keys' kimi_response.json >&2
+            echo "=== Full response (sanitized) ===" >&2
+            jq 'walk(if type == "string" and length > 100 then .[0:100] + "..." else . end)' kimi_response.json >&2
             echo "Kimi review failed: Unexpected response structure" > review_comment.md
           fi
 
-          # Cleanup temporary files
-          rm -f pr_diff.txt payload.json kimi_response.json review_comment.md review_prompt.txt
+          # Verify review_comment.md was created and is not empty
+          if [ ! -f review_comment.md ]; then
+            echo "❌ review_comment.md was not created" >&2
+            echo "Kimi review failed: Internal error - output file missing" > review_comment.md
+          elif [ ! -s review_comment.md ]; then
+            echo "❌ review_comment.md is empty" >&2
+            echo "Kimi review failed: Empty response from API" > review_comment.md
+          fi
+
+          # Cleanup temporary files (preserve review_comment.md for next step)
+          rm -f pr_diff.txt payload.json kimi_response.json review_prompt.txt
 
       - name: Post Kimi Review Comment
         if: steps.pr-diff.outputs.diff_size != '0'
@@ -454,16 +487,34 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const path = 'review_comment.md';
 
             // Build the comment body from the review content
             let reviewContent;
             try {
-              reviewContent = fs.readFileSync('review_comment.md', 'utf8');
-              if (!reviewContent || reviewContent.trim() === '' || reviewContent === 'null') {
-                reviewContent = '🤖 Kimi Code Review: No issues found or review unavailable.';
+              // Check if file exists first
+              if (!fs.existsSync(path)) {
+                console.log(`❌ File ${path} does not exist`);
+                reviewContent = '🤖 Kimi Code Review: Unable to generate review - output file missing.';
+              } else {
+                const stats = fs.statSync(path);
+                console.log(`✅ File ${path} exists, size: ${stats.size} bytes`);
+
+                reviewContent = fs.readFileSync(path, 'utf8');
+                console.log(`✅ Read ${reviewContent.length} characters from ${path}`);
+
+                if (!reviewContent || reviewContent.trim() === '' || reviewContent === 'null') {
+                  console.log('⚠️ Review content is empty or null');
+                  reviewContent = '🤖 Kimi Code Review: No issues found or review unavailable.';
+                } else if (reviewContent.startsWith('Kimi review failed:')) {
+                  console.log('⚠️ Review generation failed:', reviewContent);
+                } else {
+                  console.log('✅ Successfully loaded review content');
+                }
               }
             } catch (e) {
-              reviewContent = '🤖 Kimi Code Review: Unable to generate review.';
+              console.log('❌ Error reading review file:', e.message);
+              reviewContent = '🤖 Kimi Code Review: Unable to generate review - ' + e.message;
             }
 
             const commentBody = `🤖 **Kimi Code Review**\n\n${reviewContent}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`;
