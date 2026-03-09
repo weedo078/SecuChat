@@ -89,6 +89,7 @@ class I2PService {
       // CRITICAL: We MUST have a persistent SAM destination - TRANSIENT doesn't publish LeaseSets
       let newDestinationGenerated = false;
       if (!this.identity?.samDestination) {
+        console.log('[I2P] Generating new SAM destination (none exists in identity)');
         const session = await samService.generateDestination();
         if (this.identity) {
           // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
@@ -96,7 +97,10 @@ class I2PService {
           newDestinationGenerated = true;
           // Notify that a new destination was generated - caller must persist it
           this.currentStatus.newDestinationGenerated = true;
+          console.log('[I2P] New SAM destination generated, caller must persist it');
         }
+      } else {
+        console.log('[I2P] Using existing SAM destination from identity');
       }
 
       // Verify we have a valid destination before creating session
@@ -187,6 +191,7 @@ class I2PService {
    * Restore identity from stored keys
    */
   async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string): Promise<I2PIdentity> {
+    console.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination);
     const publicKey = base64ToUint8Array(publicKeyB64);
     const privateKey = base64ToUint8Array(privateKeyB64);
     const b32Address = toBase32(publicKey) + '.b32.i2p';

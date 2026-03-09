@@ -237,9 +237,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
-        // Fire-and-forget: I2P connects in background, UI updates via setI2pStatus
+        // Await I2P init to ensure SAM destination is persisted before continuing
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
+        try {
+          const status = await i2pService.initialize(effectiveSamConfig(i2pSettings.sam));
           setI2pStatus(status);
           if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
@@ -261,15 +262,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
               console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
               updatedUser = { ...updatedUser, i2pAddress: status.address };
             }
+            // Defensive check: if user doesn't have i2pSamDestination but I2P identity now has one, force save
+            if (!updatedUser.i2pSamDestination && identity?.samDestination) {
+              console.log('[AppContext] Force-saving SAM destination that was missing from storage');
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
             if (updatedUser !== savedUser) {
-              storageService.saveUser(updatedUser).catch(console.error);
-              setUser(updatedUser);
+              try {
+                await storageService.saveUser(updatedUser);
+                setUser(updatedUser);
+              } catch (err) {
+                console.warn('[AppContext] Failed to save user updates:', err);
+              }
             }
           }
-        }).catch((err) => {
+        } catch (err) {
           console.error('[AppContext] I2P init failed:', err);
           setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-        });
+        }
       }
       
     } catch (error) {
@@ -815,10 +825,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
-        // Start I2P connection in background
+        // Start I2P connection and await to ensure SAM destination is persisted
         const savedSettings = await storageService.getSettings();
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
+        try {
+          const status = await i2pService.initialize(effectiveSamConfig(i2pSettings.sam));
           setI2pStatus(status);
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
@@ -836,15 +847,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
               console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
               updatedUser = { ...updatedUser, i2pAddress: status.address };
             }
+            // Defensive check: if user doesn't have i2pSamDestination but I2P identity now has one, force save
+            if (!updatedUser.i2pSamDestination && identity?.samDestination) {
+              console.log('[AppContext] Force-saving SAM destination that was missing from storage');
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
             if (updatedUser !== decryptedUser) {
-              storageService.saveUser(updatedUser).catch(console.error);
-              setUser(updatedUser);
+              try {
+                await storageService.saveUser(updatedUser);
+                setUser(updatedUser);
+              } catch (err) {
+                console.warn('[AppContext] Failed to save user updates:', err);
+              }
             }
           }
-        }).catch((err) => {
+        } catch (err) {
           console.error('[AppContext] I2P init failed:', err);
           setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-        });
+        }
       }
 
       return true;
