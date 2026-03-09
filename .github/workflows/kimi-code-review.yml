@@ -218,15 +218,12 @@ jobs:
               labels: ["kimi-review", $repo, "pr-" + $pr]
             }' > email_payload.json
 
-          # Create curl config file for AgentMail API (avoids exposing key in process list)
-          {
-            echo 'header "Content-Type: application/json"'
-            echo "header \"Authorization: Bearer ${AGENTMAIL_API_KEY}\""
-            echo 'request POST'
-            echo "url \"https://api.agentmail.to/inboxes/${SENDER_INBOX}/messages/send\""
-            echo 'data @email_payload.json'
-          } > agentmail_curl_config.txt
-
-          curl -s --fail-with-body --config agentmail_curl_config.txt
+          # Send via AgentMail API using header file for security
+          echo "Authorization: Bearer ${AGENTMAIL_API_KEY}" > agentmail_headers.txt
+          curl -s --fail-with-body \
+            -H "@agentmail_headers.txt" \
+            -H "Content-Type: application/json" \
+            "https://api.agentmail.to/inboxes/${SENDER_INBOX}/messages/send" \
+            -d @email_payload.json
 
           echo "OpenClaw email notification sent successfully"
