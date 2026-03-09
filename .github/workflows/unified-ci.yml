@@ -266,7 +266,7 @@ jobs:
         if: steps.check-android.outputs.exists == 'true'
         uses: actions/setup-java@v4
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Android SDK
