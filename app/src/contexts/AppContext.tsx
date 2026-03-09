@@ -501,13 +501,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
     retryMessages();
   }, [i2pStatus?.samConnected, contacts, user?.id, user?.fingerprint]);
 
-  // Periodic status check: mark contacts offline if unreachable
+  // Periodic status check: retry all contacts regardless of current status
+  // In I2P, peers may be temporarily unreachable (LeaseSet propagation, network issues)
+  // We continuously retry to detect when they come back online
   useEffect(() => {
     if (!i2pStatus?.samConnected || contacts.length === 0) return;
 
+    // Track last retry time per contact to avoid hammering (10s minimum interval)
+    const lastRetryMap = new Map<string, number>();
+
     const interval = setInterval(() => {
       contacts.forEach(async (contact) => {
-        if (!contact.i2pAddress || contact.status === 'offline') return;
+        if (!contact.i2pAddress) return;
+
+        // Don't retry same contact within 10 seconds
+        const now = Date.now();
+        const lastRetry = lastRetryMap.get(contact.id) || 0;
+        if (now - lastRetry < 10000) return;
+        lastRetryMap.set(contact.id, now);
         try {
           console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
           await i2pService.connectToPeer(contact.i2pAddress);
