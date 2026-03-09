@@ -173,14 +173,14 @@ export async function saveNotificationSettings(settings: Partial<NotificationSet
   currentSettings = { ...currentSettings, ...settings };
   try {
     const appSettings = await storageService.getSettings();
-    if (appSettings) {
-      await storageService.saveSettings({
-        ...appSettings,
-        notificationSettings: currentSettings,
-      });
-    }
+    // Merge with existing settings or create new settings object
+    const settingsToSave = appSettings
+      ? { ...appSettings, notificationSettings: currentSettings }
+      : { notificationSettings: currentSettings };
+    await storageService.saveSettings(settingsToSave);
   } catch (error) {
     console.error('[NotificationService] Failed to save settings:', error);
+    throw error; // Re-throw to allow caller to handle
   }
 }
 
@@ -224,8 +224,9 @@ export async function scheduleMessageNotification(
   if (appState?.isActive) return;
 
   // Build notification content
+  const messageContent = message.decryptedContent || message.encryptedContent || '';
   const body = notifSettings.showPreview
-    ? truncateMessage(message.decryptedContent || message.encryptedContent, 100)
+    ? truncateMessage(messageContent, 100)
     : 'Neue Nachricht';
 
   // Track pending notification for grouping

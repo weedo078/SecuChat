@@ -286,12 +286,21 @@ class PowerManagementService {
 
   private async refreshState(): Promise<void> {
     try {
-      const [batteryOpt, wakeLock, doze, powerSave] = await Promise.all([
+      // Use Promise.allSettled to handle partial failures gracefully
+      const results = await Promise.allSettled([
         this.isIgnoringBatteryOptimizations(),
         this.isWakeLockHeld(),
         this.isDeviceIdleMode(),
         this.isPowerSaveMode(),
       ]);
+
+      const [batteryOpt, wakeLock, doze, powerSave] = results.map((result, index) => {
+        if (result.status === 'fulfilled') {
+          return result.value;
+        }
+        console.warn(`[PowerManagement] Failed to get state at index ${index}:`, result.reason);
+        return false;
+      });
 
       this.currentState = {
         isIgnoringBatteryOptimizations: batteryOpt,

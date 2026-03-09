@@ -396,26 +396,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Update chat unread count & timestamp
       if (localChat) {
+        const chatId = localChat.id;
         const updatedChat = {
           ...localChat,
           lastMessageTimestamp: message.timestamp,
           unreadCount: isChatActive ? 0 : (localChat.unreadCount || 0) + 1,
         };
         await storageService.saveChat(updatedChat);
-        setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
+        setChats(prev => prev.map(c => c.id === chatId ? updatedChat : c));
       }
 
       // Update contact status to online when receiving a message
       if (localContact) {
+        const contactId = localContact.id;
         const updatedContact = {
           ...localContact,
           status: 'online' as const,
           lastSeen: new Date().toISOString(),
         };
         await storageService.saveContact(updatedContact);
-        setContacts(prev => prev.map(c => c.id === localContact!.id ? updatedContact : c));
+        setContacts(prev => prev.map(c => c.id === contactId ? updatedContact : c));
         setChats(prev => prev.map(ch =>
-          ch.contactId === localContact!.id ? { ...ch, contact: updatedContact } : ch
+          ch.contactId === contactId ? { ...ch, contact: updatedContact } : ch
         ));
       }
 
