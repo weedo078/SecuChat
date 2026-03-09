@@ -39,8 +39,10 @@ export class LocalStorageFallback {
   put(store: string, keyField: string, value: Record<string, unknown>): void {
     const data = this.load(store);
     const id = value[keyField] as string;
+    console.log('[Storage Fallback] Saving to', store, 'id:', id);
     data[id] = value;
     this.save(store, data);
+    console.log('[Storage Fallback] Saved, total items in', store, ':', Object.keys(data).length);
   }
 
   get(store: string, id: string): unknown | null {
@@ -49,7 +51,10 @@ export class LocalStorageFallback {
   }
 
   getAll(store: string): unknown[] {
-    return Object.values(this.load(store));
+    const data = this.load(store);
+    const items = Object.values(data);
+    console.log('[Storage Fallback] Loading from', store, ', found', items.length, 'items');
+    return items;
   }
 
   remove(store: string, id: string): void {

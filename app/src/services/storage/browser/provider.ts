@@ -193,6 +193,9 @@ export class BrowserStorageProvider implements StorageProvider {
       this.fallback.put(storeName, STORE_KEY_FIELDS[storeName], value);
       return;
     }
+    if (!this.db) {
+      throw new Error(`[Storage] Cannot save to ${storeName}: Database not initialized`);
+    }
     const store = this.getStore(storeName, 'readwrite');
     return new Promise((resolve, reject) => {
       const request = store.put(value);
@@ -205,6 +208,10 @@ export class BrowserStorageProvider implements StorageProvider {
     if (this.fallback) {
       return this.fallback.get(storeName, key);
     }
+    if (!this.db) {
+      console.warn(`[Storage] Database not initialized when reading ${storeName}, returning null`);
+      return null;
+    }
     const store = this.getStore(storeName);
     return new Promise((resolve, reject) => {
       const request = store.get(key);
@@ -216,6 +223,10 @@ export class BrowserStorageProvider implements StorageProvider {
   private async getAllRecords(storeName: string): Promise<unknown[]> {
     if (this.fallback) {
       return this.fallback.getAll(storeName);
+    }
+    if (!this.db) {
+      console.warn(`[Storage] Database not initialized when accessing ${storeName}, returning empty array`);
+      return [];
     }
     const store = this.getStore(storeName);
     return new Promise((resolve, reject) => {
@@ -325,6 +336,7 @@ export class BrowserStorageProvider implements StorageProvider {
 
   // User operations
   async saveUser(user: User): Promise<void> {
+    console.log('[Storage] Saving user:', user.id);
     let userToStore = user;
     if (this.encryptionPassphrase && (user.pgpPrivateKey || user.i2pPrivateKey)) {
       userToStore = { ...user };
@@ -338,12 +350,19 @@ export class BrowserStorageProvider implements StorageProvider {
       }
     }
     await this.putRecord('user', userToStore as unknown as Record<string, unknown>);
+    console.log('[Storage] User saved successfully');
   }
 
   async getUser(): Promise<User | null> {
+    console.log('[Storage] Getting user, fallback:', this._usingFallback, 'db:', !!this.db);
     const users = (await this.getAllRecords('user')) as User[];
-    if (users.length === 0) return null;
+    console.log('[Storage] Found', users.length, 'users');
+    if (users.length === 0) {
+      console.log('[Storage] No user found in storage');
+      return null;
+    }
     let user = users[0];
+    console.log('[Storage] Loading user:', user.id);
     if (this.encryptionPassphrase && (user.pgpPrivateKey || user.i2pPrivateKey)) {
       try {
         user = { ...user };
