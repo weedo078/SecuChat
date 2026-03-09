@@ -73,6 +73,13 @@ const defaultSettings: AppSettings = {
   theme: 'dark',
   language: 'de',
   notifications: true,
+  notificationSettings: {
+    enabled: true,
+    sound: true,
+    vibration: true,
+    showPreview: true,
+    priority: 'high',
+  },
   soundEnabled: true,
   autoLock: true,
   lockTimeout: 5,

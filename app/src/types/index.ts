@@ -98,10 +98,19 @@ export interface I2PSettings {
   sam: SAMSettings;
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  sound: boolean;
+  vibration: boolean;
+  showPreview: boolean;
+  priority: 'high' | 'normal' | 'low';
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light';
   language: string;
   notifications: boolean;
+  notificationSettings: NotificationSettings;
   soundEnabled: boolean;
   autoLock: boolean;
   lockTimeout: number;
