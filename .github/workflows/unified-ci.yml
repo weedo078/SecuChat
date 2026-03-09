@@ -13,6 +13,15 @@ on:
 
 env:
   I2PD_VERSION: '2.59.0'
+  # Kimi API configuration - can be overridden via repository variables
+  KIMI_API_URL: ${{ vars.KIMI_API_URL || 'https://api.kimi.com/coding/' }}
+  KIMI_MODEL: ${{ vars.KIMI_MODEL || 'kimi-for-coding' }}
+  KIMI_MAX_TOKENS: ${{ vars.KIMI_MAX_TOKENS || '4000' }}
+  # Diff processing limits - prevents API payload size issues and keeps reviews focused
+  # 100 lines: preview shown in logs for debugging
+  # 300 lines: maximum diff content sent to API (keeps reviews focused on most relevant changes)
+  DIFF_PREVIEW_LINES: 100
+  DIFF_MAX_LINES: 300
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -336,15 +345,17 @@ jobs:
 
       - name: Get PR diff
         id: pr-diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin ${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > pr_diff.txt
+          git fetch origin "$BASE_REF"
+          git diff origin/"$BASE_REF"...HEAD > pr_diff.txt
           echo "diff_size=$(wc -c < pr_diff.txt)" >> $GITHUB_OUTPUT
 
       - name: Run Kimi Code Review
         if: steps.pr-diff.outputs.diff_size != '0'
         env:
-          ANTHROPIC_BASE_URL: https://api.kimi.com/coding/
+          ANTHROPIC_BASE_URL: ${{ env.KIMI_API_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.KIMI_API_KEY }}
         run: |
           # Create review prompt
@@ -361,18 +372,24 @@ jobs:
           PROMPT
 
           echo "=== Changes to review ==="
-          head -100 pr_diff.txt
+          head -${DIFF_PREVIEW_LINES} pr_diff.txt
           echo "... (truncated if longer)"
 
-          # Prepare the diff content (limit to 300 lines, escape for JSON)
-          DIFF_CONTENT=$(head -300 pr_diff.txt | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr '\n' ' ')
-          PROMPT_CONTENT=$(cat review_prompt.txt | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr '\n' ' ')
-
-          # Build JSON payload using jq for proper escaping
+          # Build JSON payload using jq for robust JSON handling (no shell interpolation)
+          # --rawfile reads files safely as raw strings, avoiding sed/tr escaping issues
           jq -n \
-            --arg prompt "$PROMPT_CONTENT" \
-            --arg diff "$DIFF_CONTENT" \
-            '{model: "kimi-for-coding", max_tokens: 4000, messages: [{role: "user", content: ($prompt + "\n\nHere is the code diff:\n\n```diff\n" + $diff + "\n```")}]}' > payload.json
+            --rawfile prompt review_prompt.txt \
+            --rawfile diff pr_diff.txt \
+            --arg model "${KIMI_MODEL}" \
+            --arg max_tokens "${KIMI_MAX_TOKENS}" \
+            '{
+              model: $model,
+              max_tokens: ($max_tokens | tonumber),
+              messages: [{
+                role: "user",
+                content: ($prompt | rtrimstr("\n") + "\n\nHere is the code diff:\n\n```diff\n" + ($diff | split("\n") | .[:($max_tokens | tonumber / 10 | floor | if . > 300 then 300 else . end)] | join("\n")) + "\n```")
+              }]
+            }' > payload.json
 
           # Call Kimi API for review with HTTP status check
           HTTP_STATUS=$(curl -s -w "%{http_code}" -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
@@ -383,8 +400,12 @@ jobs:
             -o kimi_response.json)
 
           echo "=== HTTP Status: ${HTTP_STATUS} ==="
-          echo "=== API Response ==="
-          cat kimi_response.json
+          # API response logging disabled by default to prevent potential secret leakage
+          # To enable for debugging, set KIMI_DEBUG secret to "1" in repository settings
+          if [ "${KIMI_DEBUG:-}" = "1" ]; then
+            echo "=== API Response (debug mode enabled) ==="
+            cat kimi_response.json
+          fi
 
           # Validate HTTP status and response structure
           if [ "${HTTP_STATUS}" != "200" ]; then
@@ -408,22 +429,26 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            let reviewBody;
+
+            // Build the comment body from the review content
+            let reviewContent;
             try {
-              reviewBody = fs.readFileSync('review_comment.md', 'utf8');
-              if (!reviewBody || reviewBody.trim() === '' || reviewBody === 'null') {
-                reviewBody = '🤖 Kimi Code Review: No issues found or review unavailable.';
+              reviewContent = fs.readFileSync('review_comment.md', 'utf8');
+              if (!reviewContent || reviewContent.trim() === '' || reviewContent === 'null') {
+                reviewContent = '🤖 Kimi Code Review: No issues found or review unavailable.';
               }
             } catch (e) {
-              reviewBody = '🤖 Kimi Code Review: Unable to generate review.';
+              reviewContent = '🤖 Kimi Code Review: Unable to generate review.';
             }
 
+            const commentBody = `🤖 **Kimi Code Review**\n\n${reviewContent}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`;
+
+            // Find existing Kimi review comment to update (idempotency)
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number
             });
-
             const existingComment = comments.find(c => c.body.includes('🤖 Kimi Code Review'));
 
             if (existingComment) {
@@ -431,14 +456,14 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: existingComment.id,
-                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+                body: commentBody
               });
             } else {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: context.issue.number,
-                body: `🤖 **Kimi Code Review**\n\n${reviewBody}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`
+                body: commentBody
               });
             }
 
