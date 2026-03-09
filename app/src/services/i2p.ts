@@ -86,6 +86,7 @@ class I2PService {
       }
 
       // Generate or use existing destination
+      // CRITICAL: We MUST have a persistent SAM destination - TRANSIENT doesn't publish LeaseSets
       let newDestinationGenerated = false;
       if (!this.identity?.samDestination) {
         const session = await samService.generateDestination();
@@ -93,12 +94,19 @@ class I2PService {
           // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
           this.identity.samDestination = session.privateKey;
           newDestinationGenerated = true;
+          // Notify that a new destination was generated - caller must persist it
+          this.currentStatus.newDestinationGenerated = true;
         }
+      }
+
+      // Verify we have a valid destination before creating session
+      const sessionPrivKey = this.identity?.samDestination;
+      if (!sessionPrivKey) {
+        throw new Error('SAM destination not available. Identity must be restored with samDestination before initializing I2P.');
       }
 
       // Create session — use timestamp-based nickname so i2pd never rejects
       // with DUPLICATED_ID (old sessions stay alive ~5 min after TCP drop)
-      const sessionPrivKey = this.identity?.samDestination || undefined;
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
 

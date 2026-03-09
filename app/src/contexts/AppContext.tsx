@@ -244,9 +244,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...savedUser };
-            // Always persist the SAM private key when a new destination was generated
-            // OR when we have one in identity but user doesn't have it stored yet
-            if (identity?.samDestination && (!savedUser.i2pSamDestination || status.newDestinationGenerated)) {
+            // CRITICAL: Always persist the SAM destination when:
+            // 1. A new destination was just generated, OR
+            // 2. We have one in identity but user record doesn't have it stored yet
+            // This ensures the destination survives app restarts and we never use TRANSIENT
+            const needsSamDestinationUpdate = identity?.samDestination &&
+              (!savedUser.i2pSamDestination || status.newDestinationGenerated || savedUser.i2pSamDestination !== identity.samDestination);
+            if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             // Sync the real SAM b32 address into the user record.
@@ -808,9 +812,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...decryptedUser };
-            // Always persist the SAM private key when a new destination was generated
-            // OR when we have one in identity but user doesn't have it stored yet
-            if (identity?.samDestination && (!decryptedUser.i2pSamDestination || status.newDestinationGenerated)) {
+            // CRITICAL: Always persist the SAM destination when:
+            // 1. A new destination was just generated, OR
+            // 2. We have one in identity but user record doesn't have it stored yet
+            // This ensures the destination survives app restarts and we never use TRANSIENT
+            const needsSamDestinationUpdate = identity?.samDestination &&
+              (!decryptedUser.i2pSamDestination || status.newDestinationGenerated || decryptedUser.i2pSamDestination !== identity.samDestination);
+            if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             if (status.address && status.address !== decryptedUser.i2pAddress) {

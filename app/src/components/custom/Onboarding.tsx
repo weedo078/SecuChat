@@ -146,6 +146,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         i2pAddress: i2pIdentity.b32Address,
         i2pPublicKey: i2pIdentity.publicKey,
         i2pPrivateKey: i2pIdentity.privateKey,
+        i2pSamDestination: undefined as string | undefined,  // Will be set on first I2P init
         createdAt: new Date().toISOString(),
       };
 

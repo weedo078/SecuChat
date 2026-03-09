@@ -236,12 +236,17 @@ class SAMService {
 
   /**
    * Create a streaming session
+   * CRITICAL: Never use TRANSIENT for the main identity - it doesn't publish LeaseSets.
+   * The caller MUST provide a valid private key.
    */
   async createSession(nickname: string, privateKey?: string): Promise<void> {
     this.requireConnected();
 
     const dest = privateKey || this.session?.privateKey;
-    const destParam = dest ? `DESTINATION=${dest}` : 'DESTINATION=TRANSIENT';
+    if (!dest) {
+      throw new Error('SAM destination private key is required. Call generateDestination() first or provide a stored key.');
+    }
+    const destParam = `DESTINATION=${dest}`;
     const resp = await this.sendRaw(
       `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
     );
