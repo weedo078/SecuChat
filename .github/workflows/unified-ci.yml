@@ -327,6 +327,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
         with:
