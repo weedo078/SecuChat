@@ -343,6 +343,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Validate Kimi API Key
+        run: |
+          if [ -z "${{ secrets.KIMI_API_KEY }}" ]; then
+            echo "::error::KIMI_API_KEY secret is not configured. Please add it in repository settings."
+            exit 1
+          fi
+          echo "KIMI_API_KEY is configured"
+
       - name: Get PR diff
         id: pr-diff
         env:
@@ -377,17 +385,31 @@ jobs:
 
           # Build JSON payload using jq for robust JSON handling (no shell interpolation)
           # --rawfile reads files safely as raw strings, avoiding sed/tr escaping issues
+          # Pre-calculate values in shell for jq simplicity with validation
+          MAX_TOKENS_RAW="${KIMI_MAX_TOKENS:-4000}"
+          # Validate numeric input, fallback to default if invalid
+          if ! echo "$MAX_TOKENS_RAW" | grep -qE '^[0-9]+$'; then
+            echo "⚠️ Invalid KIMI_MAX_TOKENS value '$MAX_TOKENS_RAW', using default 4000" >&2
+            MAX_TOKENS_RAW="4000"
+          fi
+          MAX_TOKENS="$MAX_TOKENS_RAW"
+          MAX_LINES=$((MAX_TOKENS / 10))
+          if [ "$MAX_LINES" -gt 300 ]; then
+            MAX_LINES=300
+          fi
+
           jq -n \
             --rawfile prompt review_prompt.txt \
             --rawfile diff pr_diff.txt \
             --arg model "${KIMI_MODEL}" \
-            --arg max_tokens "${KIMI_MAX_TOKENS}" \
+            --argjson max_tokens "$MAX_TOKENS" \
+            --argjson max_lines "$MAX_LINES" \
             '{
               model: $model,
-              max_tokens: ($max_tokens | tonumber),
+              max_tokens: $max_tokens,
               messages: [{
                 role: "user",
-                content: ($prompt | rtrimstr("\n") + "\n\nHere is the code diff:\n\n```diff\n" + ($diff | split("\n") | .[:($max_tokens | tonumber / 10 | floor | if . > 300 then 300 else . end)] | join("\n")) + "\n```")
+                content: ($prompt | rtrimstr("\n") + "\n\nHere is the code diff:\n\n```diff\n" + ($diff | split("\n") | .[:$max_lines] | join("\n")) + "\n```")
               }]
             }' > payload.json
 
@@ -400,21 +422,21 @@ jobs:
             -o kimi_response.json)
 
           echo "=== HTTP Status: ${HTTP_STATUS} ==="
-          # API response logging disabled by default to prevent potential secret leakage
-          # To enable for debugging, set KIMI_DEBUG secret to "1" in repository settings
-          if [ "${KIMI_DEBUG:-}" = "1" ]; then
-            echo "=== API Response (debug mode enabled) ==="
-            cat kimi_response.json
-          fi
 
-          # Validate HTTP status and response structure
+          # Validate HTTP status and response structure (no debug logging to prevent secret leakage)
           if [ "${HTTP_STATUS}" != "200" ]; then
             echo "❌ API request failed with HTTP status ${HTTP_STATUS}" >&2
             echo "Kimi review failed: HTTP ${HTTP_STATUS}" > review_comment.md
+          elif jq -e '.type == "error"' kimi_response.json > /dev/null 2>&1; then
+            # Sanitize error message to prevent potential secret leakage
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error"' kimi_response.json | head -c 200)
+            echo "❌ API returned error (see review comment)" >&2
+            echo "Kimi review failed: API error - ${ERROR_MSG}" > review_comment.md
           elif jq -e '.error' kimi_response.json > /dev/null 2>&1; then
-            echo "❌ API returned error:" >&2
-            jq '.error' kimi_response.json >&2
-            echo "Kimi review failed: API error - $(jq -r '.error.message // "Unknown error"' kimi_response.json)" > review_comment.md
+            # Sanitize error message to prevent potential secret leakage
+            ERROR_MSG=$(jq -r '.error.message // "Unknown error"' kimi_response.json | head -c 200)
+            echo "❌ API returned error (see review comment)" >&2
+            echo "Kimi review failed: API error - ${ERROR_MSG}" > review_comment.md
           elif jq -e '.content[0].text' kimi_response.json > /dev/null 2>&1; then
             # Valid response with content
             jq -r '.content[0].text' kimi_response.json > review_comment.md
@@ -422,6 +444,9 @@ jobs:
             echo "⚠️ Unexpected API response structure" >&2
             echo "Kimi review failed: Unexpected response structure" > review_comment.md
           fi
+
+          # Cleanup temporary files
+          rm -f pr_diff.txt payload.json kimi_response.json review_comment.md review_prompt.txt
 
       - name: Post Kimi Review Comment
         if: steps.pr-diff.outputs.diff_size != '0'

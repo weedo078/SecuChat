@@ -7,7 +7,7 @@
 
 import type { LocalNotificationSchema, ScheduleOptions } from '@capacitor/local-notifications';
 import { CapacitorApp } from './capacitorApp';
-import type { Contact, Message, NotificationSettings } from '@/types';
+import type { AppSettings, Contact, Message, NotificationSettings } from '@/types';
 import { storageService } from './storage';
 
 let LocalNotifications: typeof import('@capacitor/local-notifications').LocalNotifications | null = null;
@@ -173,10 +173,30 @@ export async function saveNotificationSettings(settings: Partial<NotificationSet
   currentSettings = { ...currentSettings, ...settings };
   try {
     const appSettings = await storageService.getSettings();
-    // Merge with existing settings or create new settings object
-    const settingsToSave = appSettings
+    // Merge with existing settings or create new settings object with defaults
+    const settingsToSave: AppSettings = appSettings
       ? { ...appSettings, notificationSettings: currentSettings }
-      : { notificationSettings: currentSettings };
+      : {
+          theme: 'dark',
+          language: 'de',
+          notifications: true,
+          notificationSettings: currentSettings,
+          soundEnabled: true,
+          autoLock: true,
+          lockTimeout: 5,
+          screenshotProtection: true,
+          syncEnabled: true,
+          deviceName: 'SecuChat Device',
+          i2p: {
+            mode: 'sam' as const,
+            sam: {
+              enabled: false,
+              host: '127.0.0.1',
+              port: 7657,
+              nickname: 'secuchat',
+            },
+          },
+        };
     await storageService.saveSettings(settingsToSave);
   } catch (error) {
     console.error('[NotificationService] Failed to save settings:', error);
