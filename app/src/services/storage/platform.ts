@@ -20,12 +20,18 @@ function isElectronMain(): boolean {
  * Detect if running in Electron renderer process
  */
 function isElectronRenderer(): boolean {
-  // Renderer has window and window.process
-  return (
-    typeof window !== 'undefined' &&
-    typeof window.process === 'object' &&
-    (window.process as { type?: string }).type === 'renderer'
-  );
+  // Renderer has window and window.process (with contextIsolation off)
+  // OR window.electronAPI (with contextIsolation on, exposed via preload)
+  if (typeof window === 'undefined') return false;
+
+  // Check for exposed electronAPI from preload script
+  const hasElectronAPI = !!(window as unknown as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
+
+  // Check for window.process (legacy, when nodeIntegration is on)
+  const hasProcess = typeof window.process === 'object' &&
+    (window.process as { type?: string }).type === 'renderer';
+
+  return hasElectronAPI || hasProcess;
 }
 
 /**
