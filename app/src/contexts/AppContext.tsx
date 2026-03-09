@@ -435,6 +435,68 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
   }, [i2pStatus?.samConnected]);
 
+  // Retry failed/sending messages when contact comes back online
+  useEffect(() => {
+    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+
+    const onlineContacts = contacts.filter(c => c.status === 'online' && c.i2pAddress);
+    if (onlineContacts.length === 0) return;
+
+    // Find messages with status 'sending' or 'failed' for online contacts
+    const retryMessages = async () => {
+      for (const contact of onlineContacts) {
+        const chat = await storageService.getChatByContactId(contact.id);
+        if (!chat) continue;
+
+        const allMessages = await storageService.getMessagesByChatId(chat.id);
+        const pendingMessages = allMessages.filter(m =>
+          (m.status === 'sending' || m.status === 'failed') &&
+          m.senderId === user?.id
+        );
+
+        if (pendingMessages.length > 0) {
+          console.log(`[Message Retry] ${pendingMessages.length} pending messages for ${contact.name}, retrying...`);
+          for (const message of pendingMessages) {
+            try {
+              // Re-send the message
+              const contactData = await storageService.getContact(contact.id);
+              if (!contactData?.pgpPublicKey) continue;
+
+              // Decrypt the content first if needed
+              let content = message.encryptedContent;
+              if (message.decryptedContent && cryptoService.hasKeyPair()) {
+                content = await cryptoService.encryptMessage(message.decryptedContent, contactData.pgpPublicKey);
+              }
+
+              const success = await i2pService.sendMessage(contact.i2pAddress, {
+                type: 'chat-message',
+                id: message.id,
+                chatId: chat.id,
+                senderId: user?.id,
+                senderFingerprint: user?.fingerprint,
+                encryptedContent: content,
+                timestamp: message.timestamp,
+                sequenceNumber: message.sequenceNumber,
+                replyTo: message.replyTo,
+              });
+
+              if (success) {
+                const updatedMessage = { ...message, status: 'sent' as const };
+                await storageService.saveMessage(updatedMessage);
+                setMessages(prev => prev.map(m => m.id === message.id ? updatedMessage : m));
+                console.log(`[Message Retry] Message ${message.id.slice(0, 8)} sent successfully`);
+              }
+            } catch (err) {
+              console.error(`[Message Retry] Failed to resend message ${message.id.slice(0, 8)}:`, err);
+            }
+          }
+        }
+      }
+    };
+
+    retryMessages();
+  }, [i2pStatus?.samConnected, contacts, user?.id, user?.fingerprint]);
+
   // Periodic status check: mark contacts offline if unreachable
   useEffect(() => {
     if (!i2pStatus?.samConnected || contacts.length === 0) return;
