@@ -61,16 +61,16 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <Header 
-        onMenuClick={() => setSidebarOpen(true)} 
-        onSettingsClick={() => setShowSettings(true)} 
+    <div className="h-screen bg-background flex flex-col overflow-hidden">
+      <Header
+        onMenuClick={() => setSidebarOpen(true)}
+        onSettingsClick={() => setShowSettings(true)}
       />
 
       <div className="flex-1 flex overflow-hidden">
         {/* Desktop Sidebar */}
-        <div className="hidden lg:block w-80 shrink-0">
-          <Sidebar 
+        <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
+          <Sidebar
             onAddContact={() => setShowContactManager(true)}
             onShareContact={() => setShowShareContact(true)}
             onSettingsClick={() => setShowSettings(true)}
@@ -80,7 +80,7 @@ function App() {
         {/* Mobile Sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
           <SheetContent side="left" className="p-0 w-80">
-            <Sidebar 
+            <Sidebar
               onAddContact={() => {
                 setSidebarOpen(false);
                 setShowContactManager(true);
@@ -98,7 +98,9 @@ function App() {
         </Sheet>
 
         {/* Main Content */}
-        <ChatView />
+        <div className="flex-1 flex flex-col h-full overflow-hidden">
+          <ChatView />
+        </div>
       </div>
 
       {/* Dialogs */}
