@@ -48,7 +48,11 @@ interface AppContextType {
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
   securitySettings: SecuritySettings;
   updateSecuritySettings: (settings: Partial<SecuritySettings>) => Promise<void>;
-  
+
+  // Theme
+  theme: 'dark' | 'light';
+  setTheme: (theme: 'dark' | 'light') => void;
+
   // Connection
   connectionState: ConnectionState;
   encryptionState: EncryptionState;
@@ -144,7 +148,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Settings state
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings>(defaultSecuritySettings);
-  
+
+  // Theme state
+  const [theme, setThemeState] = useState<'dark' | 'light'>(settings.theme);
+
   // Connection state
   const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
   const [encryptionState, setEncryptionState] = useState<EncryptionState>('unencrypted');
@@ -221,6 +228,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const savedSettings = await storageService.getSettings();
       if (savedSettings) {
         setSettings(savedSettings);
+        if (savedSettings.theme) {
+          setThemeState(savedSettings.theme);
+        }
       }
       
       const savedSecuritySettings = await storageService.getSecuritySettings();
@@ -789,6 +799,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await storageService.saveSecuritySettings(updated);
   }, [securitySettings]);
 
+  // Theme operations
+  const setTheme = useCallback(async (newTheme: 'dark' | 'light') => {
+    setThemeState(newTheme);
+    const updated = { ...settings, theme: newTheme };
+    setSettings(updated);
+    await storageService.saveSettings(updated);
+  }, [settings]);
+
   // Auth operations
   const lockApp = useCallback(() => {
     setIsLocked(true);
@@ -922,6 +940,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     updateSettings,
     securitySettings,
     updateSecuritySettings,
+    theme,
+    setTheme,
     connectionState,
     encryptionState,
     i2pStatus,
