@@ -25,6 +25,9 @@ export interface StorageProvider {
   /** Platform identifier */
   readonly platform: StoragePlatform;
 
+  /** True when using localStorage fallback (IndexedDB unavailable) */
+  readonly usingFallback?: boolean;
+
   /** Initialize the storage backend */
   init(): Promise<void>;
 

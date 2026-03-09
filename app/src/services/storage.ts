@@ -35,13 +35,6 @@ export class StorageService {
     const platform = getStoragePlatform();
     console.log('[StorageService] Initializing for platform:', platform);
 
-    // For now, always use BrowserStorageProvider
-    // When Electron IPC storage is fully implemented, switch based on platform:
-    // if (platform === 'electron') {
-    //   this.provider = new ElectronStorageProvider();
-    // } else {
-    //   this.provider = new BrowserStorageProvider();
-    // }
     this.provider = new BrowserStorageProvider();
   }
 
@@ -54,14 +47,19 @@ export class StorageService {
 
   /** True when using localStorage fallback (IndexedDB unavailable) */
   get usingFallback(): boolean {
-    return (this.provider as BrowserStorageProvider).usingFallback ?? false;
+    return this.provider.usingFallback ?? false;
   }
 
   /**
    * Initialize the storage backend
    */
   async init(): Promise<void> {
-    return this.provider.init();
+    try {
+      return await this.provider.init();
+    } catch (error) {
+      console.error('[StorageService] Failed to initialize storage provider:', error);
+      throw error;
+    }
   }
 
   /**
