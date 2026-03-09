@@ -98,9 +98,9 @@
     }
   },
   "devDependencies": {
-    "@types/node": "^25.3.3",
+    "@types/node": "^25.3.5",
     "@types/ws": "^8.5.0",
-    "electron": "^40.6.1",
+    "electron": "^40.8.0",
     "electron-builder": "^26.8.1",
     "typescript": "^5.5.0"
   },
