@@ -443,13 +443,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       contacts.forEach(async (contact) => {
         if (!contact.i2pAddress || contact.status === 'offline') return;
         try {
+          console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
           await i2pService.connectToPeer(contact.i2pAddress);
+          console.log(`[Status Check] ${contact.name} is online`);
           // Still online - update lastSeen
           const updated = { ...contact, lastSeen: new Date().toISOString() };
           await storageService.saveContact(updated);
           setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-        } catch {
+        } catch (err) {
           // Mark as offline
+          console.log(`[Status Check] ${contact.name} unreachable, marking offline:`, err instanceof Error ? err.message : err);
           const updated = { ...contact, status: 'offline' as const };
           await storageService.saveContact(updated);
           setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
@@ -459,6 +462,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         }
       });
     }, 30000); // Check every 30 seconds
+    console.log('[Status Check] Started periodic status check (30s interval)');
 
     return () => clearInterval(interval);
   }, [i2pStatus?.samConnected, contacts]);
