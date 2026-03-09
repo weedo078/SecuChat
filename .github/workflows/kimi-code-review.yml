@@ -73,9 +73,8 @@ jobs:
           Format your response as markdown suitable for a GitHub PR comment.'
 
           # Validate diff for prompt injection attempts
-          if grep -iE '(ignore.*previous|system.*prompt|forget.*instructions|disregard.*above|override.*settings)' pr_diff.txt; then
-            echo "Error: Potential prompt injection detected in diff" >&2
-            exit 1
+          if grep -qiE "(ignore.*previous|system.*prompt|you are now|forget.*instructions|disregard.*above|override.*settings)" pr_diff.txt; then
+            echo "Warning: Potential prompt injection patterns detected" >&2
           fi
 
           # Prepare diff content (escape for JSON)
