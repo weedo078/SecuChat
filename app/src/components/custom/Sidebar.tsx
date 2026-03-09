@@ -83,9 +83,9 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-card border-r border-border">
+    <div className="w-full h-full flex flex-col bg-card border-r border-border overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border shrink-0">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-lg">{t('sidebar.chats')}</h2>
           <div className="flex gap-1">
@@ -167,7 +167,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       </div>
 
       {/* Chat List */}
-      <ScrollArea className="flex-1" role="navigation" aria-label={t('chat.chatList')}>
+      <ScrollArea className="flex-1 overflow-y-auto" role="navigation" aria-label={t('chat.chatList')}>
         <div className="p-2">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -276,7 +276,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       </AlertDialog>
 
       {/* Footer */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border shrink-0">
         <div className="flex items-center justify-between">
           <Button
             variant="ghost"

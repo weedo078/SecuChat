@@ -1,5 +1,5 @@
 // Storage Service Facade
-// Delegates to platform-specific provider (BrowserStorageProvider or ElectronStorageProvider)
+// Delegates to platform-specific provider (BrowserStorageProvider, ElectronStorageProvider, or CapacitorStorageProvider)
 // Maintains backward compatibility with existing code
 
 import type {
@@ -16,6 +16,7 @@ import type { StorageProvider, StoragePlatform } from './storage/types';
 import { getStoragePlatform } from './storage/platform';
 import { BrowserStorageProvider } from './storage/browser/provider';
 import { ElectronStorageProvider } from './storage/electron/provider';
+import { CapacitorStorageProvider } from './storage/capacitor/provider';
 
 /**
  * StorageService is a singleton facade that delegates to the appropriate
@@ -23,6 +24,7 @@ import { ElectronStorageProvider } from './storage/electron/provider';
  *
  * For browser: Uses BrowserStorageProvider (IndexedDB with localStorage fallback)
  * For Electron: Would use ElectronStorageProvider (IPC to main process SQLite)
+ * For Capacitor: Uses CapacitorStorageProvider (native preferences + IndexedDB)
  *
  * Note: ElectronStorageProvider is not yet implemented - it would be added
  * when full Electron support is needed. For now, the browser implementation
@@ -31,11 +33,24 @@ import { ElectronStorageProvider } from './storage/electron/provider';
 export class StorageService {
   private static instance: StorageService;
   private provider: StorageProvider | null = null;
-  private platform: StoragePlatform;
+  private platform: StoragePlatform | null = null;
+  private initialized = false;
 
   private constructor() {
-    this.platform = getStoragePlatform();
+    console.log('[StorageService] Constructor called');
+  }
+
+  /**
+   * Initialize the storage service - must be called before using any storage methods
+   */
+  async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+
+    this.platform = await getStoragePlatform();
     console.log('[StorageService] Initialized for platform:', this.platform);
+    this.initialized = true;
   }
 
   /**
@@ -43,13 +58,18 @@ export class StorageService {
    * This avoids heavy I/O operations during service construction.
    */
   private getProvider(): StorageProvider {
+    if (!this.initialized) {
+      throw new Error('[StorageService] Not initialized. Call initialize() first.');
+    }
+
     if (!this.provider) {
-      const provider = this.createProvider(this.platform);
+      const platform = this.platform ?? 'browser';
+      const provider = this.createProvider(platform);
 
       // Type guard: verify provider implements StorageProvider interface
       if (!this.isValidStorageProvider(provider)) {
         throw new Error(
-          `[StorageService] Storage provider validation failed for platform: ${this.platform}. ` +
+          `[StorageService] Storage provider validation failed for platform: ${platform}. ` +
             'Provider does not implement required StorageProvider interface.'
         );
       }
@@ -99,7 +119,7 @@ export class StorageService {
     }
 
     // Check platform property exists and is a valid value
-    if (!['browser', 'electron'].includes(provider.platform as string)) {
+    if (!['browser', 'electron', 'capacitor'].includes(provider.platform as string)) {
       console.error('[StorageService] Provider has invalid platform property:', provider.platform);
       return false;
     }
@@ -120,6 +140,9 @@ export class StorageService {
       case 'electron':
         provider = new ElectronStorageProvider();
         break;
+      case 'capacitor':
+        provider = new CapacitorStorageProvider();
+        break;
       default: {
         // Exhaustiveness check - ensures all platform values are handled
         const _exhaustiveCheck: never = platform;
@@ -139,6 +162,13 @@ export class StorageService {
     return StorageService.instance;
   }
 
+  /**
+   * Get the current platform
+   */
+  getPlatform(): StoragePlatform | null {
+    return this.platform;
+  }
+
   /** True when using localStorage fallback (IndexedDB unavailable) */
   get usingFallback(): boolean {
     return this.getProvider().usingFallback ?? false;
@@ -149,6 +179,9 @@ export class StorageService {
    */
   async init(): Promise<void> {
     try {
+      // Ensure service is initialized first
+      await this.initialize();
+      // Then initialize the provider
       return await this.getProvider().init();
     } catch (error) {
       console.error('[StorageService] Failed to initialize storage provider:', error);
