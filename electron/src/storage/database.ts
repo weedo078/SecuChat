@@ -44,6 +44,9 @@ export function initializeDatabase(): DatabaseType {
   // Initialize schema
   initializeSchema(newDb);
 
+  // Run migrations to handle schema updates for existing databases
+  migrateDatabase(newDb);
+
   db = newDb;
 
   console.log('[Storage] Database initialized successfully');
@@ -185,6 +188,28 @@ export function closeDatabase(): void {
  */
 export function isDatabaseInitialized(): boolean {
   return db !== null;
+}
+
+/**
+ * Migrate database schema for existing databases
+ * Handles adding columns to existing tables (CREATE TABLE IF NOT EXISTS doesn't add columns)
+ */
+function migrateDatabase(database: DatabaseType): void {
+  try {
+    // Check if i2p_sam_destination column exists in users table
+    const tableInfo = database.pragma('table_info(users)') as Array<{ name: string }>;
+    const hasSamDestinationColumn = tableInfo.some(col => col.name === 'i2p_sam_destination');
+
+    if (!hasSamDestinationColumn) {
+      console.log('[Storage] Migration: Adding i2p_sam_destination column to users table');
+      database.exec('ALTER TABLE users ADD COLUMN i2p_sam_destination TEXT');
+      console.log('[Storage] Migration: i2p_sam_destination column added successfully');
+    }
+  } catch (error) {
+    console.error('[Storage] Migration failed:', error);
+    // Don't throw - allow app to continue even if migration fails
+    // The column might already exist or there might be a different issue
+  }
 }
 
 /**
