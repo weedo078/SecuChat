@@ -101,7 +101,7 @@ jobs:
             echo 'request POST'
             echo "url \"${ANTHROPIC_BASE_URL}/v1/messages\""
             echo 'data @request.json'
-            echo 'max-time 60'
+            echo 'max-time 300'
           } > curl_config.txt
 
           # Call Kimi API for review using config file
@@ -166,7 +166,7 @@ jobs:
           echo "uuid=$UUID" >> "$GITHUB_OUTPUT"
 
       - name: Send OpenClaw Email Notification
-        if: steps.pr-diff.outputs.diff_lines != '0'
+        if: steps.pr-diff.outputs.diff_lines != '0' && env.AGENTMAIL_API_KEY != ''
         env:
           AGENTMAIL_API_KEY: ${{ secrets.AGENTMAIL_API_KEY }}
           REVIEW_UUID: ${{ steps.review-uuid.outputs.uuid }}
