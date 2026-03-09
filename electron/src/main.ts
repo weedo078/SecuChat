@@ -214,9 +214,30 @@ function checkForUpdates(): void {
     return;
   }
   console.log('[Auto-Update] Checking for updates...');
-  autoUpdater.checkForUpdates().catch(err => {
-    console.error('[Auto-Update] Check failed:', err);
-  });
+
+  // Timeout safety: if check takes longer than 30s, force completion
+  const timeout = setTimeout(() => {
+    console.warn('[Auto-Update] Check timed out after 30s');
+    mainWindow?.webContents.send('update:not-available');
+  }, 30000);
+
+  autoUpdater.checkForUpdates()
+    .then((result) => {
+      clearTimeout(timeout);
+      console.log('[Auto-Update] Check completed:', result ? 'Update found' : 'No update');
+    })
+    .catch(err => {
+      clearTimeout(timeout);
+      const message = err.message || '';
+      // Ignore 404s - no release yet or no update available
+      if (message.includes('404') || message.includes('latest.yml')) {
+        console.log('[Auto-Update] No update available (404)');
+        mainWindow?.webContents.send('update:not-available');
+        return;
+      }
+      console.error('[Auto-Update] Check failed:', err);
+      mainWindow?.webContents.send('update:error', message);
+    });
 }
 
 autoUpdater.on('checking-for-update', () => {
@@ -301,11 +322,11 @@ ipcMain.handle('i2p:restart', async () => {
   return success;
 });
 
-// Check for updates on startup (after 10s delay)
+// Check for updates on startup (after 5s delay)
 app.whenReady().then(() => {
   setTimeout(() => {
     checkForUpdates();
-  }, 10000);
+  }, 5000);
 });
 
 // ─── Error Handling ───────────────────────────────────────────────────────────
