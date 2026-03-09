@@ -297,6 +297,11 @@ jobs:
         working-directory: ./app
         run: npx cap sync android
 
+      - name: Make gradlew executable
+        if: steps.check-android.outputs.exists == 'true'
+        working-directory: ./app/android
+        run: chmod +x gradlew
+
       - name: Build Debug APK
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app/android
