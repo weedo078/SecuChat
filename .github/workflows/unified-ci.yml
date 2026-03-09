@@ -364,21 +364,28 @@ jobs:
           head -100 pr_diff.txt
           echo "... (truncated if longer)"
 
+          # Prepare the diff content (limit to 300 lines, escape for JSON)
+          DIFF_CONTENT=$(head -300 pr_diff.txt | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr '\n' ' ')
+          PROMPT_CONTENT=$(cat review_prompt.txt | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g' | tr '\n' ' ')
+
+          # Build JSON payload using jq for proper escaping
+          jq -n \
+            --arg prompt "$PROMPT_CONTENT" \
+            --arg diff "$DIFF_CONTENT" \
+            '{model: "kimi-for-coding", max_tokens: 4000, messages: [{role: "user", content: ($prompt + "\n\nHere is the code diff:\n\n```diff\n" + $diff + "\n```")}]}' > payload.json
+
           # Call Kimi API for review
           curl -s -X POST "${ANTHROPIC_BASE_URL}/v1/messages" \
             -H "Content-Type: application/json" \
             -H "x-api-key: ${ANTHROPIC_API_KEY}" \
             -H "anthropic-version: 2023-06-01" \
-            -d '{
-              "model": "kimi-for-coding",
-              "max_tokens": 4000,
-              "messages": [
-                {"role": "user", "content": "'$(cat review_prompt.txt | sed 's/"/\\"/g')'\n\nHere is the code diff:\n\n```diff\n'$(head -300 pr_diff.txt | sed 's/"/\\"/g')'\n```"}
-              ]
-            }' > kimi_response.json
+            -d @payload.json > kimi_response.json
+
+          echo "=== API Response ==="
+          cat kimi_response.json
 
           # Extract review comment
-          cat kimi_response.json | jq -r '.content[0].text' > review_comment.md || echo "Kimi review failed"
+          jq -r '.content[0].text // "Kimi review failed or returned no content"' kimi_response.json > review_comment.md
 
       - name: Post Kimi Review Comment
         if: steps.pr-diff.outputs.diff_size != '0'
