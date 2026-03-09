@@ -12,7 +12,7 @@ import type {
   BackupData,
   DeviceInfo,
 } from '@/types';
-import type { StorageProvider } from './storage/types';
+import type { StorageProvider, StoragePlatform } from './storage/types';
 import { getStoragePlatform } from './storage/platform';
 import { BrowserStorageProvider } from './storage/browser/provider';
 
@@ -29,13 +29,112 @@ import { BrowserStorageProvider } from './storage/browser/provider';
  */
 export class StorageService {
   private static instance: StorageService;
-  private provider: StorageProvider;
+  private provider: StorageProvider | null = null;
+  private platform: StoragePlatform;
 
   private constructor() {
-    const platform = getStoragePlatform();
-    console.log('[StorageService] Initializing for platform:', platform);
+    this.platform = getStoragePlatform();
+    console.log('[StorageService] Initialized for platform:', this.platform);
+  }
 
-    this.provider = new BrowserStorageProvider();
+  /**
+   * Lazy provider instantiation - creates provider on first use.
+   * This avoids heavy I/O operations during service construction.
+   */
+  private getProvider(): StorageProvider {
+    if (!this.provider) {
+      const provider = this.createProvider(this.platform);
+
+      // Type guard: verify provider implements StorageProvider interface
+      if (!this.isValidStorageProvider(provider)) {
+        throw new Error(
+          `[StorageService] Storage provider validation failed for platform: ${this.platform}. ` +
+            'Provider does not implement required StorageProvider interface.'
+        );
+      }
+
+      this.provider = provider;
+    }
+    return this.provider;
+  }
+
+  /**
+   * Type guard to verify an object implements the StorageProvider interface
+   */
+  private isValidStorageProvider(obj: unknown): obj is StorageProvider {
+    if (!obj || typeof obj !== 'object') {
+      return false;
+    }
+
+    const provider = obj as Record<string, unknown>;
+
+    // Check required methods exist and are functions
+    const requiredMethods = [
+      'init',
+      'setEncryptionPassphrase',
+      'clearEncryptionPassphrase',
+      'hasEncryptionPassphrase',
+      'saveUser',
+      'getUser',
+      'saveContact',
+      'getContact',
+      'getAllContacts',
+      'saveChat',
+      'getChat',
+      'getAllChats',
+      'saveMessage',
+      'getMessagesByChat',
+      'saveSettings',
+      'getSettings',
+      'createBackup',
+      'clearAllData',
+    ] as const;
+
+    for (const method of requiredMethods) {
+      if (typeof provider[method] !== 'function') {
+        console.error(`[StorageService] Provider missing required method: ${method}`);
+        return false;
+      }
+    }
+
+    // Check platform property exists and is a valid value
+    if (!['browser', 'electron'].includes(provider.platform as string)) {
+      console.error('[StorageService] Provider has invalid platform property:', provider.platform);
+      return false;
+    }
+
+    return true;
+  }
+
+  /**
+   * Factory method to create the appropriate storage provider for the platform
+   */
+  private createProvider(platform: StoragePlatform): StorageProvider {
+    let provider: StorageProvider;
+
+    switch (platform) {
+      case 'browser':
+        provider = new BrowserStorageProvider();
+        break;
+      case 'electron':
+        // ElectronStorageProvider would be instantiated here when implemented
+        // For now, fall through to browser provider as fallback
+        console.warn(
+          '[StorageService] Electron platform detected but ElectronStorageProvider not yet implemented. ' +
+            'Falling back to BrowserStorageProvider.'
+        );
+        provider = new BrowserStorageProvider();
+        break;
+      default: {
+        // Exhaustiveness check - ensures all platform values are handled
+        const _exhaustiveCheck: never = platform;
+        console.error('[StorageService] Unknown platform:', _exhaustiveCheck);
+        throw new Error(`[StorageService] Unknown platform: ${platform}`);
+      }
+    }
+
+    console.log('[StorageService] Provider created successfully:', platform);
+    return provider;
   }
 
   static getInstance(): StorageService {
@@ -47,7 +146,7 @@ export class StorageService {
 
   /** True when using localStorage fallback (IndexedDB unavailable) */
   get usingFallback(): boolean {
-    return this.provider.usingFallback ?? false;
+    return this.getProvider().usingFallback ?? false;
   }
 
   /**
@@ -55,7 +154,7 @@ export class StorageService {
    */
   async init(): Promise<void> {
     try {
-      return await this.provider.init();
+      return await this.getProvider().init();
     } catch (error) {
       console.error('[StorageService] Failed to initialize storage provider:', error);
       throw error;
@@ -66,161 +165,161 @@ export class StorageService {
    * Set the encryption passphrase for sensitive data
    */
   setEncryptionPassphrase(passphrase: string): void {
-    this.provider.setEncryptionPassphrase(passphrase);
+    this.getProvider().setEncryptionPassphrase(passphrase);
   }
 
   /**
    * Clear the encryption passphrase (e.g., on lock)
    */
   clearEncryptionPassphrase(): void {
-    this.provider.clearEncryptionPassphrase();
+    this.getProvider().clearEncryptionPassphrase();
   }
 
   /**
    * Check if encryption passphrase is set
    */
   hasEncryptionPassphrase(): boolean {
-    return this.provider.hasEncryptionPassphrase();
+    return this.getProvider().hasEncryptionPassphrase();
   }
 
   // User operations
   async saveUser(user: User): Promise<void> {
-    return this.provider.saveUser(user);
+    return this.getProvider().saveUser(user);
   }
 
   async getUser(): Promise<User | null> {
-    return this.provider.getUser();
+    return this.getProvider().getUser();
   }
 
   async deleteUser(): Promise<void> {
-    return this.provider.deleteUser();
+    return this.getProvider().deleteUser();
   }
 
   // Contact operations
   async saveContact(contact: Contact): Promise<void> {
-    return this.provider.saveContact(contact);
+    return this.getProvider().saveContact(contact);
   }
 
   async getContact(id: string): Promise<Contact | null> {
-    return this.provider.getContact(id);
+    return this.getProvider().getContact(id);
   }
 
   async getContactByFingerprint(fingerprint: string): Promise<Contact | null> {
-    return this.provider.getContactByFingerprint(fingerprint);
+    return this.getProvider().getContactByFingerprint(fingerprint);
   }
 
   async getAllContacts(): Promise<Contact[]> {
-    return this.provider.getAllContacts();
+    return this.getProvider().getAllContacts();
   }
 
   async deleteContact(id: string): Promise<void> {
-    return this.provider.deleteContact(id);
+    return this.getProvider().deleteContact(id);
   }
 
   // Chat operations
   async saveChat(chat: Chat): Promise<void> {
-    return this.provider.saveChat(chat);
+    return this.getProvider().saveChat(chat);
   }
 
   async getChat(id: string): Promise<Chat | null> {
-    return this.provider.getChat(id);
+    return this.getProvider().getChat(id);
   }
 
   async getChatByContactId(contactId: string): Promise<Chat | null> {
-    return this.provider.getChatByContactId(contactId);
+    return this.getProvider().getChatByContactId(contactId);
   }
 
   async getAllChats(): Promise<Chat[]> {
-    return this.provider.getAllChats();
+    return this.getProvider().getAllChats();
   }
 
   async deleteChat(id: string): Promise<void> {
-    return this.provider.deleteChat(id);
+    return this.getProvider().deleteChat(id);
   }
 
   // Message operations
   async saveMessage(message: Message): Promise<void> {
-    return this.provider.saveMessage(message);
+    return this.getProvider().saveMessage(message);
   }
 
   async getMessage(id: string): Promise<Message | null> {
-    return this.provider.getMessage(id);
+    return this.getProvider().getMessage(id);
   }
 
   async getMessagesByChat(chatId: string, limit = 100, offset = 0): Promise<Message[]> {
-    return this.provider.getMessagesByChat(chatId, limit, offset);
+    return this.getProvider().getMessagesByChat(chatId, limit, offset);
   }
 
   async getMessagesByChatId(chatId: string): Promise<Message[]> {
-    return this.provider.getMessagesByChatId(chatId);
+    return this.getProvider().getMessagesByChatId(chatId);
   }
 
   async getLastMessageSequence(chatId: string): Promise<number> {
-    return this.provider.getLastMessageSequence(chatId);
+    return this.getProvider().getLastMessageSequence(chatId);
   }
 
   async getAllMessages(): Promise<Message[]> {
-    return this.provider.getAllMessages();
+    return this.getProvider().getAllMessages();
   }
 
   async deleteMessage(id: string): Promise<void> {
-    return this.provider.deleteMessage(id);
+    return this.getProvider().deleteMessage(id);
   }
 
   async deleteMessagesByChat(chatId: string): Promise<void> {
-    return this.provider.deleteMessagesByChat(chatId);
+    return this.getProvider().deleteMessagesByChat(chatId);
   }
 
   // Settings operations
   async saveSettings(settings: AppSettings): Promise<void> {
-    return this.provider.saveSettings(settings);
+    return this.getProvider().saveSettings(settings);
   }
 
   async getSettings(): Promise<AppSettings | null> {
-    return this.provider.getSettings();
+    return this.getProvider().getSettings();
   }
 
   async saveSecuritySettings(settings: SecuritySettings): Promise<void> {
-    return this.provider.saveSecuritySettings(settings);
+    return this.getProvider().saveSecuritySettings(settings);
   }
 
   async getSecuritySettings(): Promise<SecuritySettings | null> {
-    return this.provider.getSecuritySettings();
+    return this.getProvider().getSecuritySettings();
   }
 
   // Device operations (multi-device sync)
   async saveDevice(device: DeviceInfo): Promise<void> {
-    return this.provider.saveDevice(device);
+    return this.getProvider().saveDevice(device);
   }
 
   async getDevice(deviceId: string): Promise<DeviceInfo | null> {
-    return this.provider.getDevice(deviceId);
+    return this.getProvider().getDevice(deviceId);
   }
 
   async getDeviceByI2PAddress(i2pAddress: string): Promise<DeviceInfo | null> {
-    return this.provider.getDeviceByI2PAddress(i2pAddress);
+    return this.getProvider().getDeviceByI2PAddress(i2pAddress);
   }
 
   async getAllDevices(): Promise<DeviceInfo[]> {
-    return this.provider.getAllDevices();
+    return this.getProvider().getAllDevices();
   }
 
   async deleteDevice(deviceId: string): Promise<void> {
-    return this.provider.deleteDevice(deviceId);
+    return this.getProvider().deleteDevice(deviceId);
   }
 
   // Backup and restore
   async createBackup(): Promise<BackupData> {
-    return this.provider.createBackup();
+    return this.getProvider().createBackup();
   }
 
   async restoreBackup(backup: BackupData): Promise<void> {
-    return this.provider.restoreBackup(backup);
+    return this.getProvider().restoreBackup(backup);
   }
 
   // Clear all data
   async clearAllData(): Promise<void> {
-    return this.provider.clearAllData();
+    return this.getProvider().clearAllData();
   }
 }
 
