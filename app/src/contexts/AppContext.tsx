@@ -367,6 +367,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
       }
 
+      // Update contact status to online when receiving a message
+      if (localContact) {
+        const updatedContact = {
+          ...localContact,
+          status: 'online' as const,
+          lastSeen: new Date().toISOString(),
+        };
+        await storageService.saveContact(updatedContact);
+        setContacts(prev => prev.map(c => c.id === localContact!.id ? updatedContact : c));
+        setChats(prev => prev.map(ch =>
+          ch.contactId === localContact!.id ? { ...ch, contact: updatedContact } : ch
+        ));
+      }
+
       // Add to active chat messages if it's open
       if (isChatActive) {
         setMessages(prev => [...prev, message]);
@@ -409,11 +423,45 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ch.contactId === contact.id ? { ...ch, contact: updated } : ch
         ));
       } catch {
-        // Peer not reachable — leave as-is
+        // Peer not reachable — mark as offline
+        const updated = { ...contact, status: 'offline' as const };
+        await storageService.saveContact(updated);
+        setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+        setChats(prev => prev.map(ch =>
+          ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+        ));
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
   }, [i2pStatus?.samConnected]);
+
+  // Periodic status check: mark contacts offline if unreachable
+  useEffect(() => {
+    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+
+    const interval = setInterval(() => {
+      contacts.forEach(async (contact) => {
+        if (!contact.i2pAddress || contact.status === 'offline') return;
+        try {
+          await i2pService.connectToPeer(contact.i2pAddress);
+          // Still online - update lastSeen
+          const updated = { ...contact, lastSeen: new Date().toISOString() };
+          await storageService.saveContact(updated);
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+        } catch {
+          // Mark as offline
+          const updated = { ...contact, status: 'offline' as const };
+          await storageService.saveContact(updated);
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+          setChats(prev => prev.map(ch =>
+            ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+          ));
+        }
+      });
+    }, 30000); // Check every 30 seconds
+
+    return () => clearInterval(interval);
+  }, [i2pStatus?.samConnected, contacts]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
