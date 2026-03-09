@@ -246,6 +246,7 @@ class SAMService {
     if (!dest) {
       throw new Error('SAM destination private key is required. Call generateDestination() first or provide a stored key.');
     }
+    console.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
     const destParam = `DESTINATION=${dest}`;
     const resp = await this.sendRaw(
       `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`

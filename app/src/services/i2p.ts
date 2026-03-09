@@ -125,6 +125,7 @@ class I2PService {
       if (b32 && this.identity) {
         this.identity.b32Address = b32;
       }
+      console.log(`[I2P] Session created. Our b32 address: ${b32?.slice(0, 30)}...`);
 
       this.currentStatus = {
         samConnected: true,
@@ -249,7 +250,8 @@ class I2PService {
    */
   async connectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
     logger.log(`[I2P] Connecting to peer: ${b32Address.slice(0, 20)}...`);
-    
+    logger.log(`[I2P] Our address: ${this.getAddress()?.slice(0, 20)}..., leasesetPublished: ${this.currentStatus.leasesetPublished}`);
+
     if (!this.currentStatus.samConnected) {
       logger.warn('[I2P] Cannot connect - SAM not connected');
       throw new Error('I2P nicht verbunden. Starten Sie i2pd und sam-proxy.');
