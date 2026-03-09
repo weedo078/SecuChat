@@ -363,13 +363,12 @@ jobs:
             exit 0
           fi
 
-          # Call Kimi API via OpenRouter
+          # Call Kimi Code API
           PAYLOAD=$(jq -n \
             --arg content "$REVIEW_CONTENT" \
-            --arg pr "${{ github.event.pull_request.number }}" \
-            '{model: "kimi-coding/k2p5", messages: [{role: "system", content: "You are an expert code reviewer. Review the code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
+            '{model: "kimi-k2-coder", messages: [{role: "system", content: "You are an expert code reviewer. Review the code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
 
-          RESPONSE=$(curl -s -X POST "https://api.openrouter.ai/v1/chat/completions" \
+          RESPONSE=$(curl -s -X POST "https://api.kimi.com/coding/chat/completions" \
             -H "Authorization: Bearer $KIMI_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$PAYLOAD" || echo '{"choices":[{"message":{"content":"API call failed"}}]}')
@@ -394,7 +393,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🤖 **Kimi Code Review**\n\n${review}\n\n---\n*Powered by Kimi via OpenRouter*`
+              body: `🤖 **Kimi Code Review**\n\n${review}\n\n---\n*Powered by Kimi Code API*`
             });
 
   # ═══════════════════════════════════════════════════════════════
