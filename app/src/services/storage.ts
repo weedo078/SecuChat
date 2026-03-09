@@ -23,12 +23,8 @@ import { CapacitorStorageProvider } from './storage/capacitor/provider';
  * platform-specific StorageProvider implementation.
  *
  * For browser: Uses BrowserStorageProvider (IndexedDB with localStorage fallback)
- * For Electron: Would use ElectronStorageProvider (IPC to main process SQLite)
+ * For Electron: Uses ElectronStorageProvider (IPC to main process)
  * For Capacitor: Uses CapacitorStorageProvider (native preferences + IndexedDB)
- *
- * Note: ElectronStorageProvider is not yet implemented - it would be added
- * when full Electron support is needed. For now, the browser implementation
- * works in both environments.
  */
 export class StorageService {
   private static instance: StorageService;
