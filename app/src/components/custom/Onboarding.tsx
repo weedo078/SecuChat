@@ -132,6 +132,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     if (!keyPair || !i2pIdentity) return;
 
     try {
+      // Initialize storage first (required for localStorage fallback)
+      await storageService.init();
+
       const user = {
         id: crypto.randomUUID(),
         username,
