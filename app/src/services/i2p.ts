@@ -86,19 +86,31 @@ class I2PService {
       }
 
       // Generate or use existing destination
+      // CRITICAL: We MUST have a persistent SAM destination - TRANSIENT doesn't publish LeaseSets
       let newDestinationGenerated = false;
       if (!this.identity?.samDestination) {
+        console.log('[I2P] Generating new SAM destination (none exists in identity)');
         const session = await samService.generateDestination();
         if (this.identity) {
           // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
           this.identity.samDestination = session.privateKey;
           newDestinationGenerated = true;
+          // Notify that a new destination was generated - caller must persist it
+          this.currentStatus.newDestinationGenerated = true;
+          console.log('[I2P] New SAM destination generated, caller must persist it');
         }
+      } else {
+        console.log('[I2P] Using existing SAM destination from identity');
+      }
+
+      // Verify we have a valid destination before creating session
+      const sessionPrivKey = this.identity?.samDestination;
+      if (!sessionPrivKey) {
+        throw new Error('SAM destination not available. Identity must be restored with samDestination before initializing I2P.');
       }
 
       // Create session — use timestamp-based nickname so i2pd never rejects
       // with DUPLICATED_ID (old sessions stay alive ~5 min after TCP drop)
-      const sessionPrivKey = this.identity?.samDestination || undefined;
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
 
@@ -113,6 +125,7 @@ class I2PService {
       if (b32 && this.identity) {
         this.identity.b32Address = b32;
       }
+      console.log(`[I2P] Session created. Our b32 address: ${b32?.slice(0, 30)}...`);
 
       this.currentStatus = {
         samConnected: true,
@@ -178,10 +191,15 @@ class I2PService {
   /**
    * Restore identity from stored keys
    */
-  async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string): Promise<I2PIdentity> {
+  async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string, i2pAddress?: string): Promise<I2PIdentity> {
+    console.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination, 'i2pAddress present:', !!i2pAddress);
     const publicKey = base64ToUint8Array(publicKeyB64);
     const privateKey = base64ToUint8Array(privateKeyB64);
-    const b32Address = toBase32(publicKey) + '.b32.i2p';
+
+    // Use the stored I2P address (which should be the SAM b32) if available
+    // Otherwise fall back to Ed25519-derived address for backwards compatibility
+    const b32Address = i2pAddress || (toBase32(publicKey) + '.b32.i2p');
+    console.log('[I2P] Using b32 address:', b32Address.slice(0, 30) + '...');
 
     this.identity = {
       publicKey,
@@ -236,7 +254,8 @@ class I2PService {
    */
   async connectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
     logger.log(`[I2P] Connecting to peer: ${b32Address.slice(0, 20)}...`);
-    
+    logger.log(`[I2P] Our address: ${this.getAddress()?.slice(0, 20)}..., leasesetPublished: ${this.currentStatus.leasesetPublished}`);
+
     if (!this.currentStatus.samConnected) {
       logger.warn('[I2P] Cannot connect - SAM not connected');
       throw new Error('I2P nicht verbunden. Starten Sie i2pd und sam-proxy.');

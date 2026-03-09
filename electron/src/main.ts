@@ -1,8 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron';
-import { join } from 'path';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
+import { join, normalize } from 'path';
+import { existsSync } from 'fs';
 import { autoUpdater } from 'electron-updater';
 import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
 import { startSamProxy, stopSamProxy } from './sam-proxy';
+import { registerStorageIpcHandlers, unregisterStorageIpcHandlers } from './storage';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -15,11 +17,27 @@ let i2pStatus = {
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+// ─── Protocol Registration ────────────────────────────────────────────────────
+// Must be done before app is ready
+
+protocol.registerSchemesAsPrivileged([
+  { scheme: 'app', privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: true } },
+]);
+
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
 const APP_DIST = app.isPackaged
   ? join(process.resourcesPath, 'app')
-  : join(__dirname, '../../app/dist');
+  : join(__dirname, '../app/dist');
+console.log('[Main] APP_DIST:', APP_DIST, '(isPackaged:', app.isPackaged, ')');
+
+// Verify index.html exists
+const indexHtmlPath = join(APP_DIST, 'index.html');
+if (!existsSync(indexHtmlPath)) {
+  console.error('[Main] CRITICAL: index.html not found at:', indexHtmlPath);
+} else {
+  console.log('[Main] index.html found at:', indexHtmlPath);
+}
 
 // ─── Window ───────────────────────────────────────────────────────────────────
 
@@ -43,8 +61,17 @@ function createWindow(): void {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
     mainWindow.webContents.openDevTools();
   } else {
-    mainWindow.loadFile(join(APP_DIST, 'index.html'));
+    const indexPath = join(APP_DIST, 'index.html');
+    console.log('[Main] Loading file:', indexPath);
+    mainWindow.loadFile(indexPath).catch((err) => {
+      console.error('[Main] Failed to load index.html:', err);
+      dialog.showErrorBox('Loading Error', `Failed to load app: ${err.message}`);
+    });
   }
+
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    console.error('[Main] Failed to load:', errorCode, errorDescription);
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -90,8 +117,29 @@ async function initializeI2P(): Promise<boolean> {
 
 // ─── App lifecycle ────────────────────────────────────────────────────────────
 
+// Ensure userData is in a persistent location (not temp/portable mode)
+const userDataPath = join(app.getPath('appData'), 'SecuChat');
+app.setPath('userData', userDataPath);
+console.log('[Main] userData path:', userDataPath);
+console.log('[Main] App path:', app.getAppPath());
+console.log('[Main] Exec path:', process.execPath);
+console.log('[Main] isPackaged:', app.isPackaged);
+console.log('[Main] CWD:', process.cwd());
+
 app.whenReady().then(async () => {
   console.log('[Main] App ready, starting services...');
+
+  // Register storage IPC handlers
+  registerStorageIpcHandlers();
+
+  // Register custom protocol handler
+  const protocolRegistered = protocol.registerFileProtocol('app', (request, callback) => {
+    const url = request.url.replace(/^app:\/\//, ''); // strip 'app://'
+    const filePath = normalize(join(APP_DIST, url || 'index.html'));
+    console.log('[Main] Protocol request:', request.url, '->', filePath, 'exists:', existsSync(filePath));
+    callback({ path: filePath });
+  });
+  console.log('[Main] Registered app:// protocol:', protocolRegistered, 'serving from:', APP_DIST);
 
   // Starte SAM Proxy zuerst (für I2P-Kommunikation)
   try {
@@ -146,6 +194,7 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', async () => {
   console.log('[Main] All windows closed');
+  unregisterStorageIpcHandlers();
   await stopSamProxy();
   await stopI2pd();
   if (process.platform !== 'darwin') app.quit();
@@ -153,6 +202,7 @@ app.on('window-all-closed', async () => {
 
 app.on('before-quit', async () => {
   console.log('[Main] Before quit');
+  unregisterStorageIpcHandlers();
   await stopSamProxy();
   await stopI2pd();
 });
@@ -168,9 +218,30 @@ function checkForUpdates(): void {
     return;
   }
   console.log('[Auto-Update] Checking for updates...');
-  autoUpdater.checkForUpdates().catch(err => {
-    console.error('[Auto-Update] Check failed:', err);
-  });
+
+  // Timeout safety: if check takes longer than 30s, force completion
+  const timeout = setTimeout(() => {
+    console.warn('[Auto-Update] Check timed out after 30s');
+    mainWindow?.webContents.send('update:not-available');
+  }, 30000);
+
+  autoUpdater.checkForUpdates()
+    .then((result) => {
+      clearTimeout(timeout);
+      console.log('[Auto-Update] Check completed:', result ? 'Update found' : 'No update');
+    })
+    .catch(err => {
+      clearTimeout(timeout);
+      const message = err.message || '';
+      // Ignore 404s - no release yet or no update available
+      if (message.includes('404') || message.includes('latest.yml')) {
+        console.log('[Auto-Update] No update available (404)');
+        mainWindow?.webContents.send('update:not-available');
+        return;
+      }
+      console.error('[Auto-Update] Check failed:', err);
+      mainWindow?.webContents.send('update:error', message);
+    });
 }
 
 autoUpdater.on('checking-for-update', () => {
@@ -255,11 +326,11 @@ ipcMain.handle('i2p:restart', async () => {
   return success;
 });
 
-// Check for updates on startup (after 10s delay)
+// Check for updates on startup (after 5s delay)
 app.whenReady().then(() => {
   setTimeout(() => {
     checkForUpdates();
-  }, 10000);
+  }, 5000);
 });
 
 // ─── Error Handling ───────────────────────────────────────────────────────────

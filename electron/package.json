@@ -1,6 +1,6 @@
 {
   "name": "securechat",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Privacy-focused messaging with PGP + I2P",
   "homepage": "https://github.com/weedo078/SecuChat",
   "repository": {
@@ -98,6 +98,7 @@
     }
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.3.5",
     "@types/ws": "^8.5.0",
     "electron": "^40.8.0",
@@ -105,6 +106,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
+    "better-sqlite3": "^12.4.0",
     "electron-updater": "^6.8.3",
     "ws": "^8.18.0"
   }

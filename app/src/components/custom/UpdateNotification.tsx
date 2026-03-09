@@ -49,13 +49,10 @@ export function UpdateNotification() {
       setTimeout(() => setIsVisible(false), 5000);
     });
 
-    // Check for updates on mount (after a delay)
-    const timeout = setTimeout(() => {
-      electronAPI.checkForUpdates?.();
-    }, 5000);
+    // Note: Update check is triggered by main process (electron/src/main.ts)
+    // after 10s delay. Frontend just listens for the results.
 
     return () => {
-      clearTimeout(timeout);
       unsubChecking?.();
       unsubAvailable?.();
       unsubNotAvailable?.();
