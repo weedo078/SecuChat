@@ -129,7 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Chats state
   const [chats, setChats] = useState<Chat[]>([]);
-  const [activeChat, setActiveChat] = useState<Chat | null>(null);
+  const [activeChat, setActiveChatState] = useState<Chat | null>(null);
   
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -188,6 +188,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
           } catch (error) {
             console.error('Error loading key pair:', error);
           }
+        } else {
+          // No PGP private key found - this shouldn't happen for existing users
+          // Set encryption state to allow UI to function, but log warning
+          console.warn('[AppContext] User exists but pgpPrivateKey is missing - setting encryptionState to allow UI');
+          setEncryptionState('encrypted');
+          setIsAuthenticated(true);
         }
       }
       
@@ -223,7 +229,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await i2pService.restoreIdentity(
           savedUser.i2pPublicKey,
           savedUser.i2pPrivateKey,
-          savedUser.i2pSamDestination
+          savedUser.i2pSamDestination,
+          savedUser.i2pAddress  // Pass the stored I2P address (SAM b32)
         );
 
         // Deregister old listeners if already registered (prevents memory leak)
@@ -237,16 +244,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
-        // Fire-and-forget: I2P connects in background, UI updates via setI2pStatus
+        // Await I2P init to ensure SAM destination is persisted before continuing
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
+        try {
+          const status = await i2pService.initialize(effectiveSamConfig(i2pSettings.sam));
           setI2pStatus(status);
           if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...savedUser };
-            // Always persist the SAM private key when a new destination was generated
-            // OR when we have one in identity but user doesn't have it stored yet
-            if (identity?.samDestination && (!savedUser.i2pSamDestination || status.newDestinationGenerated)) {
+            // CRITICAL: Always persist the SAM destination when:
+            // 1. A new destination was just generated, OR
+            // 2. We have one in identity but user record doesn't have it stored yet
+            // This ensures the destination survives app restarts and we never use TRANSIENT
+            const needsSamDestinationUpdate = identity?.samDestination &&
+              (!savedUser.i2pSamDestination || status.newDestinationGenerated || savedUser.i2pSamDestination !== identity.samDestination);
+            if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             // Sync the real SAM b32 address into the user record.
@@ -257,15 +269,24 @@ export function AppProvider({ children }: { children: ReactNode }) {
               console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
               updatedUser = { ...updatedUser, i2pAddress: status.address };
             }
+            // Defensive check: if user doesn't have i2pSamDestination but I2P identity now has one, force save
+            if (!updatedUser.i2pSamDestination && identity?.samDestination) {
+              console.log('[AppContext] Force-saving SAM destination that was missing from storage');
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
             if (updatedUser !== savedUser) {
-              storageService.saveUser(updatedUser).catch(console.error);
-              setUser(updatedUser);
+              try {
+                await storageService.saveUser(updatedUser);
+                setUser(updatedUser);
+              } catch (err) {
+                console.warn('[AppContext] Failed to save user updates:', err);
+              }
             }
           }
-        }).catch((err) => {
+        } catch (err) {
           console.error('[AppContext] I2P init failed:', err);
           setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-        });
+        }
       }
       
     } catch (error) {
@@ -353,19 +374,36 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Save message to storage
       await storageService.saveMessage(message);
 
+      // Only increment unread count if chat is not currently active
+      const isChatActive = activeChat?.id === localChatId;
+
       // Update chat unread count & timestamp
       if (localChat) {
         const updatedChat = {
           ...localChat,
           lastMessageTimestamp: message.timestamp,
-          unreadCount: (localChat.unreadCount || 0) + 1,
+          unreadCount: isChatActive ? 0 : (localChat.unreadCount || 0) + 1,
         };
         await storageService.saveChat(updatedChat);
         setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
       }
 
+      // Update contact status to online when receiving a message
+      if (localContact) {
+        const updatedContact = {
+          ...localContact,
+          status: 'online' as const,
+          lastSeen: new Date().toISOString(),
+        };
+        await storageService.saveContact(updatedContact);
+        setContacts(prev => prev.map(c => c.id === localContact!.id ? updatedContact : c));
+        setChats(prev => prev.map(ch =>
+          ch.contactId === localContact!.id ? { ...ch, contact: updatedContact } : ch
+        ));
+      }
+
       // Add to active chat messages if it's open
-      if (activeChat?.id === localChatId) {
+      if (isChatActive) {
         setMessages(prev => [...prev, message]);
       }
     } catch (error) {
@@ -406,11 +444,122 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ch.contactId === contact.id ? { ...ch, contact: updated } : ch
         ));
       } catch {
-        // Peer not reachable — leave as-is
+        // Peer not reachable — mark as offline
+        const updated = { ...contact, status: 'offline' as const };
+        await storageService.saveContact(updated);
+        setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+        setChats(prev => prev.map(ch =>
+          ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+        ));
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
   }, [i2pStatus?.samConnected]);
+
+  // Retry failed/sending messages when contact comes back online
+  useEffect(() => {
+    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+
+    const onlineContacts = contacts.filter(c => c.status === 'online' && c.i2pAddress);
+    if (onlineContacts.length === 0) return;
+
+    // Find messages with status 'sending' or 'failed' for online contacts
+    const retryMessages = async () => {
+      for (const contact of onlineContacts) {
+        const chat = await storageService.getChatByContactId(contact.id);
+        if (!chat) continue;
+
+        const allMessages = await storageService.getMessagesByChatId(chat.id);
+        const pendingMessages = allMessages.filter(m =>
+          (m.status === 'sending' || m.status === 'failed') &&
+          m.senderId === user?.id
+        );
+
+        if (pendingMessages.length > 0) {
+          console.log(`[Message Retry] ${pendingMessages.length} pending messages for ${contact.name}, retrying...`);
+          for (const message of pendingMessages) {
+            try {
+              // Re-send the message
+              const contactData = await storageService.getContact(contact.id);
+              if (!contactData?.pgpPublicKey) continue;
+
+              // Decrypt the content first if needed
+              let content = message.encryptedContent;
+              if (message.decryptedContent && cryptoService.hasKeyPair()) {
+                content = await cryptoService.encryptMessage(message.decryptedContent, contactData.pgpPublicKey);
+              }
+
+              const success = await i2pService.sendMessage(contact.i2pAddress, {
+                type: 'chat-message',
+                id: message.id,
+                chatId: chat.id,
+                senderId: user?.id,
+                senderFingerprint: user?.fingerprint,
+                encryptedContent: content,
+                timestamp: message.timestamp,
+                sequenceNumber: message.sequenceNumber,
+                replyTo: message.replyTo,
+              });
+
+              if (success) {
+                const updatedMessage = { ...message, status: 'sent' as const };
+                await storageService.saveMessage(updatedMessage);
+                setMessages(prev => prev.map(m => m.id === message.id ? updatedMessage : m));
+                console.log(`[Message Retry] Message ${message.id.slice(0, 8)} sent successfully`);
+              }
+            } catch (err) {
+              console.error(`[Message Retry] Failed to resend message ${message.id.slice(0, 8)}:`, err);
+            }
+          }
+        }
+      }
+    };
+
+    retryMessages();
+  }, [i2pStatus?.samConnected, contacts, user?.id, user?.fingerprint]);
+
+  // Periodic status check: retry all contacts regardless of current status
+  // In I2P, peers may be temporarily unreachable (LeaseSet propagation, network issues)
+  // We continuously retry to detect when they come back online
+  useEffect(() => {
+    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+
+    // Track last retry time per contact to avoid hammering (10s minimum interval)
+    const lastRetryMap = new Map<string, number>();
+
+    const interval = setInterval(() => {
+      contacts.forEach(async (contact) => {
+        if (!contact.i2pAddress) return;
+
+        // Don't retry same contact within 10 seconds
+        const now = Date.now();
+        const lastRetry = lastRetryMap.get(contact.id) || 0;
+        if (now - lastRetry < 10000) return;
+        lastRetryMap.set(contact.id, now);
+        try {
+          console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
+          await i2pService.connectToPeer(contact.i2pAddress);
+          console.log(`[Status Check] ${contact.name} is online`);
+          // Still online - update lastSeen
+          const updated = { ...contact, lastSeen: new Date().toISOString() };
+          await storageService.saveContact(updated);
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+        } catch (err) {
+          // Mark as offline
+          console.log(`[Status Check] ${contact.name} unreachable, marking offline:`, err instanceof Error ? err.message : err);
+          const updated = { ...contact, status: 'offline' as const };
+          await storageService.saveContact(updated);
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+          setChats(prev => prev.map(ch =>
+            ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+          ));
+        }
+      });
+    }, 30000); // Check every 30 seconds
+    console.log('[Status Check] Started periodic status check (30s interval)');
+
+    return () => clearInterval(interval);
+  }, [i2pStatus?.samConnected, contacts]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
@@ -474,12 +623,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await storageService.deleteChat(id);
     await storageService.deleteMessagesByChat(id);
     setChats(prev => prev.filter(c => c.id !== id));
-    
+
     if (activeChat?.id === id) {
-      setActiveChat(null);
+      setActiveChatState(null);
       setMessages([]);
     }
   }, [activeChat]);
+
+  // Wrapper for setActiveChat that resets unread count
+  const setActiveChat = useCallback(async (chat: Chat | null) => {
+    // Reset unread count if opening a chat with unread messages
+    if (chat && chat.unreadCount > 0) {
+      const updatedChat = { ...chat, unreadCount: 0 };
+      await storageService.saveChat(updatedChat);
+      setChats(prev => prev.map(c => c.id === chat.id ? updatedChat : c));
+      setActiveChatState(updatedChat);
+    } else {
+      setActiveChatState(chat);
+    }
+  }, []);
 
   // Message operations
   const sendMessage = useCallback(async (content: string) => {
@@ -658,7 +820,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         await i2pService.restoreIdentity(
           decryptedUser.i2pPublicKey,
           decryptedUser.i2pPrivateKey,
-          decryptedUser.i2pSamDestination
+          decryptedUser.i2pSamDestination,
+          decryptedUser.i2pAddress  // Pass the stored I2P address (SAM b32)
         );
 
         // Register I2P listeners
@@ -670,32 +833,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
         i2pService.onStatusChange(setI2pStatus);
         listenersRegisteredRef.current = true;
 
-        // Start I2P connection in background
+        // Start I2P connection and await to ensure SAM destination is persisted
         const savedSettings = await storageService.getSettings();
         const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
-        i2pService.initialize(effectiveSamConfig(i2pSettings.sam)).then((status) => {
+        try {
+          const status = await i2pService.initialize(effectiveSamConfig(i2pSettings.sam));
           setI2pStatus(status);
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
             let updatedUser = { ...decryptedUser };
-            // Always persist the SAM private key when a new destination was generated
-            // OR when we have one in identity but user doesn't have it stored yet
-            if (identity?.samDestination && (!decryptedUser.i2pSamDestination || status.newDestinationGenerated)) {
+            // CRITICAL: Always persist the SAM destination when:
+            // 1. A new destination was just generated, OR
+            // 2. We have one in identity but user record doesn't have it stored yet
+            // This ensures the destination survives app restarts and we never use TRANSIENT
+            const needsSamDestinationUpdate = identity?.samDestination &&
+              (!decryptedUser.i2pSamDestination || status.newDestinationGenerated || decryptedUser.i2pSamDestination !== identity.samDestination);
+            if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
             if (status.address && status.address !== decryptedUser.i2pAddress) {
               console.log('[AppContext] Updating stored i2p address to SAM b32:', status.address.slice(0, 20) + '...');
               updatedUser = { ...updatedUser, i2pAddress: status.address };
             }
+            // Defensive check: if user doesn't have i2pSamDestination but I2P identity now has one, force save
+            if (!updatedUser.i2pSamDestination && identity?.samDestination) {
+              console.log('[AppContext] Force-saving SAM destination that was missing from storage');
+              updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
+            }
             if (updatedUser !== decryptedUser) {
-              storageService.saveUser(updatedUser).catch(console.error);
-              setUser(updatedUser);
+              try {
+                await storageService.saveUser(updatedUser);
+                setUser(updatedUser);
+              } catch (err) {
+                console.warn('[AppContext] Failed to save user updates:', err);
+              }
             }
           }
-        }).catch((err) => {
+        } catch (err) {
           console.error('[AppContext] I2P init failed:', err);
           setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-        });
+        }
       }
 
       return true;
