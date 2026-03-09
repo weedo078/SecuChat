@@ -129,7 +129,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Chats state
   const [chats, setChats] = useState<Chat[]>([]);
-  const [activeChat, setActiveChat] = useState<Chat | null>(null);
+  const [activeChat, setActiveChatState] = useState<Chat | null>(null);
   
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
@@ -353,19 +353,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // Save message to storage
       await storageService.saveMessage(message);
 
+      // Only increment unread count if chat is not currently active
+      const isChatActive = activeChat?.id === localChatId;
+
       // Update chat unread count & timestamp
       if (localChat) {
         const updatedChat = {
           ...localChat,
           lastMessageTimestamp: message.timestamp,
-          unreadCount: (localChat.unreadCount || 0) + 1,
+          unreadCount: isChatActive ? 0 : (localChat.unreadCount || 0) + 1,
         };
         await storageService.saveChat(updatedChat);
         setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
       }
 
       // Add to active chat messages if it's open
-      if (activeChat?.id === localChatId) {
+      if (isChatActive) {
         setMessages(prev => [...prev, message]);
       }
     } catch (error) {
@@ -474,12 +477,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await storageService.deleteChat(id);
     await storageService.deleteMessagesByChat(id);
     setChats(prev => prev.filter(c => c.id !== id));
-    
+
     if (activeChat?.id === id) {
-      setActiveChat(null);
+      setActiveChatState(null);
       setMessages([]);
     }
   }, [activeChat]);
+
+  // Wrapper for setActiveChat that resets unread count
+  const setActiveChat = useCallback(async (chat: Chat | null) => {
+    // Reset unread count if opening a chat with unread messages
+    if (chat && chat.unreadCount > 0) {
+      const updatedChat = { ...chat, unreadCount: 0 };
+      await storageService.saveChat(updatedChat);
+      setChats(prev => prev.map(c => c.id === chat.id ? updatedChat : c));
+      setActiveChatState(updatedChat);
+    } else {
+      setActiveChatState(chat);
+    }
+  }, []);
 
   // Message operations
   const sendMessage = useCallback(async (content: string) => {
