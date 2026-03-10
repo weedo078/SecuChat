@@ -167,6 +167,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Update version for PR build
+        shell: bash
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          BETA_NUM=${{ github.run_number }}
+          NEW_VERSION="1.0-PR${PR_NUM}-beta${BETA_NUM}"
+          echo "Setting version to: $NEW_VERSION"
+          # Update package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
+
       - name: Get version info
         id: version
         shell: bash
@@ -252,6 +262,23 @@ jobs:
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "Android directory not found, skipping Android build"
           fi
+
+      - name: Update version for PR build
+        if: steps.check-android.outputs.exists == 'true' && github.event_name == 'pull_request'
+        working-directory: ./app
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          BETA_NUM=${{ github.run_number }}
+          NEW_VERSION="1.0-PR${PR_NUM}-beta${BETA_NUM}"
+          echo "Setting version to: $NEW_VERSION"
+          # Update package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          # Update Android versionCode und versionName
+          cd android/app
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$NEW_VERSION\"/" build.gradle
+          # versionCode muss auch erhöht werden (Android braucht Integer)
+          # Nutze run_number als versionCode (eindeutig steigend)
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" build.gradle
 
       - uses: actions/setup-node@v4
         if: steps.check-android.outputs.exists == 'true'
