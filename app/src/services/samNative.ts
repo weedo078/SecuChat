@@ -111,6 +111,10 @@ const SAMNativePlugin = registerPlugin<{
     eventName: 'error',
     listener: (event: SAMErrorEvent) => void
   ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'samStatus',
+    listener: (event: { status: string }) => void
+  ): Promise<PluginListenerHandle>;
 
   removeAllListeners(): Promise<void>;
 }>('SAM');
@@ -401,6 +405,12 @@ class SAMNativeService {
       this.errorHandlers.forEach(h => h(event.error, event.streamId));
     });
     this.listeners.push(errorHandle);
+
+    // Status change listener
+    const statusHandle = await SAMNativePlugin.addListener('samStatus', (event) => {
+      logger.log('[SAMNative] Status change:', event.status);
+    });
+    this.listeners.push(statusHandle);
   }
 
   /**
