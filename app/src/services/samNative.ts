@@ -146,6 +146,12 @@ class SAMNativeService {
    * Initialize the native SAM connection
    */
   async initialize(config: SAMConfig): Promise<boolean> {
+    // Android native uses port 7656 (direct TCP to i2pd), not 7657 (WebSocket proxy)
+    if (config.port === 7657) {
+      logger.warn('[SAMNative] Correcting port from 7657 to 7656 for native Android');
+      config.port = 7656;
+    }
+
     this.config = config;
     void this.config; // Used for future reference
     if (!config.enabled) {

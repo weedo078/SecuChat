@@ -9,6 +9,7 @@ import nacl from 'tweetnacl';
 import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
 import { logger } from '@/utils/logger';
+import { platformService } from './platform';
 export { samService, type SAMConfig };
 
 export interface I2PIdentity {
@@ -56,7 +57,8 @@ class I2PService {
    * Initialize I2P service — connects to SAM via proxy
    */
   async initialize(config?: SAMConfig): Promise<I2PStatus> {
-    const samConfig: SAMConfig = config || { host: '127.0.0.1', port: 7657, enabled: true };
+    const defaultPort = platformService.isAndroidNative() ? 7656 : 7657;
+    const samConfig: SAMConfig = config || { host: '127.0.0.1', port: defaultPort, enabled: true };
 
     // Check if SAM proxy is available
     const samAvailable = await samService.isAvailable(samConfig);

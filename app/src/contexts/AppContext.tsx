@@ -6,6 +6,7 @@ import type { I2PStatus } from '@/services/i2p';
 import { storageService } from '@/services/storage';
 import { cryptoService } from '@/services/crypto';
 import { i2pService, samService } from '@/services/i2p';
+import { platformService } from '@/services/platform';
 
 // Zod Schema for incoming message validation
 const incomingMessageSchema = z.object({
@@ -115,8 +116,19 @@ const isElectron = typeof window !== 'undefined' &&
   !!(window as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
 
 function effectiveSamConfig(sam: AppSettings['i2p']['sam']): AppSettings['i2p']['sam'] {
-  if (isElectron) return { ...sam, enabled: true };
-  return sam;
+  const config = { ...sam };
+
+  // Electron: bundled SAM proxy always runs on port 7657 — force enabled.
+  if (isElectron) {
+    config.enabled = true;
+  }
+
+  // Android native: use direct TCP to i2pd SAM on port 7656, not WebSocket proxy on 7657.
+  if (platformService.isAndroidNative()) {
+    config.port = 7656;
+  }
+
+  return config;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {

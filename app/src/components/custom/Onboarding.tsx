@@ -175,7 +175,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           sam: {
             enabled: i2pTestStatus === 'success',
             host: '127.0.0.1',
-            port: 7657,
+            port: platformService.isAndroidNative() ? 7656 : 7657,
             nickname: 'securechat',
           },
         },
