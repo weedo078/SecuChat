@@ -169,8 +169,14 @@ class SAMNativeService {
       if (result.connected) {
         this.isInitialized = true;
         void this.isInitialized; // Used for tracking state
-        await this.setupEventListeners();
-        logger.log('[SAMNative] Connected successfully');
+        try {
+          await this.setupEventListeners();
+          logger.log('[SAMNative] Connected successfully');
+        } catch (setupError) {
+          logger.error('[SAMNative] Failed to setup event listeners:', setupError);
+          await this.disconnect();
+          return false;
+        }
       } else {
         logger.error('[SAMNative] Connection failed:', result.error);
       }

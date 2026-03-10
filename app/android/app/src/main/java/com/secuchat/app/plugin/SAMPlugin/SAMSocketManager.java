@@ -159,17 +159,28 @@ public class SAMSocketManager {
      * @return The response string, or null if error/timeout
      */
     public String readResponse() {
+        return readResponseWithTimeout(COMMAND_TIMEOUT_MS);
+    }
+
+    /**
+     * Read a response from the SAM bridge with a custom timeout.
+     * Blocks until a response is available or timeout occurs.
+     *
+     * @param timeoutMs Timeout in milliseconds
+     * @return The response string, or null if error/timeout
+     */
+    public String readResponseWithTimeout(int timeoutMs) {
         if (!isConnected.get()) {
             Log.e(TAG, "Cannot read response: not connected");
             return null;
         }
 
         try {
-            String response = responseQueue.poll(COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+            String response = responseQueue.poll(timeoutMs, TimeUnit.MILLISECONDS);
             if (response != null) {
                 Log.d(TAG, "Received: " + response.trim());
             } else {
-                Log.w(TAG, "Read response timeout");
+                Log.w(TAG, "Read response timeout after " + timeoutMs + "ms");
             }
             return response;
         } catch (InterruptedException e) {
@@ -187,6 +198,18 @@ public class SAMSocketManager {
      * @return The response string, or null if error/timeout
      */
     public String sendCommandAndWait(String command) {
+        return sendCommandAndWait(command, COMMAND_TIMEOUT_MS);
+    }
+
+    /**
+     * Send a command and wait for the response with a custom timeout.
+     * Convenience method for synchronous command/response operations.
+     *
+     * @param command The SAM command to send
+     * @param timeoutMs Timeout in milliseconds
+     * @return The response string, or null if error/timeout
+     */
+    public String sendCommandAndWait(String command, int timeoutMs) {
         // Clear any stale responses
         responseQueue.clear();
 
@@ -194,7 +217,7 @@ public class SAMSocketManager {
             return null;
         }
 
-        return readResponse();
+        return readResponseWithTimeout(timeoutMs);
     }
 
     /**

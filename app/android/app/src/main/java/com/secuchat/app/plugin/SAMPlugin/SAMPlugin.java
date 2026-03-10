@@ -8,9 +8,6 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 
-import org.json.JSONException;
-import org.json.JSONObject;
-
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -433,8 +430,8 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 int streamId = generateStreamId();
                 String cmd = String.format("STREAM CONNECT ID=%s DESTINATION=%s SILENT=false",
                     sessionId, destination);
-                Log.d(TAG, "STREAM CONNECT command: " + cmd);
-                String response = socketManager.sendCommandAndWait(cmd);
+                Log.d(TAG, "STREAM CONNECT command: " + cmd + " (timeout: " + timeout + "ms)");
+                String response = socketManager.sendCommandAndWait(cmd, timeout);
 
                 JSObject result = new JSObject();
 
@@ -503,7 +500,12 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             return;
         }
 
-        final String finalData = data != null ? data : "";
+        if (data == null || data.isEmpty()) {
+            call.reject("data is required and cannot be empty");
+            return;
+        }
+
+        final String finalData = data;
 
         executorService.execute(() -> {
             try {
@@ -581,8 +583,19 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         if (start == -1) return null;
 
         start += pattern.length();
-        int end = response.indexOf(' ', start);
-        if (end == -1) end = response.length();
+
+        // Find the next parameter (PARAM=) or end of string
+        // SAM responses have format: RESULT=OK PARAM=value PARAM2=value2 ...
+        int end = response.length();
+        int nextParamStart = response.indexOf(' ', start);
+        if (nextParamStart != -1) {
+            // Check if this is a new parameter (PARAM=)
+            int nextEquals = response.indexOf('=', nextParamStart);
+            if (nextEquals != -1) {
+                // Find the space before the next parameter
+                end = nextParamStart;
+            }
+        }
 
         return response.substring(start, end).trim();
     }

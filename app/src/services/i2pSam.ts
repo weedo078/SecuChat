@@ -190,15 +190,24 @@ class SAMService {
     }
   }
 
+  private nativeMessageHandler?: (from: string, data: string, streamId: number) => void;
+  private nativeStreamConnectedHandler?: (streamId: number, peerDestination: string) => void;
+  private nativeStreamClosedHandler?: (streamId: number, reason?: string) => void;
+  private nativeErrorHandler?: (error: string, streamId: number) => void;
+
   /**
    * Setup event handlers for native bridge
    */
   private setupNativeEventHandlers(): void {
-    samNativeService.onMessage((from, data) => {
-      this.messageHandlers.forEach(h => h(from, data));
-    });
+    // Remove any existing handlers first
+    this.removeNativeEventHandlers();
 
-    samNativeService.onStreamConnected((streamId, peerDestination) => {
+    this.nativeMessageHandler = (from: string, data: string, _streamId: number) => {
+      this.messageHandlers.forEach(h => h(from, data));
+    };
+    samNativeService.onMessage(this.nativeMessageHandler);
+
+    this.nativeStreamConnectedHandler = (streamId: number, peerDestination: string) => {
       const stream: SAMStream = {
         id: streamId,
         peerDestination,
@@ -206,19 +215,44 @@ class SAMService {
       };
       this.streams.set(streamId, stream);
       this.streamHandlers.forEach(h => h(stream));
-    });
+    };
+    samNativeService.onStreamConnected(this.nativeStreamConnectedHandler);
 
-    samNativeService.onStreamClosed((streamId) => {
+    this.nativeStreamClosedHandler = (streamId: number, _reason?: string) => {
       const stream = this.streams.get(streamId);
       if (stream) {
         stream.connected = false;
         this.streams.delete(streamId);
       }
-    });
+    };
+    samNativeService.onStreamClosed(this.nativeStreamClosedHandler);
 
-    samNativeService.onError((error, streamId) => {
+    this.nativeErrorHandler = (error: string, streamId: number) => {
       logger.error('[SAM] Native error:', error, 'stream:', streamId);
-    });
+    };
+    samNativeService.onError(this.nativeErrorHandler);
+  }
+
+  /**
+   * Remove native event handlers
+   */
+  private removeNativeEventHandlers(): void {
+    if (this.nativeMessageHandler) {
+      samNativeService.offMessage(this.nativeMessageHandler);
+      this.nativeMessageHandler = undefined;
+    }
+    if (this.nativeStreamConnectedHandler) {
+      // Note: samNativeService doesn't have offStreamConnected yet - would need to add
+      this.nativeStreamConnectedHandler = undefined;
+    }
+    if (this.nativeStreamClosedHandler) {
+      // Note: samNativeService doesn't have offStreamClosed yet - would need to add
+      this.nativeStreamClosedHandler = undefined;
+    }
+    if (this.nativeErrorHandler) {
+      // Note: samNativeService doesn't have offError yet - would need to add
+      this.nativeErrorHandler = undefined;
+    }
   }
 
   /**
@@ -876,7 +910,15 @@ class SAMService {
       resolver('ERROR RESULT=DISCONNECTED');
     });
     this.pendingResolvers = [];
-    
+
+    // Clear all event handlers to prevent memory leaks
+    this.messageHandlers = [];
+    this.streamHandlers = [];
+    this.reconnectHandlers = [];
+
+    // Remove native event handlers if using native bridge
+    this.removeNativeEventHandlers();
+
     this.socket?.close();
     this.socket = null;
     this.isConnected = false;
