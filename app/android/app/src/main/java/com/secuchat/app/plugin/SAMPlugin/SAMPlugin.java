@@ -466,20 +466,18 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             return;
         }
 
-        if (data == null) {
-            data = "";
-        }
+        final String finalData = data != null ? data : "";
 
         executorService.execute(() -> {
             try {
                 // SAM sends data raw over the socket after STREAM CONNECT/ACCEPT
                 // For now, we'll send it as a command to be written
-                boolean success = socketManager.sendData(data);
+                boolean success = socketManager.sendData(finalData);
 
                 JSObject result = new JSObject();
                 result.put("success", success);
                 if (success) {
-                    result.put("bytesSent", data.length());
+                    result.put("bytesSent", finalData.length());
                 }
                 call.resolve(result);
 
