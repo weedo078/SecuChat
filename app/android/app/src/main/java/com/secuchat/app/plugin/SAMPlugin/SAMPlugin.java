@@ -60,19 +60,38 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
+                // Step 1: TCP connect to SAM bridge
                 boolean connected = socketManager.connect(host, port);
-
-                JSObject result = new JSObject();
-                result.put("connected", connected);
-
                 if (!connected) {
+                    JSObject result = new JSObject();
+                    result.put("connected", false);
                     result.put("error", "Failed to connect to SAM at " + host + ":" + port);
+                    call.resolve(result);
+                    notifyStatusChange("disconnected");
+                    return;
                 }
 
+                // Step 2: SAM v3.1 HELLO handshake (required before any other commands)
+                String helloResponse = socketManager.sendCommandAndWait("HELLO VERSION MIN=3.1 MAX=3.1");
+                if (helloResponse == null || !helloResponse.contains("RESULT=OK")) {
+                    Log.e(TAG, "HELLO handshake failed: " + helloResponse);
+                    socketManager.disconnect();
+                    JSObject result = new JSObject();
+                    result.put("connected", false);
+                    result.put("error", "SAM HELLO handshake failed: " + (helloResponse != null ? helloResponse : "No response"));
+                    call.resolve(result);
+                    notifyStatusChange("disconnected");
+                    return;
+                }
+
+                Log.d(TAG, "HELLO handshake successful: " + helloResponse);
+
+                JSObject result = new JSObject();
+                result.put("connected", true);
                 call.resolve(result);
 
                 // Notify status change
-                notifyStatusChange(connected ? "connected" : "disconnected");
+                notifyStatusChange("connected");
 
             } catch (Exception e) {
                 Log.e(TAG, "Connect failed: " + e.getMessage(), e);
