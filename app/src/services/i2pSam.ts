@@ -190,9 +190,9 @@ class SAMService {
     }
   }
 
-  private nativeMessageHandler?: (from: string, data: string, streamId: number) => void;
+  private nativeMessageHandler?: (from: string, data: string, _streamId: number) => void;
   private nativeStreamConnectedHandler?: (streamId: number, peerDestination: string) => void;
-  private nativeStreamClosedHandler?: (streamId: number, reason?: string) => void;
+  private nativeStreamClosedHandler?: (streamId: number, _reason?: string) => void;
   private nativeErrorHandler?: (error: string, streamId: number) => void;
 
   /**
@@ -202,7 +202,7 @@ class SAMService {
     // Remove any existing handlers first
     this.removeNativeEventHandlers();
 
-    this.nativeMessageHandler = (from: string, data: string, _streamId: number) => {
+    this.nativeMessageHandler = (from: string, data: string) => {
       this.messageHandlers.forEach(h => h(from, data));
     };
     samNativeService.onMessage(this.nativeMessageHandler);
@@ -218,7 +218,7 @@ class SAMService {
     };
     samNativeService.onStreamConnected(this.nativeStreamConnectedHandler);
 
-    this.nativeStreamClosedHandler = (streamId: number, _reason?: string) => {
+    this.nativeStreamClosedHandler = (streamId: number) => {
       const stream = this.streams.get(streamId);
       if (stream) {
         stream.connected = false;
