@@ -22,7 +22,7 @@ import java.util.concurrent.Executors;
  * allowing direct TCP connections to i2pd's SAM interface (localhost:7656).
  */
 @CapacitorPlugin(name = "SAM")
-public class SAMPlugin extends Plugin {
+public class SAMPlugin extends Plugin implements EventNotifier {
 
     private static final String TAG = "SecuChat:SAM";
     private static final String EVENT_MESSAGE = "samMessage";
@@ -34,6 +34,11 @@ public class SAMPlugin extends Plugin {
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
         this.executorService = Executors.newSingleThreadExecutor();
+    }
+
+    @Override
+    public void notify(String eventName, JSObject data) {
+        notifyListeners(eventName, data, true);
     }
 
     @Override

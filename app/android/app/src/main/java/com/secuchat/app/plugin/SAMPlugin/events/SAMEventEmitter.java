@@ -1,7 +1,7 @@
 package com.secuchat.app.plugin.SAMPlugin.events;
 
-import com.getcapacitor.Plugin;
 import com.getcapacitor.JSObject;
+import com.secuchat.app.plugin.SAMPlugin.EventNotifier;
 
 import android.os.Handler;
 import android.os.Looper;
@@ -15,7 +15,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
  */
 public class SAMEventEmitter {
 
-    private final Plugin plugin;
+    private final EventNotifier notifier;
     private final Handler mainHandler;
     private final CopyOnWriteArrayList<String> activeEventListeners;
 
@@ -25,8 +25,8 @@ public class SAMEventEmitter {
     public static final String EVENT_STREAM_CLOSED = "streamClosed";
     public static final String EVENT_ERROR = "error";
 
-    public SAMEventEmitter(Plugin plugin) {
-        this.plugin = plugin;
+    public SAMEventEmitter(EventNotifier notifier) {
+        this.notifier = notifier;
         this.mainHandler = new Handler(Looper.getMainLooper());
         this.activeEventListeners = new CopyOnWriteArrayList<>();
     }
@@ -115,10 +115,10 @@ public class SAMEventEmitter {
     private void emitOnMainThread(String eventName, JSObject data) {
         if (Looper.myLooper() == Looper.getMainLooper()) {
             // Already on main thread
-            plugin.notifyListeners(eventName, data, true);
+            notifier.notify(eventName, data);
         } else {
             // Post to main thread
-            mainHandler.post(() -> plugin.notifyListeners(eventName, data, true));
+            mainHandler.post(() -> notifier.notify(eventName, data));
         }
     }
 
