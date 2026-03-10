@@ -199,7 +199,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     setError(null);
 
     // Electron has bundled i2pd that may need a moment to start — give it more time
-    const timeoutMs = platformService.isElectron() ? 30000 : 10000;
+    // Android native uses direct TCP connection (port 7656), not WebSocket proxy (port 7657)
+    const timeoutMs = platformService.isElectron() ? 30000 : 15000;
+    const samPort = platformService.isAndroidNative() ? 7656 : 7657;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -209,7 +211,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       const available = await Promise.race([
         samService.isAvailable({
           host: '127.0.0.1',
-          port: 7657,
+          port: samPort,
           enabled: true,
         }),
         timeoutPromise,
@@ -286,8 +288,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // New device pairing flow
   if (isNewDevice) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-lg">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+        <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Smartphone className="h-8 w-8 text-primary" />
@@ -400,8 +402,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // Restore from backup flow
   if (showRestoreFlow) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-lg">
+      <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+        <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Upload className="h-8 w-8 text-primary" />
@@ -535,8 +537,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
   // New account flow
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
+    <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-lg my-auto">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
