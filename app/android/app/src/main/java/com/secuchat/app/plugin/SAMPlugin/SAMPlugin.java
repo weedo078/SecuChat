@@ -25,12 +25,15 @@ import java.util.concurrent.Executors;
 public class SAMPlugin extends Plugin implements EventNotifier {
 
     private static final String TAG = "SecuChat:SAM";
-    private static final String EVENT_MESSAGE = "samMessage";
+    private static final String EVENT_MESSAGE = "message";
+    private static final String EVENT_STREAM_CONNECTED = "streamConnected";
+    private static final String EVENT_STREAM_CLOSED = "streamClosed";
+    private static final String EVENT_ERROR = "error";
     private static final String EVENT_STATUS = "samStatus";
 
     private final SAMSocketManager socketManager;
     private final ExecutorService executorService;
-    private String currentSessionId = null; // Track the current session nickname
+    private volatile String currentSessionId = null; // Track the current session nickname (thread-safe)
 
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
@@ -112,6 +115,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         executorService.execute(() -> {
             try {
                 socketManager.disconnect();
+
+                // Clear session ID on disconnect
+                currentSessionId = null;
+                Log.d(TAG, "Session ID cleared");
 
                 JSObject result = new JSObject();
                 result.put("disconnected", true);
