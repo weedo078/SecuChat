@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
+import com.secuchat.app.plugin.SAMPlugin.events.SAMEventEmitter;
+
 /**
  * Singleton manager for SAM TCP socket connections.
  * Handles non-blocking I/O using ExecutorService for all SAM v3.1 protocol operations.
@@ -35,6 +37,8 @@ public class SAMSocketManager {
     private final BlockingQueue<String> responseQueue;
 
     private SAMConfig config;
+    private volatile SAMEventEmitter eventEmitter;
+    private final BlockingQueue<String> pendingEvents;
     private Thread readThread;
 
     private SAMSocketManager() {
@@ -44,6 +48,7 @@ public class SAMSocketManager {
         this.writerRef = new AtomicReference<>();
         this.readerRef = new AtomicReference<>();
         this.responseQueue = new LinkedBlockingQueue<>();
+        this.pendingEvents = new LinkedBlockingQueue<>();
         this.config = new SAMConfig();
     }
 
@@ -55,6 +60,21 @@ public class SAMSocketManager {
             instance = new SAMSocketManager();
         }
         return instance;
+    }
+
+    /**
+     * Set the event emitter for forwarding async events to TypeScript.
+     * Processes any pending events that arrived before emitter was set.
+     */
+    public void setEventEmitter(SAMEventEmitter emitter) {
+        this.eventEmitter = emitter;
+        Log.d(TAG, "Event emitter set, processing " + pendingEvents.size() + " pending events");
+
+        // Process any pending events that arrived before emitter was set
+        String pendingEvent;
+        while ((pendingEvent = pendingEvents.poll()) != null) {
+            handleAsyncEvent(pendingEvent);
+        }
     }
 
     /**
@@ -113,6 +133,8 @@ public class SAMSocketManager {
         Log.d(TAG, "Disconnecting from SAM");
         isConnected.set(false);
         config.setEnabled(false);
+        responseQueue.clear();
+        pendingEvents.clear();
         cleanup();
     }
 
@@ -258,7 +280,14 @@ public class SAMSocketManager {
                     String line = reader.readLine();
                     if (line != null) {
                         Log.d(TAG, "Read thread received: " + line.trim());
-                        responseQueue.offer(line);
+
+                        // Check if this is an async event (STREAM CONNECTED/CLOSED)
+                        if (isAsyncEvent(line)) {
+                            handleAsyncEvent(line);
+                        } else {
+                            // It's a response to a command
+                            responseQueue.offer(line);
+                        }
                     } else {
                         // End of stream - connection closed
                         Log.w(TAG, "Read thread: end of stream");
@@ -267,6 +296,11 @@ public class SAMSocketManager {
                 } catch (IOException e) {
                     if (isConnected.get()) {
                         Log.e(TAG, "Read error: " + e.getMessage(), e);
+                        // Emit error event to TypeScript
+                        SAMEventEmitter emitter = eventEmitter;
+                        if (emitter != null) {
+                            emitter.emitError("Read error: " + e.getMessage(), 0);
+                        }
                     }
                     break;
                 }
@@ -283,6 +317,71 @@ public class SAMSocketManager {
 
         readThread.setDaemon(true);
         readThread.start();
+    }
+
+    /**
+     * Check if a line is an async event (not a command response).
+     */
+    private boolean isAsyncEvent(String line) {
+        if (line == null) return false;
+        // STREAM CONNECTED and STREAM CLOSED are async events from i2pd
+        return line.startsWith("STREAM CONNECTED") ||
+               line.startsWith("STREAM CLOSED");
+    }
+
+    /**
+     * Handle async events by forwarding to the event emitter.
+     * Buffers events if emitter is not yet set.
+     */
+    private void handleAsyncEvent(String line) {
+        if (eventEmitter == null) {
+            // Buffer event for later delivery instead of dropping
+            Log.d(TAG, "Buffering event (no emitter yet): " + line.substring(0, Math.min(50, line.length())));
+            pendingEvents.offer(line);
+            return;
+        }
+
+        if (line.startsWith("STREAM CONNECTED")) {
+            // Parse: STREAM CONNECTED ID=xxx DESTINATION=xxx
+            String destination = parseParam(line, "DESTINATION");
+            int streamId = parseStreamId(parseParam(line, "ID"));
+            Log.d(TAG, "Emitting streamConnected: id=" + streamId + ", dest=" + (destination != null ? destination.substring(0, Math.min(20, destination.length())) + "..." : "null"));
+            eventEmitter.emitStreamConnected(destination != null ? destination : "", streamId);
+
+        } else if (line.startsWith("STREAM CLOSED")) {
+            // Parse: STREAM CLOSED ID=xxx [REASON=xxx]
+            int streamId = parseStreamId(parseParam(line, "ID"));
+            String reason = parseParam(line, "REASON");
+            Log.d(TAG, "Emitting streamClosed: id=" + streamId + ", reason=" + (reason != null ? reason : "closed"));
+            eventEmitter.emitStreamClosed(streamId, reason != null ? reason : "closed");
+        }
+    }
+
+    /**
+     * Parse a parameter value from a SAM response line.
+     */
+    private String parseParam(String response, String param) {
+        if (response == null) return null;
+        String pattern = param + "=";
+        int start = response.indexOf(pattern);
+        if (start == -1) return null;
+        start += pattern.length();
+        int end = response.indexOf(' ', start);
+        if (end == -1) end = response.length();
+        return response.substring(start, end).trim();
+    }
+
+    /**
+     * Parse stream ID from string, extracting numeric portion.
+     * Returns -1 on parse failure to distinguish from valid ID 0.
+     */
+    private int parseStreamId(String idStr) {
+        if (idStr == null) return -1;
+        try {
+            return Integer.parseInt(idStr.replaceAll("[^0-9]", ""));
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     private void cleanup() {

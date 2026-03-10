@@ -31,11 +31,13 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
     private final SAMSocketManager socketManager;
     private final ExecutorService executorService;
+    private final SAMEventEmitter eventEmitter;
     private volatile String currentSessionId = null; // Track the current session nickname (thread-safe)
 
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
         this.executorService = Executors.newSingleThreadExecutor();
+        this.eventEmitter = new SAMEventEmitter(this);
     }
 
     @Override
@@ -46,6 +48,9 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     @Override
     public void load() {
         Log.d(TAG, "SAMPlugin loaded");
+        // Connect event emitter to socket manager for async event forwarding
+        socketManager.setEventEmitter(eventEmitter);
+        Log.d(TAG, "Event emitter connected to socket manager");
     }
 
     /**
@@ -577,6 +582,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     @Override
     protected void handleOnDestroy() {
         Log.d(TAG, "Plugin destroying, shutting down SAM");
+        eventEmitter.clearListeners();
         socketManager.shutdown();
         executorService.shutdown();
         try {
