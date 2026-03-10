@@ -279,7 +279,9 @@ export async function shareText(
  * Check if native sharing is available
  */
 export function canShareNatively(): boolean {
-  return isNativeStorageAvailable();
+  const available = isNativeStorageAvailable();
+  console.log('[NativeFileSharing] canShareNatively:', available);
+  return available;
 }
 
 /**

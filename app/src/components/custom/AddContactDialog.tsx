@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -251,9 +252,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const exportContactFile = async () => {
     if (!user) return;
 
+    console.log('[AddContactDialog] Export starting, canShareNatively:', canShareNatively());
+
     // On native Android, use the native share dialog
     if (canShareNatively()) {
       try {
+        toast.info('Exportiere Kontakt...', {
+          description: 'Datei wird vorbereitet',
+        });
+
         const result = await exportContact(
           {
             name: user.username,
@@ -264,12 +271,23 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
           { share: true }
         );
 
-        if (!result.success) {
+        if (result.success) {
+          toast.success('Kontakt exportiert', {
+            description: 'Teilen-Dialog wird geöffnet',
+          });
+          return;
+        } else {
           console.error('[AddContactDialog] Export failed:', result.error);
+          toast.error('Export fehlgeschlagen', {
+            description: result.error || 'Versuche Download-Modus',
+          });
+          // Fall through to browser download
         }
-        return;
       } catch (error) {
         console.error('[AddContactDialog] Native export error:', error);
+        toast.error('Native Export Fehler', {
+          description: 'Wechsle zu Download-Modus',
+        });
         // Fall back to browser download
       }
     }
@@ -299,6 +317,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     link.download = `${user.username}.secuchat`;
     link.click();
     URL.revokeObjectURL(url);
+
+    toast.success('Kontakt heruntergeladen', {
+      description: `${user.username}.secuchat wurde gespeichert`,
+    });
   };
 
   // ── Manual ─────────────────────────────────────────────────────────────────
