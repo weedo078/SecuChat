@@ -5,7 +5,7 @@ import type { User, Contact, Chat, Message, AppSettings, SecuritySettings, Conne
 import type { I2PStatus } from '@/services/i2p';
 import { storageService } from '@/services/storage';
 import { cryptoService } from '@/services/crypto';
-import { i2pService } from '@/services/i2p';
+import { i2pService, samService } from '@/services/i2p';
 
 // Zod Schema for incoming message validation
 const incomingMessageSchema = z.object({
@@ -268,6 +268,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setI2pStatus(status);
           if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
+
+            // CRITICAL FIX: If identity lacks samDestination but SAM has a session, sync it
+            if (identity && !identity.samDestination) {
+              const samSession = samService.exportSession();
+              if (samSession?.privateKey) {
+                console.log('[AppContext] Syncing missing samDestination from SAM session (init)');
+                i2pService.setSamDestination(samSession.privateKey);
+              }
+            }
+
             let updatedUser = { ...savedUser };
             // CRITICAL: Always persist the SAM destination when:
             // 1. A new destination was just generated, OR
@@ -868,6 +878,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setI2pStatus(status);
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
+            console.log('[AppContext] I2P connected, identity:', identity ? { hasSamDestination: !!identity.samDestination } : null);
+
+            // CRITICAL FIX: If identity lacks samDestination but SAM has a session, sync it
+            if (identity && !identity.samDestination) {
+              const samSession = samService.exportSession();
+              if (samSession?.privateKey) {
+                console.log('[AppContext] Syncing missing samDestination from SAM session');
+                i2pService.setSamDestination(samSession.privateKey);
+              }
+            }
+
             let updatedUser = { ...decryptedUser };
             // CRITICAL: Always persist the SAM destination when:
             // 1. A new destination was just generated, OR
@@ -875,6 +896,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             // This ensures the destination survives app restarts and we never use TRANSIENT
             const needsSamDestinationUpdate = identity?.samDestination &&
               (!decryptedUser.i2pSamDestination || status.newDestinationGenerated || decryptedUser.i2pSamDestination !== identity.samDestination);
+            console.log('[AppContext] needsSamDestinationUpdate:', needsSamDestinationUpdate, 'userHasDestination:', !!decryptedUser.i2pSamDestination);
             if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
@@ -887,6 +909,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
               console.log('[AppContext] Force-saving SAM destination that was missing from storage');
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
+            console.log('[AppContext] Saving user updates:', {
+              hasSamDestination: !!updatedUser.i2pSamDestination,
+              userChanged: updatedUser !== decryptedUser
+            });
             if (updatedUser !== decryptedUser) {
               try {
                 await storageService.saveUser(updatedUser);
