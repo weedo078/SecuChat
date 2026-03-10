@@ -589,7 +589,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, test, security, build-windows-pr, kimi-review]
+    needs: [detect-changes, test, security, build-windows-pr, build-android]
     if: always()
     steps:
       - name: Generate Summary
@@ -608,4 +608,4 @@ jobs:
           echo "| Test & Lint | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows PR | ${{ needs.build-windows-pr.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Kimi Review | ${{ needs.kimi-review.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android Build | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY
