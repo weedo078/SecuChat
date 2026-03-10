@@ -229,17 +229,6 @@ jobs:
           path: electron/release/*.exe
           retention-days: 7
 
-      - name: Comment PR
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `🪟 **Windows Build fertig!**\n\n[⬇️ Hier herunterladen](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n> ⚠️ Dies ist ein PR-Build für Testzwecke.`
-            })
-
   # ═══════════════════════════════════════════════════════════════
   # ANDROID BUILD
   # ═══════════════════════════════════════════════════════════════
@@ -343,6 +332,50 @@ jobs:
           name: android-debug-apk
           path: app/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
+
+  # ═══════════════════════════════════════════════════════════════
+  # PR COMMENT (Combined Windows + Android)
+  # ═══════════════════════════════════════════════════════════════
+  pr-comment:
+    name: Comment PR Builds
+    runs-on: ubuntu-latest
+    needs: [build-windows-pr, build-android]
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.draft == false
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment PR with build links
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const windowsStatus = '${{ needs.build-windows-pr.result }}';
+            const androidStatus = '${{ needs.build-android.result }}';
+
+            const windowsEmoji = windowsStatus === 'success' ? '✅' : (windowsStatus === 'failure' ? '❌' : '⏭️');
+            const androidEmoji = androidStatus === 'success' ? '✅' : (androidStatus === 'failure' ? '❌' : '⏭️');
+
+            let body = `## 📦 PR Build Status\n\n`;
+            body += `| Platform | Status | Download |\n`;
+            body += `|----------|--------|----------|\n`;
+
+            if (windowsStatus !== 'skipped') {
+              body += `| 🪟 Windows | ${windowsEmoji} | [Artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
+            }
+
+            if (androidStatus !== 'skipped') {
+              body += `| 🤖 Android | ${androidEmoji} | [Artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
+            }
+
+            body += `\n> ⚠️ Diese Builds sind für Testzwecke.\n`;
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
 
   # RELEASE JOBS (Only on main push or workflow_dispatch)
   # ═══════════════════════════════════════════════════════════════
@@ -689,7 +722,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, test, security, build-windows-pr, build-android, build-release-android]
+    needs: [detect-changes, test, security, build-windows-pr, build-android, pr-comment, build-release-android]
     if: always()
     steps:
       - name: Generate Summary
@@ -709,3 +742,4 @@ jobs:
           echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows PR | ${{ needs.build-windows-pr.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Android Build | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PR Comment | ${{ needs.pr-comment.result }} |" >> $GITHUB_STEP_SUMMARY
