@@ -292,7 +292,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     /**
      * Generate a new I2P destination.
      * Convenience method for DEST GENERATE command.
-     * Returns: { success: boolean, pub?: string, priv?: string, error?: string }
+     * Returns: { success: boolean, publicKey?: string, privateKey?: string, error?: string }
      */
     @PluginMethod
     public void generateDestination(PluginCall call) {
@@ -309,8 +309,8 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     String priv = parseParam(response, "PRIV");
 
                     result.put("success", true);
-                    result.put("pub", pub);
-                    result.put("priv", priv);
+                    result.put("publicKey", pub);
+                    result.put("privateKey", priv);
                 } else {
                     result.put("success", false);
                     result.put("error", response != null ? response : "No response");
@@ -328,29 +328,31 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     /**
      * Create a SAM session.
      * Convenience method for SESSION CREATE command.
-     * Expects: { id: string, destination: string, style?: string }
+     * Expects: { nickname: string, privateKey?: string, style?: string }
      * Returns: { success: boolean, error?: string }
      */
     @PluginMethod
     public void createSession(PluginCall call) {
-        String id = call.getString("id");
-        String destination = call.getString("destination");
+        String nickname = call.getString("nickname");
+        String privateKey = call.getString("privateKey");
         String style = call.getString("style", "STREAM");
 
-        if (id == null || id.isEmpty()) {
-            call.reject("Session ID is required");
-            return;
-        }
-
-        if (destination == null || destination.isEmpty()) {
-            call.reject("Destination is required");
+        if (nickname == null || nickname.isEmpty()) {
+            call.reject("Nickname is required");
             return;
         }
 
         executorService.execute(() -> {
             try {
-                String cmd = String.format("SESSION CREATE STYLE=%s ID=%s DESTINATION=%s",
-                    style, id, destination);
+                String cmd;
+                if (privateKey != null && !privateKey.isEmpty()) {
+                    cmd = String.format("SESSION CREATE STYLE=%s ID=%s DESTINATION=%s",
+                        style, nickname, privateKey);
+                } else {
+                    // TRANSIENT session - let SAM generate a destination
+                    cmd = String.format("SESSION CREATE STYLE=%s ID=%s",
+                        style, nickname);
+                }
                 String response = socketManager.sendCommandAndWait(cmd);
 
                 JSObject result = new JSObject();
@@ -367,6 +369,153 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             } catch (Exception e) {
                 Log.e(TAG, "SESSION CREATE failed: " + e.getMessage(), e);
                 call.reject("SESSION CREATE failed: " + e.getMessage());
+            }
+        });
+    }
+
+    private int nextStreamId = 1;
+
+    private synchronized int generateStreamId() {
+        return nextStreamId++;
+    }
+
+    /**
+     * Connect to a remote peer via STREAM CONNECT.
+     * Expects: { destination: string, timeout?: number }
+     * Returns: { success: boolean, streamId?: number, error?: string }
+     */
+    @PluginMethod
+    public void connectTo(PluginCall call) {
+        String destination = call.getString("destination");
+        int timeout = call.getInt("timeout", 60000);
+
+        if (destination == null || destination.isEmpty()) {
+            call.reject("Destination is required");
+            return;
+        }
+
+        executorService.execute(() -> {
+            try {
+                int streamId = generateStreamId();
+                String cmd = String.format("STREAM CONNECT ID=seuchat_session DESTINATION=%s SILENT=false",
+                    destination);
+                String response = socketManager.sendCommandAndWait(cmd);
+
+                JSObject result = new JSObject();
+
+                if (response != null && response.contains("RESULT=OK")) {
+                    result.put("success", true);
+                    result.put("streamId", streamId);
+                } else {
+                    result.put("success", false);
+                    result.put("error", response != null ? response : "No response");
+                }
+
+                call.resolve(result);
+
+            } catch (Exception e) {
+                Log.e(TAG, "STREAM CONNECT failed: " + e.getMessage(), e);
+                call.reject("STREAM CONNECT failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Start accepting incoming connections via STREAM ACCEPT.
+     * Expects: { nickname: string }
+     * Returns: { success: boolean, error?: string }
+     */
+    @PluginMethod
+    public void startAccepting(PluginCall call) {
+        String nickname = call.getString("nickname");
+
+        if (nickname == null || nickname.isEmpty()) {
+            call.reject("Nickname is required");
+            return;
+        }
+
+        executorService.execute(() -> {
+            try {
+                // STREAM ACCEPT is handled asynchronously - we just initiate it
+                String cmd = String.format("STREAM ACCEPT ID=%s SILENT=false", nickname);
+                socketManager.sendCommand(cmd);
+
+                JSObject result = new JSObject();
+                result.put("success", true);
+                call.resolve(result);
+
+            } catch (Exception e) {
+                Log.e(TAG, "STREAM ACCEPT failed: " + e.getMessage(), e);
+                call.reject("STREAM ACCEPT failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Send data over a stream.
+     * Expects: { streamId: number, data: string }
+     * Returns: { success: boolean, bytesSent?: number, error?: string }
+     */
+    @PluginMethod
+    public void send(PluginCall call) {
+        int streamId = call.getInt("streamId", -1);
+        String data = call.getString("data");
+
+        if (streamId == -1) {
+            call.reject("streamId is required");
+            return;
+        }
+
+        if (data == null) {
+            data = "";
+        }
+
+        executorService.execute(() -> {
+            try {
+                // SAM sends data raw over the socket after STREAM CONNECT/ACCEPT
+                // For now, we'll send it as a command to be written
+                boolean success = socketManager.sendData(data);
+
+                JSObject result = new JSObject();
+                result.put("success", success);
+                if (success) {
+                    result.put("bytesSent", data.length());
+                }
+                call.resolve(result);
+
+            } catch (Exception e) {
+                Log.e(TAG, "Send failed: " + e.getMessage(), e);
+                call.reject("Send failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Close a specific stream.
+     * Expects: { streamId: number }
+     * Returns: { success: boolean, error?: string }
+     */
+    @PluginMethod
+    public void closeStream(PluginCall call) {
+        int streamId = call.getInt("streamId", -1);
+
+        if (streamId == -1) {
+            call.reject("streamId is required");
+            return;
+        }
+
+        executorService.execute(() -> {
+            try {
+                // Close the underlying socket connection for this stream
+                socketManager.closeStream();
+
+                JSObject result = new JSObject();
+                result.put("success", true);
+                call.resolve(result);
+
+            } catch (Exception e) {
+                Log.e(TAG, "Close stream failed: " + e.getMessage(), e);
+                call.reject("Close stream failed: " + e.getMessage());
             }
         });
     }

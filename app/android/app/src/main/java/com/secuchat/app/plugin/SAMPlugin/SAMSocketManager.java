@@ -315,4 +315,49 @@ public class SAMSocketManager {
             Thread.currentThread().interrupt();
         }
     }
+
+    /**
+     * Send raw data over the socket connection.
+     * Used after STREAM CONNECT/ACCEPT to send actual message data.
+     *
+     * @param data The data to send
+     * @return true if data was sent successfully
+     */
+    public boolean sendData(String data) {
+        if (!isConnected.get()) {
+            Log.e(TAG, "Cannot send data: not connected");
+            return false;
+        }
+
+        PrintWriter writer = writerRef.get();
+        if (writer == null) {
+            Log.e(TAG, "Cannot send data: writer is null");
+            return false;
+        }
+
+        try {
+            Log.d(TAG, "Sending data (" + data.length() + " bytes)");
+            writer.print(data);
+            writer.flush();
+
+            if (writer.checkError()) {
+                Log.e(TAG, "PrintWriter encountered an error sending data");
+                return false;
+            }
+
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to send data: " + e.getMessage(), e);
+            return false;
+        }
+    }
+
+    /**
+     * Close the current stream/socket connection.
+     * This disconnects from SAM entirely.
+     */
+    public void closeStream() {
+        Log.d(TAG, "Closing stream");
+        disconnect();
+    }
 }
