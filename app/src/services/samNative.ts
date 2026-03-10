@@ -293,7 +293,11 @@ class SAMNativeService {
    */
   async isConnected(): Promise<{ connected: boolean; sessionActive: boolean }> {
     try {
-      return await SAMNativePlugin.isConnected();
+      const result = await SAMNativePlugin.isConnected();
+      return {
+        connected: result.connected,
+        sessionActive: result.sessionActive ?? false
+      };
     } catch (error) {
       logger.error('[SAMNative] IsConnected error:', error);
       return { connected: false, sessionActive: false };
