@@ -187,7 +187,7 @@ class SAMService {
       this.streamHandlers.forEach(h => h(stream));
     });
 
-    samNativeService.onStreamClosed((streamId, _reason) => {
+    samNativeService.onStreamClosed((streamId) => {
       const stream = this.streams.get(streamId);
       if (stream) {
         stream.connected = false;
