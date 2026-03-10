@@ -82,28 +82,37 @@ export async function exportContact(
 
     console.log('[NativeFileSharing] Contact exported to cache:', uri);
 
-    // Optionally share the file
-    if (options.share && Share) {
+    // ALWAYS share the file on native platforms - user must choose where to save
+    // This is required on Android 10+ as we cannot write to Downloads directly
+    if (Share) {
       try {
         console.log('[NativeFileSharing] Opening share dialog...');
-        await Share.share({
+
+        // Ensure the contacts directory exists and file is readable
+        await nativeFilesystem.init();
+
+        // On Android, we need to use a content:// URI via FileProvider
+        // The Share plugin handles this conversion automatically
+        const shareResult = await Share.share({
           title: `SecuChat Contact: ${contactData.name}`,
           text: `Contact ${contactData.name} - I2P: ${contactData.i2pAddress}`,
           url: uri,
-          dialogTitle: 'Share Contact',
+          dialogTitle: 'Kontakt speichern oder teilen',
         });
-        console.log('[NativeFileSharing] Share dialog completed');
+
+        console.log('[NativeFileSharing] Share dialog result:', shareResult);
       } catch (shareError) {
         // Don't fail if user cancelled or dismissed the dialog
         if (shareError instanceof Error) {
           const msg = shareError.message.toLowerCase();
-          if (msg.includes('cancel') || msg.includes('dismissed') || msg.includes('abort')) {
+          if (msg.includes('cancel') || msg.includes('dismissed') || msg.includes('abort') || msg.includes('canceled')) {
             console.log('[NativeFileSharing] User cancelled share dialog');
             return { success: true, uri };
           }
         }
         console.error('[NativeFileSharing] Share failed:', shareError);
-        throw shareError;
+        // Return success even if share failed - file is still saved in cache
+        return { success: true, uri, error: 'Share dialog failed but file was saved' };
       }
     }
 

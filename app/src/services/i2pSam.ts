@@ -410,29 +410,65 @@ class SAMService {
 
     console.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
     const destParam = `DESTINATION=${dest}`;
-    const resp = await this.sendRaw(
-      `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
-    );
 
-    if (!resp.includes('RESULT=OK')) {
-      throw new Error(`SESSION CREATE failed: ${resp}`);
+    // Retry logic for i2pd initialization (can take 1-3 minutes on first start)
+    const maxRetries = 5;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const resp = await this.sendRaw(
+          `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
+        );
+
+        if (resp.includes('RESULT=OK')) {
+          // Parse destination from response if available
+          const destMatch = resp.match(/DESTINATION=([^\s]+)/);
+          if (destMatch && !this.session) {
+            this.session = {
+              id: crypto.randomUUID(),
+              destination: destMatch[1],
+              privateKey: dest || '',
+            };
+          }
+
+          this.sessionNickname = nickname;
+          this.lastSessionNickname = nickname;
+          this.lastSessionPrivateKey = privateKey;
+          logger.log('[SAM] Session created:', nickname);
+          return;
+        }
+
+        // Check for DISCONNECTED error (i2pd still initializing)
+        if (resp.includes('RESULT=DISCONNECTED') || resp.includes('DISCONNECTED')) {
+          lastError = new Error(`SESSION CREATE failed: i2pd is still initializing. Please wait...`);
+          logger.warn(`[SAM] SESSION CREATE attempt ${attempt}/${maxRetries} failed: i2pd not ready`);
+
+          if (attempt < maxRetries) {
+            // Exponential backoff: 5s, 7s, 10s, 15s
+            const delay = Math.min(5000 * Math.pow(1.5, attempt - 1), 15000);
+            logger.log(`[SAM] Waiting ${Math.round(delay / 1000)}s before retry...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+        }
+
+        // Other error - fail immediately
+        throw new Error(`SESSION CREATE failed: ${resp}`);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries && lastError.message.includes('DISCONNECTED')) {
+          const delay = Math.min(5000 * Math.pow(1.5, attempt - 1), 15000);
+          logger.log(`[SAM] Waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}...`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          throw lastError;
+        }
+      }
     }
 
-    // Parse destination from response if available
-    const destMatch = resp.match(/DESTINATION=([^\s]+)/);
-    if (destMatch && !this.session) {
-      this.session = {
-        id: crypto.randomUUID(),
-        destination: destMatch[1],
-        privateKey: dest || '',
-      };
-    }
-
-    this.sessionNickname = nickname;
-    // Remember for auto-restore after reconnect
-    this.lastSessionNickname = nickname;
-    this.lastSessionPrivateKey = privateKey;
-    logger.log('[SAM] Session created:', nickname);
+    // All retries exhausted
+    throw lastError || new Error('SESSION CREATE failed after all retries. i2pd may still be initializing - please wait 1-3 minutes and try again.');
   }
 
   /**

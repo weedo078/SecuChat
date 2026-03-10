@@ -186,11 +186,26 @@ export const nativeFilesystem = {
 
     const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
 
+    // Ensure parent directory exists
+    const parentDir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
+    if (parentDir) {
+      try {
+        await Filesystem.mkdir({
+          path: parentDir,
+          directory: dir as unknown as import('@capacitor/filesystem').Directory,
+          recursive: true,
+        });
+      } catch {
+        // Directory may already exist, ignore error
+      }
+    }
+
     const result = await Filesystem.writeFile({
       path,
       data,
       directory: dir as unknown as import('@capacitor/filesystem').Directory,
       encoding: Encoding.UTF8,
+      recursive: true,
     });
 
     return result.uri;
