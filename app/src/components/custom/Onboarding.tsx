@@ -288,7 +288,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // New device pairing flow
   if (isNewDevice) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+      <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
         <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
@@ -402,7 +402,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // Restore from backup flow
   if (showRestoreFlow) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+      <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
         <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
@@ -537,7 +537,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
   // New account flow
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 overflow-y-auto">
+    <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
       <div className="w-full max-w-lg my-auto">
         {/* Header */}
         <div className="text-center mb-8">
