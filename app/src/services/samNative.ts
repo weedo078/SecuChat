@@ -63,7 +63,7 @@ const SAMNativePlugin = registerPlugin<{
   // Connection methods
   connect(config: SAMConfig): Promise<{ connected: boolean; error?: string }>;
   disconnect(): Promise<{ disconnected: boolean }>;
-  isConnected(): Promise<{ connected: boolean; host?: string; port?: number }>;
+  isConnected(): Promise<{ connected: boolean; sessionActive?: boolean; host?: string; port?: number }>;
   getStatus(): Promise<{
     connected: boolean;
     sessionActive: boolean;
