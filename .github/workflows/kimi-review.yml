@@ -1,0 +1,101 @@
+name: Kimi Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    paths:
+      - 'app/src/**'
+      - 'app/package*.json'
+      - 'electron/**'
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Review with Kimi
+        uses: actions/github-script@v7
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        with:
+          script: |
+            const apiKey = process.env.KIMI_API_KEY;
+            if (!apiKey) {
+              console.log('⚠️ KIMI_API_KEY not configured, skipping review');
+              return;
+            }
+
+            // Get PR diff
+            const { data: diff } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              mediaType: { format: 'diff' }
+            });
+
+            if (!diff || diff.length < 50) {
+              console.log('ℹ️ No significant changes to review');
+              return;
+            }
+
+            // Truncate if too large (keep first ~150KB)
+            const truncatedDiff = diff.slice(0, 150000) + (diff.length > 150000 ? '\n\n... (truncated)' : '');
+
+            // Call Kimi API
+            const response = await fetch('https://api.kimi.com/coding/v1/messages', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-api-key': apiKey,
+                'anthropic-version': '2023-06-01'
+              },
+              body: JSON.stringify({
+                model: 'kimi-for-coding',
+                max_tokens: 4000,
+                messages: [{
+                  role: 'user',
+                  content: `Review this pull request. Focus on: 1) Security issues 2) Bugs 3) Code quality 4) Performance\n\n\`\`\`diff\n${truncatedDiff}\n\`\`\``
+                }]
+              })
+            });
+
+            if (!response.ok) {
+              console.log('❌ Kimi API error:', response.status);
+              return;
+            }
+
+            const data = await response.json();
+            const reviewText = data.content?.[0]?.text || 'Unable to generate review';
+
+            // Post comment
+            const body = `🤖 **Kimi Code Review**\n\n${reviewText}\n\n---\n*Reviewed by [Kimi](https://www.kimi.com)*`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number
+            });
+
+            const existing = comments.find(c => c.body?.includes('🤖 **Kimi Code Review**'));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body
+              });
+            }

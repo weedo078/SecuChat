@@ -33,6 +33,8 @@ export interface SAMStream {
 }
 
 import { logger } from '@/utils/logger';
+import { platformService } from './platform';
+import { samNativeService } from './samNative';
 type ResponseResolver = (response: string) => void;
 
 class SAMService {
@@ -58,6 +60,7 @@ class SAMService {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isReconnecting = false;
   private acceptLoopActive = false;
+  private useNativeBridge = false;
 
   /**
    * Check if SAM proxy is reachable
@@ -66,6 +69,16 @@ class SAMService {
   async isAvailable(config?: SAMConfig, maxAttempts = 3): Promise<boolean> {
     const c = config || this.config;
     if (!c.enabled) return false;
+
+    // Use native bridge for Android
+    if (platformService.isAndroidNative()) {
+      try {
+        const status = await samNativeService.getStatus();
+        return status.connected;
+      } catch {
+        return false;
+      }
+    }
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -126,8 +139,74 @@ class SAMService {
     this.config = config;
     if (!config.enabled) return false;
 
+    // Use native bridge for Android
+    if (platformService.isAndroidNative()) {
+      return this.connectNative(config);
+    }
+
+    return this.connectWebSocket(config);
+  }
+
+  /**
+   * Connect using native Android SAM plugin
+   */
+  private async connectNative(config: SAMConfig): Promise<boolean> {
+    try {
+      logger.log('[SAM] Using native Android bridge');
+      const success = await samNativeService.initialize(config);
+      if (success) {
+        this.isConnected = true;
+        this.helloCompleted = true;
+        this.useNativeBridge = true;
+        this.setupNativeEventHandlers();
+        logger.log('[SAM] Native bridge connected');
+      }
+      return success;
+    } catch (error) {
+      logger.error('[SAM] Native connect failed:', error);
+      this.isConnected = false;
+      return false;
+    }
+  }
+
+  /**
+   * Setup event handlers for native bridge
+   */
+  private setupNativeEventHandlers(): void {
+    samNativeService.onMessage((from, data) => {
+      this.messageHandlers.forEach(h => h(from, data));
+    });
+
+    samNativeService.onStreamConnected((streamId, peerDestination) => {
+      const stream: SAMStream = {
+        id: streamId,
+        peerDestination,
+        connected: true,
+      };
+      this.streams.set(streamId, stream);
+      this.streamHandlers.forEach(h => h(stream));
+    });
+
+    samNativeService.onStreamClosed((streamId, reason) => {
+      const stream = this.streams.get(streamId);
+      if (stream) {
+        stream.connected = false;
+        this.streams.delete(streamId);
+      }
+    });
+
+    samNativeService.onError((error, streamId) => {
+      logger.error('[SAM] Native error:', error, 'stream:', streamId);
+    });
+  }
+
+  /**
+   * Connect using WebSocket proxy (browser/Electron)
+   */
+  private async connectWebSocket(config: SAMConfig): Promise<boolean> {
     // Clean up previous connection
     this.disconnect();
+    this.useNativeBridge = false;
 
     try {
       this.socket = new WebSocket(`ws://${config.host}:${config.port}`);
@@ -215,6 +294,20 @@ class SAMService {
   async generateDestination(signatureType = 'EdDSA_SHA512_Ed25519'): Promise<SAMSession> {
     this.requireConnected();
 
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      const result = await samNativeService.generateDestination(signatureType);
+      if (!result) {
+        throw new Error('DEST GENERATE failed via native bridge');
+      }
+      this.session = {
+        id: crypto.randomUUID(),
+        destination: result.publicKey,
+        privateKey: result.privateKey,
+      };
+      return this.session;
+    }
+
     const resp = await this.sendRaw(`DEST GENERATE SIGNATURE_TYPE=${signatureType}`);
 
     // Response: DEST REPLY PUB=<base64> PRIV=<base64>
@@ -246,6 +339,20 @@ class SAMService {
     if (!dest) {
       throw new Error('SAM destination private key is required. Call generateDestination() first or provide a stored key.');
     }
+
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      const success = await samNativeService.createSession(nickname, privateKey);
+      if (!success) {
+        throw new Error('SESSION CREATE failed via native bridge');
+      }
+      this.sessionNickname = nickname;
+      this.lastSessionNickname = nickname;
+      this.lastSessionPrivateKey = privateKey;
+      logger.log('[SAM] Session created via native bridge:', nickname);
+      return;
+    }
+
     console.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
     const destParam = `DESTINATION=${dest}`;
     const resp = await this.sendRaw(
@@ -277,7 +384,7 @@ class SAMService {
    * Connect to a remote I2P peer via STREAM CONNECT
    * IMPORTANT: SAM requires a separate socket for STREAM CONNECT
    * We create a new WebSocket, do HELLO + SESSION ID=xxx, then STREAM CONNECT
-   * 
+   *
    * Implements retry logic for LeaseSet lookup failures - peer may need time
    * to publish their LeaseSet after starting i2pd
    */
@@ -286,19 +393,34 @@ class SAMService {
       throw new Error('No session created. Call createSession first.');
     }
 
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      const streamId = await samNativeService.connectTo(destination);
+      if (streamId === null) {
+        throw new Error('STREAM CONNECT failed via native bridge');
+      }
+      const stream: SAMStream = {
+        id: streamId,
+        peerDestination: destination,
+        connected: true,
+      };
+      this.streams.set(streamId, stream);
+      return stream;
+    }
+
     let lastError: Error | null = null;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         return await this.attemptStreamConnect(destination);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        
+
         // Check if it's a LeaseSet not found error
         const errorMessage = lastError.message;
-        const isLeaseSetError = errorMessage.includes('LeaseSet not found') || 
+        const isLeaseSetError = errorMessage.includes('LeaseSet not found') ||
                                 errorMessage.includes('CANT_REACH_PEER');
-        
+
         if (isLeaseSetError && attempt < maxRetries) {
           // Wait before retry with exponential backoff
           const delay = Math.min(10000 * attempt, 30000);
@@ -306,12 +428,12 @@ class SAMService {
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
-        
+
         // If not a LeaseSet error or last attempt, throw
         throw lastError;
       }
     }
-    
+
     throw lastError || new Error('STREAM CONNECT failed after retries');
   }
 
@@ -460,6 +582,18 @@ class SAMService {
     if (this.acceptLoopActive) return;
     this.acceptLoopActive = true;
     logger.log('[SAM] Starting accept loop');
+
+    // Use native bridge for Android
+    if (this.useNativeBridge && this.sessionNickname) {
+      samNativeService.startAccepting(this.sessionNickname).then(success => {
+        if (!success) {
+          logger.error('[SAM] Failed to start native accept loop');
+          this.acceptLoopActive = false;
+        }
+      });
+      return;
+    }
+
     this.scheduleAccept();
   }
 
@@ -604,16 +738,38 @@ class SAMService {
    */
   isStreamOpen(streamId: number): boolean {
     const stream = this.streams.get(streamId);
+
+    // Native bridge streams don't have WebSocket
+    if (this.useNativeBridge) {
+      return stream?.connected ?? false;
+    }
+
     return !!(stream?.socket && stream.socket.readyState === WebSocket.OPEN);
   }
 
   async send(streamId: number, data: string): Promise<void> {
     const stream = this.streams.get(streamId);
 
-    if (!stream?.socket || stream.socket.readyState !== WebSocket.OPEN) {
+    if (!stream) {
+      throw new Error('Stream not found');
+    }
+
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      if (!stream.connected) {
+        throw new Error('Native stream not connected');
+      }
+      const success = await samNativeService.send(streamId, data);
+      if (!success) {
+        throw new Error('Native send failed');
+      }
+      return;
+    }
+
+    if (!stream.socket || stream.socket.readyState !== WebSocket.OPEN) {
       throw new Error('Stream socket not open');
     }
-    
+
     // Send data directly over the stream socket
     stream.socket.send(data);
   }
