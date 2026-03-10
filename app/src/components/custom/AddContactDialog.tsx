@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
 import { cryptoService } from '@/services/crypto';
+import { exportContact, importContact, canShareNatively } from '@/services/nativeFileSharing';
 import type { Contact } from '@/types';
 
 interface AddContactDialogProps {
@@ -114,6 +115,49 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   // ── Import ─────────────────────────────────────────────────────────────────
 
+  const handleNativeImport = async () => {
+    if (!canShareNatively()) return;
+
+    setIsImporting(true);
+    setImportError(null);
+
+    try {
+      const result = await importContact();
+
+      if (result.success && result.data) {
+        // Convert to ContactData format
+        const contact: ContactData = {
+          version: '1.0',
+          metadata: {
+            timestamp: new Date().toISOString(),
+            username: result.data.name,
+            deviceId: '',
+          },
+          keys: {
+            pgpPublicKey: result.data.pgpPublicKey || '',
+            fingerprint: result.data.fingerprint,
+          },
+          network: {
+            p2pIdentifier: '',
+            protocol: 'i2p',
+            i2pAddress: result.data.i2pAddress,
+          },
+        };
+        setImportedContact(contact);
+      } else {
+        console.warn('[Import] Native import failed:', result.error);
+        // Fall back to file input
+        fileInputRef.current?.click();
+      }
+    } catch (error) {
+      console.error('[Import] Native import exception:', error);
+      // Fall back to file input
+      fileInputRef.current?.click();
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -204,9 +248,33 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   // ── Export ─────────────────────────────────────────────────────────────────
 
-  const exportContactFile = () => {
+  const exportContactFile = async () => {
     if (!user) return;
-    // Use new format (v1.0) as defined in crypto.ts
+
+    // On native Android, use the native share dialog
+    if (canShareNatively()) {
+      try {
+        const result = await exportContact(
+          {
+            name: user.username,
+            i2pAddress: user.i2pAddress || '',
+            fingerprint: user.fingerprint,
+            pgpPublicKey: user.pgpPublicKey,
+          },
+          { share: true }
+        );
+
+        if (!result.success) {
+          console.error('[AddContactDialog] Export failed:', result.error);
+        }
+        return;
+      } catch (error) {
+        console.error('[AddContactDialog] Native export error:', error);
+        // Fall back to browser download
+      }
+    }
+
+    // Use browser download for web/PWA
     const contactData = {
       version: '1.0',
       metadata: {
@@ -330,7 +398,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             {!importedContact ? (
               <>
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => canShareNatively() ? handleNativeImport() : fileInputRef.current?.click()}
                   className="w-full p-6 rounded-lg border-2 border-dashed border-border hover:border-primary hover:bg-accent transition-colors flex flex-col items-center gap-3"
                   aria-label={t('addContact.importSecuchat')}
                 >

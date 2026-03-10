@@ -19,6 +19,7 @@
   },
   "dependencies": {
     "@capacitor-community/file-opener": "^8.0.0",
+    "@capacitor-community/keep-awake": "^8.0.0",
     "@capacitor/android": "^8.2.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/cli": "^8.2.0",
@@ -29,8 +30,8 @@
     "@capacitor/preferences": "^8.0.1",
     "@capacitor/share": "^8.0.1",
     "@capacitor/status-bar": "^8.0.1",
-    "@capacitor-community/keep-awake": "^8.0.0",
     "@capawesome-team/capacitor-android-foreground-service": "^8.0.1",
+    "@capawesome/capacitor-file-picker": "^8.0.2",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",

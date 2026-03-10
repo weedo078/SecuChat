@@ -7,12 +7,13 @@ import { isNativeStorageAvailable, nativeFilesystem } from './nativeStorage';
 // Lazy-loaded Capacitor modules
 let Share: typeof import('@capacitor/share').Share | null = null;
 let FileOpener: typeof import('@capacitor-community/file-opener').FileOpener | null = null;
+let FilePicker: typeof import('@capawesome/capacitor-file-picker').FilePicker | null = null;
 
 /**
  * Initialize Capacitor sharing plugins (lazy-loaded)
  */
 async function initSharingPlugins(): Promise<void> {
-  if (Share && FileOpener) return;
+  if (Share && FileOpener && FilePicker) return;
 
   try {
     const shareModule = await import('@capacitor/share');
@@ -23,6 +24,13 @@ async function initSharingPlugins(): Promise<void> {
       FileOpener = fileOpenerModule.FileOpener;
     } catch {
       console.warn('[NativeFileSharing] FileOpener plugin not available');
+    }
+
+    try {
+      const filePickerModule = await import('@capawesome/capacitor-file-picker');
+      FilePicker = filePickerModule.FilePicker;
+    } catch {
+      console.warn('[NativeFileSharing] FilePicker plugin not available');
     }
 
     console.log('[NativeFileSharing] Sharing plugins initialized');
@@ -111,24 +119,78 @@ export async function importContact(): Promise<{
   }
 
   try {
-    // For Android, we need to use a file picker
-    // This is a simplified implementation - in production you'd use
-    // @capacitor-community/file-picker or similar
+    await initSharingPlugins();
 
-    // For now, we'll read from a known location or use a prompt
-    // The actual implementation would use Android's file picker intent
+    if (!FilePicker) {
+      return { success: false, error: 'FilePicker plugin not available' };
+    }
 
-    // Placeholder for file picker integration
-    // In the full implementation, this would:
-    // 1. Open native file picker
-    // 2. Read selected file
-    // 3. Parse JSON content
-    // 4. Validate contact format
+    // Open native file picker
+    const result = await FilePicker.pickFiles({
+      types: ['application/json', 'text/plain'],
+      readData: true,
+    });
 
-    return {
-      success: false,
-      error: 'File picker not yet implemented. Please use the web import method.',
+    if (!result.files || result.files.length === 0) {
+      return { success: false, error: 'No file selected' };
+    }
+
+    const file = result.files[0];
+
+    if (!file.data) {
+      return { success: false, error: 'Could not read file data' };
+    }
+
+    // Decode base64 data
+    const content = atob(file.data);
+
+    // Parse JSON
+    let contactData: {
+      v?: string;
+      t?: string;
+      n?: string;
+      i?: string;
+      f?: string;
+      k?: string;
+      name?: string;
+      i2pAddress?: string;
+      fingerprint?: string;
+      pgpPublicKey?: string;
     };
+
+    try {
+      contactData = JSON.parse(content);
+    } catch {
+      return { success: false, error: 'Invalid JSON file' };
+    }
+
+    // Handle v2 format
+    if (contactData.v === '2' && contactData.t === 'sc') {
+      return {
+        success: true,
+        data: {
+          name: contactData.n || '',
+          i2pAddress: contactData.i || '',
+          fingerprint: contactData.f || '',
+          pgpPublicKey: contactData.k,
+        },
+      };
+    }
+
+    // Handle legacy format
+    if (contactData.name && contactData.i2pAddress) {
+      return {
+        success: true,
+        data: {
+          name: contactData.name,
+          i2pAddress: contactData.i2pAddress,
+          fingerprint: contactData.fingerprint || '',
+          pgpPublicKey: contactData.pgpPublicKey,
+        },
+      };
+    }
+
+    return { success: false, error: 'Invalid contact file format' };
   } catch (error) {
     console.error('[NativeFileSharing] Import failed:', error);
     return {
