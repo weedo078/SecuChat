@@ -77,9 +77,23 @@ class SAMService {
     if (isNative) {
       try {
         logger.log('[SAM] Using native bridge for Android');
+        // First try to initialize/ connect if not already connected
         const status = await samNativeService.getStatus();
         logger.log('[SAM] Native status:', status);
-        return status.connected;
+        if (!status.connected) {
+          logger.log('[SAM] Not connected, attempting to initialize...');
+          // Try to initialize the native connection
+          const initResult = await samNativeService.initialize(c);
+          logger.log('[SAM] Initialize result:', initResult);
+          if (initResult) {
+            // Check status again after initialization
+            const newStatus = await samNativeService.getStatus();
+            logger.log('[SAM] Status after init:', newStatus);
+            return newStatus.connected;
+          }
+          return false;
+        }
+        return true;
       } catch (err) {
         logger.error('[SAM] Native status error:', err);
         return false;

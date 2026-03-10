@@ -61,9 +61,9 @@ export interface SAMErrorEvent {
 // Register the native plugin with event support
 const SAMNativePlugin = registerPlugin<{
   // Connection methods
-  initialize(config: SAMConfig): Promise<{ success: boolean; error?: string }>;
-  disconnect(): Promise<{ success: boolean; error?: string }>;
-  isConnected(): Promise<{ connected: boolean; sessionActive: boolean }>;
+  connect(config: SAMConfig): Promise<{ connected: boolean; error?: string }>;
+  disconnect(): Promise<{ disconnected: boolean }>;
+  isConnected(): Promise<{ connected: boolean; host?: string; port?: number }>;
   getStatus(): Promise<{
     connected: boolean;
     sessionActive: boolean;
@@ -154,18 +154,19 @@ class SAMNativeService {
     }
 
     try {
-      const result = await SAMNativePlugin.initialize(config);
-      if (result.success) {
+      // Use 'connect' method instead of 'initialize' - the Java plugin has connect()
+      const result = await SAMNativePlugin.connect(config);
+      if (result.connected) {
         this.isInitialized = true;
         void this.isInitialized; // Used for tracking state
         await this.setupEventListeners();
-        logger.log('[SAMNative] Initialized successfully');
+        logger.log('[SAMNative] Connected successfully');
       } else {
-        logger.error('[SAMNative] Initialization failed:', result.error);
+        logger.error('[SAMNative] Connection failed:', result.error);
       }
-      return result.success;
+      return result.connected;
     } catch (error) {
-      logger.error('[SAMNative] Initialize error:', error);
+      logger.error('[SAMNative] Connect error:', error);
       return false;
     }
   }
