@@ -24,7 +24,7 @@ import java.util.regex.Pattern;
  */
 public class SAMProtocolHandler {
 
-    private static final String TAG = "SAMProtocolHandler";
+    private static final String TAG = "SecuChat:SAM";
 
     // SAM protocol version
     public static final String SAM_VERSION_MIN = "3.1";

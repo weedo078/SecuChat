@@ -26,7 +26,7 @@ import java.util.Arrays;
  */
 public class SAMDestination {
 
-    private static final String TAG = "SAMDestination";
+    private static final String TAG = "SecuChat:SAM";
 
     // Ed25519 signature type as defined by SAM v3.1
     public static final String SIGNATURE_TYPE = "EdDSA_SHA512_Ed25519";

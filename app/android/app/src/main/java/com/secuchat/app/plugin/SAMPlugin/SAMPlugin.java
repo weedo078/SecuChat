@@ -24,7 +24,7 @@ import java.util.concurrent.Executors;
 @CapacitorPlugin(name = "SAM")
 public class SAMPlugin extends Plugin {
 
-    private static final String TAG = "SAMPlugin";
+    private static final String TAG = "SecuChat:SAM";
     private static final String EVENT_MESSAGE = "samMessage";
     private static final String EVENT_STATUS = "samStatus";
 

@@ -3,10 +3,14 @@ package com.secuchat.app;
 import com.secuchat.app.plugin.SAMPlugin.I2PBase64;
 import com.secuchat.app.plugin.SAMPlugin.SAMConfig;
 import com.secuchat.app.plugin.SAMPlugin.SAMErrorCodes;
+import com.secuchat.app.plugin.SAMPlugin.SAMProtocolHandler;
 
+import org.json.JSONObject;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
+
+import java.util.Map;
 
 import static org.junit.Assert.*;
 
@@ -182,5 +186,202 @@ public class SAMPluginTest {
         String desc = SAMErrorCodes.getDescription("CUSTOM_ERROR");
         assertNotNull(desc);
         assertTrue(desc.contains("CUSTOM_ERROR"));
+    }
+
+    // =========================================================================
+    // SAMProtocolHandler Tests
+    // =========================================================================
+
+    @Test
+    public void testParseHelloResponseSuccess() {
+        String response = "HELLO REPLY RESULT=OK VERSION=3.1";
+        assertTrue(SAMProtocolHandler.parseHelloResponse(response));
+    }
+
+    @Test
+    public void testParseHelloResponseFailure() {
+        String response = "HELLO REPLY RESULT=NOVERSION";
+        assertFalse(SAMProtocolHandler.parseHelloResponse(response));
+    }
+
+    @Test
+    public void testParseHelloResponseNull() {
+        assertFalse(SAMProtocolHandler.parseHelloResponse(null));
+        assertFalse(SAMProtocolHandler.parseHelloResponse(""));
+    }
+
+    @Test
+    public void testParseDestReplySuccess() {
+        String response = "DEST REPLY PUB=abc123 PRIV=xyz789";
+        JSONObject result = SAMProtocolHandler.parseDestReply(response);
+
+        assertNotNull(result);
+        assertEquals("abc123", result.optString("pub"));
+        assertEquals("xyz789", result.optString("priv"));
+    }
+
+    @Test
+    public void testParseDestReplyMissingPriv() {
+        String response = "DEST REPLY PUB=abc123";
+        JSONObject result = SAMProtocolHandler.parseDestReply(response);
+
+        assertNull(result);
+    }
+
+    @Test
+    public void testParseDestReplyNull() {
+        assertNull(SAMProtocolHandler.parseDestReply(null));
+        assertNull(SAMProtocolHandler.parseDestReply(""));
+    }
+
+    @Test
+    public void testParseSessionStatusSuccess() {
+        String response = "SESSION STATUS RESULT=OK DESTINATION=dest123";
+        assertTrue(SAMProtocolHandler.parseSessionStatus(response));
+    }
+
+    @Test
+    public void testParseSessionStatusFailure() {
+        String response = "SESSION STATUS RESULT=DUPLICATED_ID";
+        assertFalse(SAMProtocolHandler.parseSessionStatus(response));
+    }
+
+    @Test
+    public void testParseStreamStatusSuccess() {
+        String response = "STREAM STATUS RESULT=OK";
+        JSONObject result = SAMProtocolHandler.parseStreamStatus(response);
+
+        assertNotNull(result);
+        assertTrue(result.optBoolean("success"));
+        assertEquals("OK", result.optString("result"));
+    }
+
+    @Test
+    public void testParseStreamStatusWithDestination() {
+        String response = "STREAM STATUS RESULT=OK DESTINATION=peerDest123";
+        JSONObject result = SAMProtocolHandler.parseStreamStatus(response);
+
+        assertNotNull(result);
+        assertTrue(result.optBoolean("success"));
+        assertEquals("peerDest123", result.optString("destination"));
+    }
+
+    @Test
+    public void testParseStreamStatusFailure() {
+        String response = "STREAM STATUS RESULT=CANT_REACH_PEER";
+        JSONObject result = SAMProtocolHandler.parseStreamStatus(response);
+
+        assertNotNull(result);
+        assertFalse(result.optBoolean("success"));
+        assertEquals("CANT_REACH_PEER", result.optString("result"));
+        assertNotNull(result.optString("message"));
+    }
+
+    @Test
+    public void testBuildHelloCommand() {
+        String cmd = SAMProtocolHandler.buildHelloCommand();
+        assertEquals("HELLO VERSION MIN=3.1 MAX=3.1\n", cmd);
+    }
+
+    @Test
+    public void testBuildDestGenerate() {
+        String cmd = SAMProtocolHandler.buildDestGenerate();
+        assertEquals("DEST GENERATE SIGNATURE_TYPE=EdDSA_SHA512_Ed25519\n", cmd);
+    }
+
+    @Test
+    public void testBuildSessionCreate() {
+        String cmd = SAMProtocolHandler.buildSessionCreate("test-session", "priv-key-b64");
+        assertEquals("SESSION CREATE STYLE=STREAM ID=test-session DESTINATION=priv-key-b64\n", cmd);
+    }
+
+    @Test
+    public void testBuildStreamConnect() {
+        String cmd = SAMProtocolHandler.buildStreamConnect("my-session", "peer-dest-b64");
+        assertEquals("STREAM CONNECT ID=my-session DESTINATION=peer-dest-b64 SILENT=false\n", cmd);
+    }
+
+    @Test
+    public void testBuildStreamAccept() {
+        String cmd = SAMProtocolHandler.buildStreamAccept("my-session");
+        assertEquals("STREAM ACCEPT ID=my-session SILENT=false\n", cmd);
+    }
+
+    @Test
+    public void testBuildStreamForward() {
+        String cmd = SAMProtocolHandler.buildStreamForward("my-session", 8080);
+        assertEquals("STREAM FORWARD ID=my-session PORT=8080 SILENT=false\n", cmd);
+    }
+
+    @Test
+    public void testBuildNamingLookup() {
+        String cmd = SAMProtocolHandler.buildNamingLookup("example.i2p");
+        assertEquals("NAMING LOOKUP NAME=example.i2p\n", cmd);
+    }
+
+    @Test
+    public void testParseNamingReply() {
+        String response = "NAMING REPLY RESULT=OK NAME=example.i2p VALUE=dest123";
+        JSONObject result = SAMProtocolHandler.parseNamingReply(response);
+
+        assertNotNull(result);
+        assertEquals("OK", result.optString("result"));
+        assertEquals("example.i2p", result.optString("name"));
+        assertEquals("dest123", result.optString("value"));
+    }
+
+    @Test
+    public void testParseKeyValuePairs() {
+        String response = "KEY1=value1 KEY2=value2 KEY3=value3";
+        Map<String, String> pairs = SAMProtocolHandler.parseKeyValuePairs(response);
+
+        assertEquals(3, pairs.size());
+        assertEquals("value1", pairs.get("KEY1"));
+        assertEquals("value2", pairs.get("KEY2"));
+        assertEquals("value3", pairs.get("KEY3"));
+    }
+
+    @Test
+    public void testParseKeyValuePairsNull() {
+        Map<String, String> pairs = SAMProtocolHandler.parseKeyValuePairs(null);
+        assertNotNull(pairs);
+        assertTrue(pairs.isEmpty());
+    }
+
+    @Test
+    public void testIsSuccess() {
+        assertTrue(SAMProtocolHandler.isSuccess("RESULT=OK"));
+        assertTrue(SAMProtocolHandler.isSuccess("HELLO REPLY RESULT=OK VERSION=3.1"));
+        assertFalse(SAMProtocolHandler.isSuccess("RESULT=ERROR"));
+        assertFalse(SAMProtocolHandler.isSuccess(null));
+    }
+
+    @Test
+    public void testGetErrorMessage() {
+        assertNull(SAMProtocolHandler.getErrorMessage("RESULT=OK"));
+        assertEquals("ERROR", SAMProtocolHandler.getErrorMessage("RESULT=ERROR"));
+        assertEquals("CANT_REACH_PEER", SAMProtocolHandler.getErrorMessage("STREAM STATUS RESULT=CANT_REACH_PEER"));
+        assertEquals("No response", SAMProtocolHandler.getErrorMessage(null));
+    }
+
+    @Test
+    public void testIsValidSessionId() {
+        assertTrue(SAMProtocolHandler.isValidSessionId("valid-session"));
+        assertTrue(SAMProtocolHandler.isValidSessionId("session123"));
+        assertTrue(SAMProtocolHandler.isValidSessionId("my_session"));
+        assertTrue(SAMProtocolHandler.isValidSessionId("My-Session-123"));
+        assertFalse(SAMProtocolHandler.isValidSessionId(null));
+        assertFalse(SAMProtocolHandler.isValidSessionId(""));
+        assertFalse(SAMProtocolHandler.isValidSessionId("invalid session"));
+        assertFalse(SAMProtocolHandler.isValidSessionId("invalid@session"));
+    }
+
+    @Test
+    public void testSanitize() {
+        assertEquals("clean", SAMProtocolHandler.sanitize("clean"));
+        assertEquals("clean", SAMProtocolHandler.sanitize("cle\n"));
+        assertEquals("clean", SAMProtocolHandler.sanitize("cle\rclean"));
+        assertEquals("clean", SAMProtocolHandler.sanitize("clean\x00"));
+        assertEquals("", SAMProtocolHandler.sanitize(null));
     }
 }

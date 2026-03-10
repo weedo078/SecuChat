@@ -29,7 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  */
 public class SAMStream {
 
-    private static final String TAG = "SAMStream";
+    private static final String TAG = "SecuChat:SAM";
     private static final AtomicInteger streamIdCounter = new AtomicInteger(0);
 
     // Stream states

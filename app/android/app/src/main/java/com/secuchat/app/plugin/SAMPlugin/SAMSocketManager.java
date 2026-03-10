@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * Handles non-blocking I/O using ExecutorService for all SAM v3.1 protocol operations.
  */
 public class SAMSocketManager {
-    private static final String TAG = "SAMSocketManager";
+    private static final String TAG = "SecuChat:SAM";
     private static final int CONNECT_TIMEOUT_MS = 15000;
     private static final int READ_TIMEOUT_MS = 60000;
     private static final int COMMAND_TIMEOUT_MS = 30000;
