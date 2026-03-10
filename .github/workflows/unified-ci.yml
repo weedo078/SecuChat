@@ -282,6 +282,25 @@ jobs:
         if: steps.check-android.outputs.exists == 'true'
         uses: android-actions/setup-android@v3
 
+      - name: Cache Gradle
+        if: steps.check-android.outputs.exists == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Configure Gradle
+        if: steps.check-android.outputs.exists == 'true'
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.configureondemand=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
       - name: Install Capacitor dependencies
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app
@@ -290,7 +309,7 @@ jobs:
       - name: Build Web App
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app
-        run: npm ci && npm run build:android || npm run build
+        run: npm run build:android || npm run build
 
       - name: Sync Capacitor
         if: steps.check-android.outputs.exists == 'true'
@@ -305,7 +324,7 @@ jobs:
       - name: Build Debug APK
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app/android
-        run: ./gradlew assembleDebug
+        run: ./gradlew assembleDebug --build-cache --configure-on-demand
 
       - name: Validate APK
         if: steps.check-android.outputs.exists == 'true'
@@ -531,6 +550,23 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Configure Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.configureondemand=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
       - name: Install Capacitor dependencies
         working-directory: ./app
         run: npm ci
@@ -549,7 +585,7 @@ jobs:
 
       - name: Build Release APK
         working-directory: ./app/android
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --build-cache --configure-on-demand
 
       - name: Validate APK
         run: |
