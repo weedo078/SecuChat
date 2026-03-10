@@ -308,8 +308,11 @@ class SAMNativeService {
     activeStreams: number;
     sessionNickname?: string;
   }> {
+    logger.log('[SAMNative] getStatus called');
     try {
-      return await SAMNativePlugin.getStatus();
+      const result = await SAMNativePlugin.getStatus();
+      logger.log('[SAMNative] getStatus result:', result);
+      return result;
     } catch (error) {
       logger.error('[SAMNative] GetStatus error:', error);
       return { connected: false, sessionActive: false, activeStreams: 0 };

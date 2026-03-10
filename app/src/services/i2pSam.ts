@@ -68,17 +68,24 @@ class SAMService {
    */
   async isAvailable(config?: SAMConfig, maxAttempts = 3): Promise<boolean> {
     const c = config || this.config;
+    logger.log('[SAM] isAvailable called, enabled:', c.enabled);
     if (!c.enabled) return false;
 
     // Use native bridge for Android
-    if (platformService.isAndroidNative()) {
+    const isNative = platformService.isAndroidNative();
+    logger.log('[SAM] isAndroidNative():', isNative);
+    if (isNative) {
       try {
+        logger.log('[SAM] Using native bridge for Android');
         const status = await samNativeService.getStatus();
+        logger.log('[SAM] Native status:', status);
         return status.connected;
-      } catch {
+      } catch (err) {
+        logger.error('[SAM] Native status error:', err);
         return false;
       }
     }
+    logger.log('[SAM] Using WebSocket proxy');
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {

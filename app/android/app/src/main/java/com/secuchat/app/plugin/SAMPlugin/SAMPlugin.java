@@ -211,6 +211,30 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     }
 
     /**
+     * Get detailed status - used by TypeScript to check connection state.
+     * Returns: { connected: boolean, sessionActive: boolean, activeStreams: number }
+     */
+    @PluginMethod
+    public void getStatus(PluginCall call) {
+        Log.d(TAG, "getStatus called");
+        try {
+            boolean connected = socketManager.isConnected();
+
+            JSObject result = new JSObject();
+            result.put("connected", connected);
+            result.put("sessionActive", connected); // Simplified - connected means session active
+            result.put("activeStreams", 0); // TODO: Track active streams
+
+            Log.d(TAG, "getStatus returning: connected=" + connected);
+            call.resolve(result);
+
+        } catch (Exception e) {
+            Log.e(TAG, "getStatus failed: " + e.getMessage(), e);
+            call.reject("Status check failed: " + e.getMessage());
+        }
+    }
+
+    /**
      * Check if connected to SAM bridge.
      * Returns: { connected: boolean, host?: string, port?: number }
      */
