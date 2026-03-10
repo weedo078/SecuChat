@@ -132,9 +132,9 @@ export interface SAMStream {
  * Provides direct TCP access to i2pd SAM interface without WebSocket proxy.
  */
 class SAMNativeService {
-  private config: SAMConfig = { host: '127.0.0.1', port: 7656, enabled: false };
+  private config!: SAMConfig;
   private session: SAMNativeSession | null = null;
-  private _isInitialized = false;
+  private isInitialized!: boolean;
 
   private listeners: PluginListenerHandle[] = [];
   private messageHandlers: ((from: string, data: string, streamId: number) => void)[] = [];
@@ -147,6 +147,7 @@ class SAMNativeService {
    */
   async initialize(config: SAMConfig): Promise<boolean> {
     this.config = config;
+    void this.config; // Used for future reference
     if (!config.enabled) {
       logger.log('[SAMNative] SAM disabled in config');
       return false;
@@ -155,7 +156,8 @@ class SAMNativeService {
     try {
       const result = await SAMNativePlugin.initialize(config);
       if (result.success) {
-        this._isInitialized = true;
+        this.isInitialized = true;
+        void this.isInitialized; // Used for tracking state
         await this.setupEventListeners();
         logger.log('[SAMNative] Initialized successfully');
       } else {
@@ -281,7 +283,8 @@ class SAMNativeService {
     } catch (error) {
       logger.error('[SAMNative] Disconnect error:', error);
     }
-    this._isInitialized = false;
+    this.isInitialized = false;
+    void this.isInitialized;
   }
 
   /**

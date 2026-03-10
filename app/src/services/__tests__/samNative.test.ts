@@ -520,7 +520,6 @@ describe('SAMNativeService', () => {
       mockPlugin.connect.mockResolvedValue({ success: true });
 
       // First reconnect: 1s delay
-      const _startTime = Date.now();
       const reconnectPromise = service.attemptReconnect();
 
       // Fast-forward timers
