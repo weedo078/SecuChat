@@ -47,11 +47,43 @@
   body {
     @apply bg-background text-foreground antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
-    /* Safe area insets for mobile devices */
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    /* Safe area insets for mobile devices - handled per-element */
+    padding: 0;
+    margin: 0;
+    overflow: hidden;
+    position: fixed;
+    inset: 0;
+  }
+
+  /* Android safe area handling for header - use padding only */
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* Fixed header for Android - stays below status bar */
+  .fixed-header {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 50;
+  }
+
+  /* Content padding to account for fixed header (header height + safe area) */
+  .pt-safe-header {
+    padding-top: calc(4rem + env(safe-area-inset-top, 0px));
+  }
+
+  /* Android-specific: ensure content scrolls independently below fixed header */
+  .android-content {
+    height: calc(100vh - 4rem - env(safe-area-inset-top, 0px));
+    overflow-y: auto;
+  }
+
+  /* Ensure scrollable areas work correctly on mobile */
+  .scroll-container {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-y: contain;
   }
 }
 

@@ -61,13 +61,17 @@ function App() {
   }
 
   return (
-    <div className="h-screen bg-background flex flex-col overflow-hidden">
-      <Header
-        onMenuClick={() => setSidebarOpen(true)}
-        onSettingsClick={() => setShowSettings(true)}
-      />
+    <div className="fixed inset-0 bg-background flex flex-col">
+      {/* Fixed Header - stays below notification bar on Android */}
+      <div className="fixed top-0 left-0 right-0 z-50 safe-area-top">
+        <Header
+          onMenuClick={() => setSidebarOpen(true)}
+          onSettingsClick={() => setShowSettings(true)}
+        />
+      </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main content with padding for fixed header */}
+      <div className="flex-1 flex overflow-hidden pt-safe-header">
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
           <Sidebar
