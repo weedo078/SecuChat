@@ -87,10 +87,11 @@ public class SAMSocketManager {
             writerRef.set(writer);
             readerRef.set(reader);
 
+            // Set connected BEFORE starting read thread to avoid race condition
+            isConnected.set(true);
+
             // Start the background read thread
             startReadThread();
-
-            isConnected.set(true);
             config.setHost(host);
             config.setPort(port);
             config.setEnabled(true);
@@ -276,6 +277,8 @@ public class SAMSocketManager {
                 // Connection was lost unexpectedly
                 isConnected.set(false);
             }
+            // Clear thread reference when thread dies
+            readThread = null;
         }, "SAM-ReadThread");
 
         readThread.setDaemon(true);
@@ -283,19 +286,15 @@ public class SAMSocketManager {
     }
 
     private void cleanup() {
-        // Stop read thread
-        if (readThread != null && readThread.isAlive()) {
-            readThread.interrupt();
-            readThread = null;
-        }
-
-        // Clear response queue
-        responseQueue.clear();
-
-        // Close writer
-        PrintWriter writer = writerRef.getAndSet(null);
-        if (writer != null) {
-            writer.close();
+        // Close socket FIRST to unblock BufferedReader.readLine()
+        // readLine() doesn't respond to interrupt(), but will throw IOException when socket closes
+        Socket socket = socketRef.getAndSet(null);
+        if (socket != null) {
+            try {
+                socket.close();
+            } catch (IOException e) {
+                Log.w(TAG, "Error closing socket: " + e.getMessage());
+            }
         }
 
         // Close reader
@@ -308,15 +307,20 @@ public class SAMSocketManager {
             }
         }
 
-        // Close socket
-        Socket socket = socketRef.getAndSet(null);
-        if (socket != null) {
-            try {
-                socket.close();
-            } catch (IOException e) {
-                Log.w(TAG, "Error closing socket: " + e.getMessage());
-            }
+        // Close writer
+        PrintWriter writer = writerRef.getAndSet(null);
+        if (writer != null) {
+            writer.close();
         }
+
+        // Now interrupt the read thread after socket close unblocked it
+        if (readThread != null && readThread.isAlive()) {
+            readThread.interrupt();
+            readThread = null;
+        }
+
+        // Clear response queue
+        responseQueue.clear();
 
         Log.d(TAG, "Cleanup completed");
     }

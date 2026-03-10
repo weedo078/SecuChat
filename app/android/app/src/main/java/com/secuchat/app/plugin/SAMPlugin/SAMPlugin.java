@@ -10,6 +10,7 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Capacitor Plugin for I2P SAM (Simple Anonymous Messaging) v3.1 protocol.
@@ -54,6 +55,13 @@ public class SAMPlugin extends Plugin implements EventNotifier {
      */
     @PluginMethod
     public void connect(PluginCall call) {
+        // Null check for activity before accessing call methods
+        if (getActivity() == null) {
+            Log.e(TAG, "Connect failed: activity is null");
+            call.reject("Activity is not available");
+            return;
+        }
+
         String host = call.getString("host", "127.0.0.1");
         int port = call.getInt("port", 7656);
 
@@ -107,6 +115,13 @@ public class SAMPlugin extends Plugin implements EventNotifier {
      */
     @PluginMethod
     public void disconnect(PluginCall call) {
+        // Null check for activity before proceeding
+        if (getActivity() == null) {
+            Log.e(TAG, "Disconnect failed: activity is null");
+            call.reject("Activity is not available");
+            return;
+        }
+
         Log.d(TAG, "Disconnect requested");
 
         executorService.execute(() -> {
@@ -330,9 +345,11 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
                 JSObject result = new JSObject();
 
-                if (response != null && response.contains("RESULT=OK")) {
-                    String pub = parseParam(response, "PUB");
-                    String priv = parseParam(response, "PRIV");
+                // DEST REPLY format: "DEST REPLY PUB=<base64> PRIV=<base64>"
+                // Note: i2pd DEST REPLY does NOT contain RESULT=OK
+                if (response != null && response.startsWith("DEST REPLY") && response.contains("PUB=") && response.contains("PRIV=")) {
+                    String pub = parseDestParam(response, "PUB");
+                    String priv = parseDestParam(response, "PRIV");
 
                     result.put("success", true);
                     result.put("publicKey", pub);
@@ -562,6 +579,13 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         Log.d(TAG, "Plugin destroying, shutting down SAM");
         socketManager.shutdown();
         executorService.shutdown();
+        try {
+            if (!executorService.awaitTermination(5, TimeUnit.SECONDS)) {
+                executorService.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            executorService.shutdownNow();
+        }
         super.handleOnDestroy();
     }
 
@@ -595,6 +619,44 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 // Find the space before the next parameter
                 end = nextParamStart;
             }
+        }
+
+        return response.substring(start, end).trim();
+    }
+
+    /**
+     * Parse PUB or PRIV parameter from DEST REPLY response.
+     * DEST REPLY format: "DEST REPLY PUB=<base64> PRIV=<base64>"
+     *
+     * IMPORTANT: Base64-encoded I2P destinations can contain spaces.
+     * This method uses the known structure (PUB followed by PRIV) to extract
+     * the full value without truncating at internal spaces.
+     */
+    private String parseDestParam(String response, String param) {
+        if (response == null) return null;
+
+        String pattern = param + "=";
+        int start = response.indexOf(pattern);
+        if (start == -1) return null;
+
+        start += pattern.length();
+
+        int end;
+        if (param.equals("PUB")) {
+            // PUB value ends where PRIV= starts
+            int privStart = response.indexOf("PRIV=", start);
+            if (privStart != -1) {
+                end = privStart - 1; // Exclude the space before PRIV
+            } else {
+                end = response.length();
+            }
+        } else if (param.equals("PRIV")) {
+            // PRIV is the last parameter, goes to end of string
+            end = response.length();
+        } else {
+            // Fallback to standard parsing for other params
+            int nextSpace = response.indexOf(' ', start);
+            end = (nextSpace != -1) ? nextSpace : response.length();
         }
 
         return response.substring(start, end).trim();

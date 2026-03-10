@@ -1,7 +1,7 @@
 package com.secuchat.app;
 
+import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
 import android.view.Window;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
@@ -27,8 +27,11 @@ public class MainActivity extends BridgeActivity {
         }
 
         // Ensure content doesn't go behind status bar
-        window.getDecorView().setSystemUiVisibility(
-            View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-        );
+        // Use WindowInsetsController for API 30+, deprecated setSystemUiVisibility for older versions
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (controller != null) {
+                controller.setSystemBarsBehavior(WindowInsetsControllerCompat.BEHAVIOR_DEFAULT);
+            }
+        }
     }
 }

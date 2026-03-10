@@ -47,7 +47,7 @@ public class SAMStream {
 
     private final int streamId;
     private final String sessionId;
-    private State state;
+    private volatile State state;
     private Socket socket;
     private BufferedReader reader;
     private PrintWriter writer;
