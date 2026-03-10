@@ -75,19 +75,36 @@ export async function exportContact(
       exportedAt: new Date().toISOString(),
     }, null, 2);
 
-    // Write to Downloads directory for user access
-    const uri = await nativeFilesystem.writeFile(filename, content, 'downloads');
+    // Write to cache directory (always writable, no permissions needed on Android 10+)
+    // The Share plugin will convert file:// URI to content:// URI via FileProvider
+    const cachePath = `contacts/${filename}`;
+    const uri = await nativeFilesystem.writeFile(cachePath, content, 'cache');
 
-    console.log('[NativeFileSharing] Contact exported to:', uri);
+    console.log('[NativeFileSharing] Contact exported to cache:', uri);
 
     // Optionally share the file
     if (options.share && Share) {
-      await Share.share({
-        title: `SecuChat Contact: ${contactData.name}`,
-        text: `Contact ${contactData.name} - I2P: ${contactData.i2pAddress}`,
-        url: uri,
-        dialogTitle: 'Share Contact',
-      });
+      try {
+        console.log('[NativeFileSharing] Opening share dialog...');
+        await Share.share({
+          title: `SecuChat Contact: ${contactData.name}`,
+          text: `Contact ${contactData.name} - I2P: ${contactData.i2pAddress}`,
+          url: uri,
+          dialogTitle: 'Share Contact',
+        });
+        console.log('[NativeFileSharing] Share dialog completed');
+      } catch (shareError) {
+        // Don't fail if user cancelled or dismissed the dialog
+        if (shareError instanceof Error) {
+          const msg = shareError.message.toLowerCase();
+          if (msg.includes('cancel') || msg.includes('dismissed') || msg.includes('abort')) {
+            console.log('[NativeFileSharing] User cancelled share dialog');
+            return { success: true, uri };
+          }
+        }
+        console.error('[NativeFileSharing] Share failed:', shareError);
+        throw shareError;
+      }
     }
 
     return { success: true, uri };
