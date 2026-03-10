@@ -172,7 +172,8 @@ jobs:
         run: |
           PR_NUM=${{ github.event.pull_request.number }}
           BETA_NUM=${{ github.run_number }}
-          NEW_VERSION="1.0-PR${PR_NUM}-beta${BETA_NUM}"
+          # SemVer format for Electron: 1.0.0-PR107-beta.44
+          NEW_VERSION="1.0.0-PR${PR_NUM}-beta.${BETA_NUM}"
           echo "Setting version to: $NEW_VERSION"
           # Update package.json
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
@@ -269,7 +270,8 @@ jobs:
         run: |
           PR_NUM=${{ github.event.pull_request.number }}
           BETA_NUM=${{ github.run_number }}
-          NEW_VERSION="1.0-PR${PR_NUM}-beta${BETA_NUM}"
+          # SemVer format: 1.0.0-PR107-beta.44
+          NEW_VERSION="1.0.0-PR${PR_NUM}-beta.${BETA_NUM}"
           echo "Setting version to: $NEW_VERSION"
           # Update package.json
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
