@@ -30,6 +30,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
     private final SAMSocketManager socketManager;
     private final ExecutorService executorService;
+    private String currentSessionId = null; // Track the current session nickname
 
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
@@ -319,7 +320,9 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
-                String response = socketManager.sendCommandAndWait("DEST GENERATE SIGNATURE_TYPE=" + sigType);
+                // i2pd expects numeric signature type values, not string names
+                String sigTypeNum = mapSignatureTypeToNumber(sigType);
+                String response = socketManager.sendCommandAndWait("DEST GENERATE SIGNATURE_TYPE=" + sigTypeNum);
 
                 JSObject result = new JSObject();
 
@@ -378,6 +381,9 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
                 if (response != null && response.contains("RESULT=OK")) {
                     result.put("success", true);
+                    // Store the session ID for later use in STREAM CONNECT/ACCEPT
+                    currentSessionId = nickname;
+                    Log.d(TAG, "Session created with ID: " + nickname);
                 } else {
                     result.put("success", false);
                     result.put("error", response != null ? response : "No response");
@@ -415,9 +421,12 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
+                // Use the stored session ID from createSession
+                String sessionId = currentSessionId != null ? currentSessionId : "secuchat";
                 int streamId = generateStreamId();
-                String cmd = String.format("STREAM CONNECT ID=seuchat_session DESTINATION=%s SILENT=false",
-                    destination);
+                String cmd = String.format("STREAM CONNECT ID=%s DESTINATION=%s SILENT=false",
+                    sessionId, destination);
+                Log.d(TAG, "STREAM CONNECT command: " + cmd);
                 String response = socketManager.sendCommandAndWait(cmd);
 
                 JSObject result = new JSObject();
@@ -425,9 +434,11 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 if (response != null && response.contains("RESULT=OK")) {
                     result.put("success", true);
                     result.put("streamId", streamId);
+                    Log.d(TAG, "STREAM CONNECT successful, streamId: " + streamId);
                 } else {
                     result.put("success", false);
                     result.put("error", response != null ? response : "No response");
+                    Log.e(TAG, "STREAM CONNECT failed: " + response);
                 }
 
                 call.resolve(result);
@@ -567,5 +578,53 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         if (end == -1) end = response.length();
 
         return response.substring(start, end).trim();
+    }
+
+    /**
+     * Map signature type name to numeric value for i2pd compatibility.
+     * i2pd's SAM implementation expects numeric signature type identifiers.
+     */
+    private String mapSignatureTypeToNumber(String sigType) {
+        if (sigType == null || sigType.isEmpty()) {
+            return "7"; // Default: EdDSA_SHA512_Ed25519
+        }
+
+        // If already numeric, return as-is
+        if (sigType.matches("\\d+")) {
+            return sigType;
+        }
+
+        // Map common signature type names to numeric values
+        switch (sigType) {
+            case "DSA_SHA1":
+                return "0";
+            case "ECDSA_SHA256_P256":
+                return "1";
+            case "ECDSA_SHA384_P384":
+                return "2";
+            case "ECDSA_SHA512_P521":
+                return "3";
+            case "RSA_SHA256_2048":
+                return "4";
+            case "RSA_SHA384_3072":
+                return "5";
+            case "RSA_SHA512_4096":
+                return "6";
+            case "EdDSA_SHA512_Ed25519":
+                return "7"; // Default, most common
+            case "EdDSA_SHA512_Ed25519ph":
+                return "8";
+            case "GOSTR3410_CRYPTO_PRO_A":
+                return "9";
+            case "GOSTR3410_CRYPTO_PRO_B":
+                return "10";
+            case "GOSTR3410_CRYPTO_PRO_C":
+                return "11";
+            case "ECDSA_SHA256_P256_RED":
+                return "12";
+            default:
+                Log.w(TAG, "Unknown signature type: " + sigType + ", using default (7)");
+                return "7"; // Default to EdDSA_SHA512_Ed25519
+        }
     }
 }
