@@ -82,7 +82,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
@@ -129,7 +129,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
 
       - name: Audit App
         working-directory: ./app
@@ -171,7 +171,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
 
       - name: Download i2pd (Windows x64)
         shell: pwsh
@@ -258,7 +258,7 @@ jobs:
       - uses: actions/setup-node@v4
         if: steps.check-android.outputs.exists == 'true'
         with:
-          node-version: '20'
+          node-version: '20.19'
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
@@ -444,7 +444,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
 
       - name: Set version
         run: |
@@ -487,7 +487,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
 
       - name: Set version
         run: |
@@ -529,7 +529,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '20.19'
 
       - name: Set version
         shell: pwsh
