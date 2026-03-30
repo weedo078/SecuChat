@@ -299,7 +299,7 @@ public class SAMSocketManager {
                         // Emit error event to TypeScript
                         SAMEventEmitter emitter = eventEmitter;
                         if (emitter != null) {
-                            emitter.emitError("Read error: " + e.getMessage(), 0);
+                            emitter.emitError("Read error: " + e.getMessage(), "READ_ERROR", 0);
                         }
                     }
                     break;
