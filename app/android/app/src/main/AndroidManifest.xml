@@ -57,6 +57,20 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="secuchat" />
             </intent-filter>
+
+            <!-- Handle .secuchat contact files opened from file manager -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/json" />
+                <data android:pathPattern=".*\\.secuchat" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+                <data android:pathPattern=".*\\.secuchat" />
+            </intent-filter>
         </activity>
 
         <!-- Foreground Service for I2P -->

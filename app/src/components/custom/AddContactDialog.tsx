@@ -70,6 +70,25 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Listen for contact import from native Android (file opened from file manager)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as string;
+      if (detail) {
+        const contact = parseContactData(detail);
+        if (contact) {
+          setImportedContact(contact);
+          setImportError(null);
+          setActiveTab('import');
+        } else {
+          setImportError(t('addContact.invalidFile'));
+        }
+      }
+    };
+    window.addEventListener('secuchat-contact-import', handler);
+    return () => window.removeEventListener('secuchat-contact-import', handler);
+  }, [t]);
+
   // ── Parse ──────────────────────────────────────────────────────────────────
 
   const parseContactData = (raw: string): ContactData | null => {
