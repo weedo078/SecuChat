@@ -1,7 +1,11 @@
 {
   "appId": "com.securechat.desktop",
   "productName": "SecuChat",
-  "asar": false,
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node",
+    "**/better-sqlite3/**"
+  ],
   "directories": {
     "output": "release",
     "buildResources": "build-assets"

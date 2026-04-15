@@ -91,7 +91,7 @@ class I2PService {
       // CRITICAL: We MUST have a persistent SAM destination - TRANSIENT doesn't publish LeaseSets
       let newDestinationGenerated = false;
       if (!this.identity?.samDestination) {
-        console.log('[I2P] Generating new SAM destination (none exists in identity)');
+        logger.log('[I2P] Generating new SAM destination (none exists in identity)');
         const session = await samService.generateDestination();
         if (this.identity) {
           // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
@@ -99,10 +99,10 @@ class I2PService {
           newDestinationGenerated = true;
           // Notify that a new destination was generated - caller must persist it
           this.currentStatus.newDestinationGenerated = true;
-          console.log('[I2P] New SAM destination generated, caller must persist it');
+          logger.log('[I2P] New SAM destination generated, caller must persist it');
         }
       } else {
-        console.log('[I2P] Using existing SAM destination from identity');
+        logger.log('[I2P] Using existing SAM destination from identity');
       }
 
       // Verify we have a valid destination before creating session
@@ -127,7 +127,7 @@ class I2PService {
       if (b32 && this.identity) {
         this.identity.b32Address = b32;
       }
-      console.log(`[I2P] Session created. Our b32 address: ${b32?.slice(0, 30)}...`);
+      logger.log(`[I2P] Session created. Our b32 address: ${b32?.slice(0, 30)}...`);
 
       this.currentStatus = {
         samConnected: true,
@@ -170,6 +170,9 @@ class I2PService {
       b32Address,
     };
 
+    // Zero the raw keypair bytes — identity now holds the only copy
+    keypair.secretKey.fill(0);
+
     // If SAM is connected, also generate SAM destination
     if (samService.isSAMConnected()) {
       try {
@@ -194,14 +197,14 @@ class I2PService {
    * Restore identity from stored keys
    */
   async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string, i2pAddress?: string): Promise<I2PIdentity> {
-    console.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination, 'i2pAddress present:', !!i2pAddress);
+    logger.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination, 'i2pAddress present:', !!i2pAddress);
     const publicKey = base64ToUint8Array(publicKeyB64);
     const privateKey = base64ToUint8Array(privateKeyB64);
 
     // Use the stored I2P address (which should be the SAM b32) if available
     // Otherwise fall back to Ed25519-derived address for backwards compatibility
     const b32Address = i2pAddress || (toBase32(publicKey) + '.b32.i2p');
-    console.log('[I2P] Using b32 address:', b32Address.slice(0, 30) + '...');
+    logger.log('[I2P] Using b32 address:', b32Address.slice(0, 30) + '...');
 
     this.identity = {
       publicKey,
@@ -291,7 +294,7 @@ class I2PService {
       peer.lastSeen = Date.now();
       logger.log('[I2P] Peer connected successfully:', b32Address.slice(0, 20), 'stream:', stream.id);
     } catch (error) {
-      console.error('[I2P] Failed to connect to peer:', error);
+      logger.error('[I2P] Failed to connect to peer:', error);
       peer.status = 'disconnected';
       
       // Provide user-friendly error message
@@ -331,7 +334,7 @@ class I2PService {
         await samService.send(updatedPeer.samStreamId, JSON.stringify(message));
         return true;
       } catch (error) {
-        console.error('[I2P] Failed to send message:', error);
+        logger.error('[I2P] Failed to send message:', error);
         return false;
       }
     }
@@ -340,7 +343,7 @@ class I2PService {
       await samService.send(peer.samStreamId, JSON.stringify(message));
       return true;
     } catch (error) {
-      console.warn('[I2P] Send failed, attempting reconnect:', error);
+      logger.warn('[I2P] Send failed, attempting reconnect:', error);
       peer.status = 'disconnected';
       // Try reconnect + resend once
       try {
@@ -352,7 +355,7 @@ class I2PService {
         await samService.send(reconnectedPeer.samStreamId, JSON.stringify(message));
         return true;
       } catch (retryError) {
-        console.error('[I2P] Failed to send message after reconnect:', retryError);
+        logger.error('[I2P] Failed to send message after reconnect:', retryError);
         return false;
       }
     }
@@ -556,6 +559,7 @@ class I2PService {
 
   exportIdentity(): { publicKey: string; privateKey: string; b32Address: string; samDestination?: string } | null {
     if (!this.identity) return null;
+    // CAUTION: exports private key material. Caller must handle securely.
     return {
       publicKey: uint8ArrayToBase64(this.identity.publicKey),
       privateKey: uint8ArrayToBase64(this.identity.privateKey),
@@ -565,6 +569,11 @@ class I2PService {
   }
 
   disconnect(): void {
+    if (this.identity) {
+      // Zero private key bytes before dropping reference
+      this.identity.privateKey.fill(0);
+    }
+    this.identity = null;
     this.peers.clear();
     samService.disconnect();
     this.currentStatus = {

@@ -76,7 +76,7 @@
       "icon": "build/icon.ico"
     },
     "nsis": {
-      "perMachine": true
+      "perMachine": false
     },
     "linux": {
       "target": [
@@ -101,7 +101,7 @@
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.5.0",
     "@types/ws": "^8.5.0",
-    "electron": "^40.8.0",
+    "electron": "^41.2.0",
     "electron-builder": "^26.8.1",
     "typescript": "^5.5.0"
   },
@@ -109,5 +109,12 @@
     "better-sqlite3": "^12.8.0",
     "electron-updater": "^6.8.3",
     "ws": "^8.20.0"
+  },
+  "overrides": {
+    "lodash": "^4.17.21",
+    "tar": "^7.5.11",
+    "@xmldom/xmldom": "^0.8.12",
+    "brace-expansion": "^1.1.13",
+    "picomatch": "^4.0.4"
   }
 }

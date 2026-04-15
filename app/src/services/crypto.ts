@@ -6,6 +6,16 @@ export class CryptoService {
   private static instance: CryptoService;
   private userKeyPair: { publicKey: string; privateKey: string; fingerprint: string } | null = null;
   private decryptedPrivateKey: openpgp.PrivateKey | null = null;
+  private decryptedKeyExpiry: number = 0; // timestamp when key expires
+  private static readonly KEY_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+  // Rate limiting for failed operations
+  private failedDecryptAttempts = 0;
+  private decryptLockedUntil = 0;
+  private failedImportAttempts = 0;
+  private importLockedUntil = 0;
+  private static readonly MAX_ATTEMPTS = 5;
+  private static readonly LOCKOUT_DURATION_MS = 30 * 1000; // 30 seconds
 
   static getInstance(): CryptoService {
     if (!CryptoService.instance) {
@@ -13,6 +23,28 @@ export class CryptoService {
     }
     return CryptoService.instance;
   }
+  private isDecryptedKeyValid(): boolean {
+    return this.decryptedPrivateKey !== null && Date.now() < this.decryptedKeyExpiry;
+  }
+
+  private resetKeyExpiry(): void {
+    this.decryptedKeyExpiry = Date.now() + CryptoService.KEY_TTL_MS;
+  }
+
+  private checkDecryptLock(): void {
+    if (Date.now() < this.decryptLockedUntil) {
+      const remaining = Math.ceil((this.decryptLockedUntil - Date.now()) / 1000);
+      throw new Error(`Zu viele fehlgeschlagene Versuche. Bitte ${remaining}s warten.`);
+    }
+  }
+
+  private checkImportLock(): void {
+    if (Date.now() < this.importLockedUntil) {
+      const remaining = Math.ceil((this.importLockedUntil - Date.now()) / 1000);
+      throw new Error(`Zu viele fehlgeschlagene Versuche. Bitte ${remaining}s warten.`);
+    }
+  }
+
 
   /**
    * Generate a new PGP key pair for the user
@@ -47,6 +79,7 @@ export class CryptoService {
 
       this.userKeyPair = { publicKey, privateKey, fingerprint };
       this.decryptedPrivateKey = await openpgp.readPrivateKey({ armoredKey: privateKey });
+      this.resetKeyExpiry();
       
       logger.log('Fingerprint:', fingerprint);
       
@@ -61,20 +94,28 @@ export class CryptoService {
    * Import existing key pair
    */
   async importKeyPair(privateKey: string, publicKey: string, passphrase: string): Promise<{ fingerprint: string }> {
+    this.checkImportLock();
     try {
       const privateKeyObj = await openpgp.readPrivateKey({ armoredKey: privateKey });
       this.decryptedPrivateKey = await openpgp.decryptKey({
         privateKey: privateKeyObj,
         passphrase,
       });
+      this.resetKeyExpiry();
 
       const publicKeyObj = await openpgp.readKey({ armoredKey: publicKey });
       const fingerprint = publicKeyObj.getFingerprint().toUpperCase();
 
       this.userKeyPair = { publicKey, privateKey, fingerprint };
+      this.failedImportAttempts = 0;
       
       return { fingerprint };
     } catch (error) {
+      this.failedImportAttempts++;
+      if (this.failedImportAttempts >= CryptoService.MAX_ATTEMPTS) {
+        this.importLockedUntil = Date.now() + CryptoService.LOCKOUT_DURATION_MS;
+        logger.warn('[Crypto] Too many failed key import attempts, locked for 30s');
+      }
       logger.error('Error importing key pair:', error);
       throw new Error('Failed to import PGP key pair');
     }
@@ -111,14 +152,17 @@ export class CryptoService {
    * Decrypt a message with user's private key
    */
   async decryptMessage(encryptedMessage: string, passphrase?: string): Promise<string> {
+    this.checkDecryptLock();
     try {
       if (!this.userKeyPair) {
         throw new Error('No key pair loaded');
       }
 
       let privateKey: openpgp.PrivateKey;
-      if (this.decryptedPrivateKey) {
-        privateKey = this.decryptedPrivateKey;
+      if (this.isDecryptedKeyValid()) {
+        privateKey = this.decryptedPrivateKey!;
+        // Extend TTL on use
+        this.resetKeyExpiry();
       } else if (passphrase) {
         privateKey = await openpgp.decryptKey({
           privateKey: await openpgp.readPrivateKey({ armoredKey: this.userKeyPair.privateKey }),
@@ -135,8 +179,14 @@ export class CryptoService {
         decryptionKeys: privateKey,
       });
 
+      this.failedDecryptAttempts = 0;
       return decrypted;
     } catch (error) {
+      this.failedDecryptAttempts++;
+      if (this.failedDecryptAttempts >= CryptoService.MAX_ATTEMPTS) {
+        this.decryptLockedUntil = Date.now() + CryptoService.LOCKOUT_DURATION_MS;
+        logger.warn('[Crypto] Too many failed decryption attempts, locked for 30s');
+      }
       logger.error('Error decrypting message:', error);
       throw new Error('Failed to decrypt message');
     }
@@ -224,8 +274,12 @@ export class CryptoService {
    * Clear key pair from memory
    */
   clearKeyPair(): void {
+    // Note: JS doesn't support secure memory wiping, but we null references for GC
     this.userKeyPair = null;
     this.decryptedPrivateKey = null;
+    this.decryptedKeyExpiry = 0;
+    this.failedDecryptAttempts = 0;
+    this.failedImportAttempts = 0;
   }
 
   /**

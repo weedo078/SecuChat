@@ -13,6 +13,23 @@ let Encoding: typeof import('@capacitor/filesystem').Encoding | null = null;
 /**
  * Initialize Capacitor plugins (lazy-loaded)
  */
+type StorageDirectory = 'documents' | 'downloads' | 'cache' | 'external';
+
+const directoryMap: Record<StorageDirectory, string> = {
+  documents: 'Documents',
+  downloads: 'Documents',
+  cache: 'Cache',
+  external: 'ExternalStorage',
+};
+
+function resolveDirectory(directory: StorageDirectory): import('@capacitor/filesystem').Directory {
+  if (!Directory) throw new Error('Filesystem not initialized');
+  const key = directoryMap[directory];
+  const dir = Directory[key as keyof typeof Directory];
+  if (!dir) throw new Error(`Unknown directory mapping: ${directory} -> ${key}`);
+  return dir as import('@capacitor/filesystem').Directory;
+}
+
 async function initPlugins(): Promise<void> {
   if (Preferences && Filesystem) return;
 
@@ -177,33 +194,20 @@ export const nativeFilesystem = {
   async writeFile(
     path: string,
     data: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents'
+    directory: StorageDirectory = 'documents'
   ): Promise<string> {
     await initPlugins();
     if (!Filesystem || !Directory || !Encoding) {
       throw new Error('Filesystem not initialized');
     }
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
-    // Ensure parent directory exists
-    const parentDir = path.includes('/') ? path.substring(0, path.lastIndexOf('/')) : '';
-    if (parentDir) {
-      try {
-        await Filesystem.mkdir({
-          path: parentDir,
-          directory: dir as unknown as import('@capacitor/filesystem').Directory,
-          recursive: true,
-        });
-      } catch {
-        // Directory may already exist, ignore error
-      }
-    }
-
+    // Write file directly with recursive=true (creates parent dirs automatically)
     const result = await Filesystem.writeFile({
       path,
       data,
-      directory: dir as unknown as import('@capacitor/filesystem').Directory,
+      directory: dir,
       encoding: Encoding.UTF8,
       recursive: true,
     });
@@ -216,18 +220,18 @@ export const nativeFilesystem = {
    */
   async readFile(
     path: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents'
+    directory: StorageDirectory = 'documents'
   ): Promise<string> {
     await initPlugins();
     if (!Filesystem || !Directory || !Encoding) {
       throw new Error('Filesystem not initialized');
     }
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
     const result = await Filesystem.readFile({
       path,
-      directory: dir as unknown as import('@capacitor/filesystem').Directory,
+      directory: dir,
       encoding: Encoding.UTF8,
     });
 
@@ -239,17 +243,17 @@ export const nativeFilesystem = {
    */
   async fileExists(
     path: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents'
+    directory: StorageDirectory = 'documents'
   ): Promise<boolean> {
     await initPlugins();
     if (!Filesystem || !Directory) throw new Error('Filesystem not initialized');
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
     try {
       await Filesystem.stat({
         path,
-        directory: dir as unknown as import('@capacitor/filesystem').Directory,
+        directory: dir,
       });
       return true;
     } catch {
@@ -262,17 +266,37 @@ export const nativeFilesystem = {
    */
   async deleteFile(
     path: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents'
+    directory: StorageDirectory = 'documents'
   ): Promise<void> {
     await initPlugins();
     if (!Filesystem || !Directory) throw new Error('Filesystem not initialized');
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
     await Filesystem.deleteFile({
       path,
-      directory: dir as unknown as import('@capacitor/filesystem').Directory,
+      directory: dir,
     });
+  },
+
+  /**
+   * Get the URI for a file in the filesystem
+   */
+  async getUri(
+    path: string,
+    directory: StorageDirectory = 'documents'
+  ): Promise<string> {
+    await initPlugins();
+    if (!Filesystem || !Directory) throw new Error('Filesystem not initialized');
+
+    const dir = resolveDirectory(directory);
+
+    const result = await Filesystem.getUri({
+      path,
+      directory: dir,
+    });
+
+    return result.uri;
   },
 
   /**
@@ -280,17 +304,17 @@ export const nativeFilesystem = {
    */
   async mkdir(
     path: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents',
+    directory: StorageDirectory = 'documents',
     recursive = false
   ): Promise<void> {
     await initPlugins();
     if (!Filesystem || !Directory) throw new Error('Filesystem not initialized');
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
     await Filesystem.mkdir({
       path,
-      directory: dir as unknown as import('@capacitor/filesystem').Directory,
+      directory: dir,
       recursive,
     });
   },
@@ -300,16 +324,16 @@ export const nativeFilesystem = {
    */
   async readdir(
     path: string,
-    directory: 'documents' | 'downloads' | 'cache' = 'documents'
+    directory: StorageDirectory = 'documents'
   ): Promise<string[]> {
     await initPlugins();
     if (!Filesystem || !Directory) throw new Error('Filesystem not initialized');
 
-    const dir = Directory[directory.toUpperCase() as keyof typeof Directory];
+    const dir = resolveDirectory(directory);
 
     const result = await Filesystem.readdir({
       path,
-      directory: dir as unknown as import('@capacitor/filesystem').Directory,
+      directory: dir,
     });
 
     return result.files.map(f => (typeof f === 'string' ? f : f.name));

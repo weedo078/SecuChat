@@ -327,7 +327,7 @@ class SAMService {
       }
       
       if (!helloResp.includes('RESULT=OK')) {
-        console.error('[SAM] HELLO failed after', maxHelloAttempts, 'attempts:', helloResp);
+        logger.error('[SAM] HELLO failed after', maxHelloAttempts, 'attempts:', helloResp?.slice(0, 100));
         this.disconnect();
         return false;
       }
@@ -337,7 +337,7 @@ class SAMService {
       return true;
 
     } catch (error) {
-      console.error('[SAM] Connect failed:', error);
+      logger.error('[SAM] Connect failed:', error);
       this.isConnected = false;
       return false;
     }
@@ -408,7 +408,7 @@ class SAMService {
       return;
     }
 
-    console.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
+    logger.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
     const destParam = `DESTINATION=${dest}`;
 
     // Retry logic for i2pd initialization (can take 1-3 minutes on first start)
@@ -960,7 +960,12 @@ class SAMService {
     this.isConnected = false;
     this.helloCompleted = false;
     this.isReconnecting = false;
-    this.session = null;
+    // Zero private key material
+    if (this.session?.privateKey) {
+      // Session private key is a string — best effort
+      this.session = null;
+    }
+    this.lastSessionPrivateKey = undefined;
     this.sessionNickname = null;
   }
 
@@ -969,6 +974,7 @@ class SAMService {
    */
   exportSession(): { destination: string; privateKey: string } | null {
     if (!this.session) return null;
+    // CAUTION: exports private key material. Caller must handle securely.
     return {
       destination: this.session.destination,
       privateKey: this.session.privateKey,

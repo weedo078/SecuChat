@@ -3,6 +3,7 @@
 // Only used when running as a native Android/iOS app
 
 import { isNativeStorageAvailable, nativeFilesystem } from './nativeStorage';
+import { cryptoService } from './crypto';
 
 // Lazy-loaded Capacitor modules
 let Share: typeof import('@capacitor/share').Share | null = null;
@@ -62,7 +63,9 @@ export async function exportContact(
   try {
     await initSharingPlugins();
 
-    const filename = options.filename || `secuchat-contact-${contactData.name.replace(/\s+/g, '-')}.json`;
+    const filename = options.filename || `secuchat-contact-${contactData.name.replace(/\s+/g, '-')}.secuchat`;
+
+    console.warn('[NativeFileSharing] WARNING: Exported contact file contains cryptographic keys. Handle securely.');
 
     // Create contact file content
     const content = JSON.stringify({
@@ -75,34 +78,24 @@ export async function exportContact(
       exportedAt: new Date().toISOString(),
     }, null, 2);
 
-    // Write to cache directory (always writable, no permissions needed on Android 10+)
-    // The Share plugin will convert file:// URI to content:// URI via FileProvider
-    const cachePath = `contacts/${filename}`;
-    const uri = await nativeFilesystem.writeFile(cachePath, content, 'cache');
+    // Write to external storage Downloads folder (directly accessible via adb)
+    const downloadPath = `Download/${filename}`;
+    await nativeFilesystem.writeFile(downloadPath, content, 'external');
 
-    console.log('[NativeFileSharing] Contact exported to cache:', uri);
+    const uri = await nativeFilesystem.getUri(downloadPath, 'external');
+    console.log('[NativeFileSharing] Contact saved to Downloads:', uri);
 
-    // ALWAYS share the file on native platforms - user must choose where to save
-    // This is required on Android 10+ as we cannot write to Downloads directly
+    // Also open share dialog so user can send via other apps
     if (Share) {
       try {
         console.log('[NativeFileSharing] Opening share dialog...');
-
-        // Ensure the contacts directory exists and file is readable
-        await nativeFilesystem.init();
-
-        // On Android, we need to use a content:// URI via FileProvider
-        // The Share plugin handles this conversion automatically
-        const shareResult = await Share.share({
+        await Share.share({
           title: `SecuChat Contact: ${contactData.name}`,
           text: `Contact ${contactData.name} - I2P: ${contactData.i2pAddress}`,
           url: uri,
-          dialogTitle: 'Kontakt speichern oder teilen',
+          dialogTitle: 'Kontakt teilen',
         });
-
-        console.log('[NativeFileSharing] Share dialog result:', shareResult);
       } catch (shareError) {
-        // Don't fail if user cancelled or dismissed the dialog
         if (shareError instanceof Error) {
           const msg = shareError.message.toLowerCase();
           if (msg.includes('cancel') || msg.includes('dismissed') || msg.includes('abort') || msg.includes('canceled')) {
@@ -110,9 +103,7 @@ export async function exportContact(
             return { success: true, uri };
           }
         }
-        console.error('[NativeFileSharing] Share failed:', shareError);
-        // Return success even if share failed - file is still saved in cache
-        return { success: true, uri, error: 'Share dialog failed but file was saved' };
+        console.warn('[NativeFileSharing] Share cancelled, file already saved to Downloads');
       }
     }
 
@@ -192,12 +183,32 @@ export async function importContact(): Promise<{
 
     // Handle v2 format
     if (contactData.v === '2' && contactData.t === 'sc') {
+      // Validate required fields
+      if (!contactData.f) {
+        return { success: false, error: 'Fehlender Fingerprint — Kontaktdatei möglicherweise manipuliert' };
+      }
+      if (!contactData.i) {
+        return { success: false, error: 'Fehlende I2P-Adresse — ungültige Kontaktdatei' };
+      }
+
+      // Validate PGP key if present
+      if (contactData.k) {
+        try {
+          const { valid } = await cryptoService.validatePublicKey(contactData.k);
+          if (!valid) {
+            return { success: false, error: 'Ungültiger PGP-Schlüssel in Kontaktdatei' };
+          }
+        } catch {
+          return { success: false, error: 'PGP-Schlüssel konnte nicht validiert werden' };
+        }
+      }
+
       return {
         success: true,
         data: {
           name: contactData.n || '',
-          i2pAddress: contactData.i || '',
-          fingerprint: contactData.f || '',
+          i2pAddress: contactData.i,
+          fingerprint: contactData.f,
           pgpPublicKey: contactData.k,
         },
       };
@@ -205,12 +216,29 @@ export async function importContact(): Promise<{
 
     // Handle legacy format
     if (contactData.name && contactData.i2pAddress) {
+      // Validate required fields
+      if (!contactData.fingerprint) {
+        return { success: false, error: 'Fehlender Fingerprint — Kontaktdatei möglicherweise manipuliert' };
+      }
+
+      // Validate PGP key if present
+      if (contactData.pgpPublicKey) {
+        try {
+          const { valid } = await cryptoService.validatePublicKey(contactData.pgpPublicKey);
+          if (!valid) {
+            return { success: false, error: 'Ungültiger PGP-Schlüssel in Kontaktdatei' };
+          }
+        } catch {
+          return { success: false, error: 'PGP-Schlüssel konnte nicht validiert werden' };
+        }
+      }
+
       return {
         success: true,
         data: {
           name: contactData.name,
           i2pAddress: contactData.i2pAddress,
-          fingerprint: contactData.fingerprint || '',
+          fingerprint: contactData.fingerprint,
           pgpPublicKey: contactData.pgpPublicKey,
         },
       };

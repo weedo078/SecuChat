@@ -32,7 +32,7 @@ export const defaultNotificationSettings: NotificationSettings = {
   enabled: true,
   sound: true,
   vibration: true,
-  showPreview: true,
+  showPreview: false,
   priority: 'normal',
 };
 
@@ -48,7 +48,7 @@ export const defaultNotificationPreferences: NotificationPreferences = {
   enabled: true,
   soundEnabled: true,
   vibrationEnabled: true,
-  showPreview: true,
+  showPreview: false,
 };
 
 // Track pending notifications for grouping

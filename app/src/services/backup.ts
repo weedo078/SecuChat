@@ -2,6 +2,7 @@ import type { BackupData, AppSettings, SecuritySettings, Message } from '@/types
 import { storageService } from '@/services/storage';
 import { logger } from '@/utils/logger';
 import { Encrypter, Decrypter, generateIdentity, identityToRecipient } from 'age-encryption';
+import { encryptData, decryptData } from './storage/browser/encryption';
 
 const BACKUP_VERSION = '3.0-age';
 const BACKUP_MAGIC = 'SECUCHAT_BACKUP';
@@ -22,9 +23,11 @@ export interface BackupKeyFile {
   version: string;
   type: 'age-private-key';
   username: string;
-  privateKey: string; // Age identity (AGE-SECRET-KEY-1...)
+  privateKey: string; // Will be encrypted if passphrase provided
   publicKey: string; // Age recipient (age1...)
   createdAt: string;
+  encrypted?: boolean; // Flag indicating if privateKey is encrypted
+  encryptionVersion?: string; // 'v1' for AES-GCM encrypted
 }
 
 export interface BackupContents extends BackupData {
@@ -105,7 +108,7 @@ export async function decryptWithAge(encryptedBase64: string, privateKey: string
  * Create a full backup with Age encryption
  * Returns both the encrypted backup and the private key
  */
-export async function createBackup(): Promise<BackupResult> {
+export async function createBackup(passphrase?: string): Promise<BackupResult> {
   const user = await storageService.getUser();
   if (!user) throw new Error('No user found');
 
@@ -161,6 +164,13 @@ export async function createBackup(): Promise<BackupResult> {
     createdAt: timestamp,
   };
 
+  // Encrypt private key if passphrase provided
+  if (passphrase) {
+    keyFile.privateKey = await encryptData(keyFile.privateKey, passphrase);
+    keyFile.encrypted = true;
+    keyFile.encryptionVersion = 'v1';
+  }
+
   logger.info('[Backup] Created Age-encrypted backup for user:', user.username);
 
   return { backupFile, keyFile };
@@ -172,7 +182,8 @@ export async function createBackup(): Promise<BackupResult> {
  */
 export async function restoreBackup(
   backupContent: string,
-  keyContent: string
+  keyContent: string,
+  passphrase?: string,
 ): Promise<BackupContents> {
   let backupFile: BackupFile;
   let keyFile: BackupKeyFile;
@@ -198,6 +209,13 @@ export async function restoreBackup(
   }
   if (backupFile.publicKey !== keyFile.publicKey) {
     throw new Error('Backup und Key passen nicht zusammen! Stellen Sie sicher, dass beide Dateien vom selben Backup stammen.');
+  }
+
+  // Decrypt private key if encrypted
+  if (keyFile.encrypted && passphrase) {
+    keyFile.privateKey = await decryptData(keyFile.privateKey, passphrase);
+  } else if (keyFile.encrypted && !passphrase) {
+    throw new Error('Backup-Key ist passwortgeschützt. Bitte Passwort eingeben.');
   }
 
   // Decrypt

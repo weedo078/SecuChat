@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { isAndroid } from '@/services/platform';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useApp } from '@/contexts/AppContext';
 import { Header } from '@/components/custom/Header';
@@ -26,6 +27,23 @@ function App() {
   useEffect(() => {
     initialize();
   }, [initialize]);
+
+  // Basic environment integrity check
+  useEffect(() => {
+    // Verify we're running in a secure context
+    if (!window.isSecureContext && window.location.protocol !== 'file:') {
+      console.warn('[App] Not running in secure context — some features may be limited');
+    }
+
+    // Verify Capacitor plugins are intact (if native platform)
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cap = (window as any).Capacitor;
+      if (cap?.isNativePlatform?.() && !cap.Plugins) {
+        console.error('[App] Capacitor plugins not loaded — possible integrity issue');
+      }
+    }
+  }, []);
 
   const handleUnlock = async (passphrase: string): Promise<boolean> => {
     const success = await unlockApp(passphrase);
@@ -63,7 +81,7 @@ function App() {
   return (
     <div className="fixed inset-0 bg-background flex flex-col">
       {/* Fixed Header - stays below notification bar on Android */}
-      <div className="fixed top-0 left-0 right-0 z-50 safe-area-top">
+      <div className="fixed top-0 left-0 right-0 z-50" style={{ paddingTop: isAndroid() ? '28px' : undefined }} >
         <Header
           onMenuClick={() => setSidebarOpen(true)}
           onSettingsClick={() => setShowSettings(true)}
@@ -71,7 +89,7 @@ function App() {
       </div>
 
       {/* Main content with padding for fixed header */}
-      <div className="flex-1 flex overflow-hidden pt-safe-header">
+      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : undefined }} >
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
           <Sidebar
@@ -83,7 +101,7 @@ function App() {
 
         {/* Mobile Sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="p-0 w-80">
+          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: isAndroid() ? '28px' : 'env(safe-area-inset-top, 0px)' }}>
             <Sidebar
               onAddContact={() => {
                 setSidebarOpen(false);

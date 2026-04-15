@@ -175,6 +175,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   
+  // Inactivity tracking for auto-lock
+  const [lastActivity, setLastActivity] = useState(Date.now());
+  
   // Loading state
   const [isLoading, setIsLoading] = useState(true);
 
@@ -617,6 +620,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, [i2pStatus, isLocked, encryptionState]);
 
+  // Track user activity for auto-lock
+  useEffect(() => {
+    const updateActivity = () => setLastActivity(Date.now());
+    
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('touchstart', updateActivity);
+    window.addEventListener('click', updateActivity);
+    
+    return () => {
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('touchstart', updateActivity);
+      window.removeEventListener('click', updateActivity);
+    };
+  }, []);
+
   // Contact operations
   const addContact = useCallback(async (contact: Contact) => {
     await storageService.saveContact(contact);
@@ -838,6 +858,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     storageService.clearEncryptionPassphrase();
     setEncryptionState('unencrypted');
   }, []);
+
+  // Auto-lock after inactivity
+  useEffect(() => {
+    if (isLocked || !isAuthenticated) return;
+    
+    const lockTimeout = settings.autoLock ? (settings.lockTimeout ?? 5) : 0;
+    if (lockTimeout <= 0) return;
+    
+    const interval = setInterval(() => {
+      const inactiveMs = Date.now() - lastActivity;
+      if (inactiveMs > lockTimeout * 60 * 1000) {
+        lockApp();
+      }
+    }, 30000);
+    
+    return () => clearInterval(interval);
+  }, [lastActivity, isLocked, isAuthenticated, settings.autoLock, settings.lockTimeout, lockApp]);
 
   const unlockApp = useCallback(async (passphrase: string): Promise<boolean> => {
     try {

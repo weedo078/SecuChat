@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol, session } from 'electron';
 import { join, normalize } from 'path';
 import { existsSync } from 'fs';
 import { autoUpdater } from 'electron-updater';
@@ -53,13 +53,16 @@ function createWindow(): void {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+    // Only open DevTools with explicit --devtools flag or OPEN_DEVTOOLS=1 env var
+    if (process.argv.includes('--devtools') || process.env.OPEN_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools();
+    }
   } else {
     const indexPath = join(APP_DIST, 'index.html');
     console.log('[Main] Loading file:', indexPath);
@@ -185,6 +188,18 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Set CSP header for all requests
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:7657 http://127.0.0.1:7070; media-src 'self' blob:; worker-src 'self' blob:"
+        ]
+      }
+    });
+  });
+
   createWindow();
 
   app.on('activate', () => {
@@ -209,8 +224,12 @@ app.on('before-quit', async () => {
 
 // ─── Auto-Updater ─────────────────────────────────────────────────────────────
 
+// Note: Updates are verified via SHA-512 hash from latest.yml by electron-updater.
+// For full security, code signing should be enabled to ensure latest.yml itself
+// hasn't been tampered with: https://www.electron.build/code-signing
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.forceDevUpdateConfig = true; // Allow update testing in dev mode
 
 function checkForUpdates(): void {
   if (isDev) {
@@ -282,6 +301,14 @@ autoUpdater.on('download-progress', (progress) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
+  // Verify update integrity: electron-updater already validates sha512 from latest.yml,
+  // but we log it explicitly for auditability
+  if (info.sha512) {
+    console.log('[Auto-Update] Update hash verified (sha512):', info.sha512.substring(0, 16) + '...');
+  } else {
+    console.warn('[Auto-Update] No SHA-512 hash in update metadata — integrity cannot be verified');
+  }
+
   console.log('[Auto-Update] Update downloaded, ready to install');
   mainWindow?.webContents.send('update:downloaded', {
     version: info.version,
