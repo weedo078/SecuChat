@@ -28,23 +28,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:7657 wss://127.0.0.1:7657 http://127.0.0.1:7070 https://127.0.0.1:7070; font-src 'self'; media-src 'self' blob:; worker-src 'self' blob:;" />
     <title>SecureChat</title>
     
-    <!-- Service Worker Registration (only for http/https, not file://) -->
-    <script>
-      if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js')
-            .then((registration) => {
-              console.log('[PWA] Service Worker registered:', registration.scope);
-            })
-            .catch((error) => {
-              console.log('[PWA] Service Worker registration failed:', error);
-            });
-        });
-      } else if (location.protocol === 'file:') {
-        console.log('[PWA] Service Worker disabled for file:// protocol');
-      }
-    </script>
-    
+
     <!-- Prevent text selection for app-like feel -->
     <style>
       * {

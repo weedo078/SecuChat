@@ -29,6 +29,15 @@ async function initApp() {
       </AppProvider>
     </StrictMode>,
   )
+
+  // Register Service Worker for PWA (only http/https, not file:// or native)
+  if ('serviceWorker' in navigator && location.protocol !== 'file:' && !platformService.isNative()) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js')
+        .then((reg) => console.log('[PWA] Service Worker registered:', reg.scope))
+        .catch((err) => console.log('[PWA] Service Worker registration failed:', err));
+    });
+  }
 }
 
 void initApp()
