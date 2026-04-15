@@ -298,7 +298,7 @@ jobs:
 
       - name: Setup Android SDK
         if: steps.check-android.outputs.exists == 'true'
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       - name: Cache Gradle
         if: steps.check-android.outputs.exists == 'true'
