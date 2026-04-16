@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Lock, Unlock, Menu, Settings, User as UserIcon, LogOut } from 'lucide-react';
+import appIcon from '/icon-192x192.png';
 import { Button } from '@/components/ui/button';
 import { useApp } from '@/contexts/AppContext';
 import {
@@ -89,7 +90,7 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
             <Menu className="h-5 w-5" aria-hidden="true" />
           </Button>
           <div className="flex items-center gap-2">
-            <img src="/icon-192x192.png" alt="SecuChat" className="h-6 w-6" />
+            <img src={appIcon} alt="SecuChat" className="h-6 w-6" />
             <span className="font-semibold text-lg">SecureChat</span>
           </div>
         </div>

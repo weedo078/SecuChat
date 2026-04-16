@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2, ShieldCheck, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import appIcon from '/icon-192x192.png';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useApp } from '@/contexts/AppContext';
@@ -254,7 +255,7 @@ export function ChatView() {
   if (!activeChat) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-background p-8">
-        <img src="/icon-192x192.png" alt="SecuChat" className="h-24 w-24 mb-6 opacity-80" />
+        <img src={appIcon} alt="SecuChat" className="h-24 w-24 mb-6 opacity-80" />
         <h2 className="text-2xl font-semibold mb-2">{t('chat.welcome')}</h2>
         <p className="text-muted-foreground text-center max-w-md mb-6">
           {t('chat.welcomeDescription')}
