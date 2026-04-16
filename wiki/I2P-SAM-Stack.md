@@ -1,17 +1,32 @@
 # I2P / SAM Stack
 
-This page documents the I2P integration in detail: the SAM v3.1 protocol, the WebSocket proxy, and how the two service layers (`samService` and `i2pService`) work together.
+This page documents the I2P integration in detail: the SAM v3.1 protocol, the WebSocket proxy, the native Android path, and how the service layers work together.
 
-## Why a Proxy?
+## Two Paths to I2P
 
-Browsers cannot open raw TCP connections. The I2P SAM API speaks a line-based text protocol over TCP (port 7656). The sam-proxy (`sam-proxy/proxy.mjs`) bridges this gap by accepting WebSocket connections from the browser and forwarding bytes to i2pd's SAM port.
+SecuChat connects to i2pd's SAM API through one of two paths depending on the platform:
+
+### Browser & Electron — WebSocket Proxy
+
+Browsers cannot open raw TCP connections. The sam-proxy (`sam-proxy/proxy.mjs`) bridges this gap by accepting WebSocket connections and forwarding bytes to i2pd's SAM port.
 
 ```
-Browser WebSocket  ←→  sam-proxy  ←→  i2pd SAM (TCP 7656)
-        port 7657                              port 7656
+Browser/Electron  ←→  sam-proxy  ←→  i2pd SAM (TCP 7656)
+     WS :7657                          TCP :7656
 ```
 
-The proxy is stateless — it does no protocol parsing, just byte forwarding.
+The Electron app bundles the SAM proxy internally and starts it automatically on port 7657. For the browser PWA, you run the proxy manually.
+
+### Android — Native Plugin
+
+Android connects directly to i2pd via the native SAM plugin (`services/samNative.ts`), bypassing the WebSocket proxy entirely:
+
+```
+Android App  →  samNative (direct TCP)  →  i2pd SAM (TCP 7656)
+                                                port 7656
+```
+
+This is more efficient and avoids the need for a local Node.js process on Android.
 
 ## SAM v3.1 Protocol Flow
 
@@ -50,7 +65,11 @@ Timeout for STREAM CONNECT is 60 seconds (I2P tunnel builds can take 30–60 s o
 
 ### Retry logic
 
-`connectTo()` retries up to 3 times on `LeaseSet not found` / `CANT_REACH_PEER` errors, with 10 s / 20 s / 30 s waits between attempts. This handles the case where a peer's i2pd is still building tunnels.
+`connectTo()` retries up to 3 times on `LeaseSet not found` / `CANT_REACH_PEER` errors, with 10 s / 20 s / 30 s waits between attempts.
+
+### Incoming streams
+
+`samService.startAcceptLoop()` opens a dedicated SAM socket for accepting incoming I2P streams. This means other peers can initiate connections to you — I2P is no longer outbound-only. The accept loop runs continuously and spawns handlers for each incoming connection.
 
 ### Reconnect
 
@@ -100,11 +119,26 @@ After `SESSION CREATE`, `i2pService` polls the i2pd web console at `http://127.0
 
 If the web console is unreachable (e.g., it's disabled), the check falls back to SAM connected status.
 
+## SAM Proxy Security
+
+The SAM proxy (`sam-proxy/proxy.mjs`) now includes:
+
+- **Token auth** — clients must authenticate with a token
+- **Rate limiting** — prevents connection flooding
+- **Command whitelist** — only allowed SAM commands pass through
+- **Origin validation** — restricts which origins can connect
+- **Max frame size** — prevents oversized WebSocket frames
+
+## Bundled i2pd (Electron)
+
+The Electron app bundles i2pd as an `extraResource`. On launch, the Electron main process starts both i2pd and the SAM proxy internally. Users don't need to install or configure anything separately.
+
 ## Key Files
 
 | File | Description |
 |------|-------------|
-| `sam-proxy/proxy.mjs` | Node.js WebSocket-to-TCP bridge |
+| `sam-proxy/proxy.mjs` | Node.js WebSocket-to-TCP bridge (with auth/rate limiting) |
 | `app/src/services/i2pSam.ts` | SAM v3.1 protocol client |
-| `app/src/services/i2p.ts` | High-level I2P API (identity, peers, send/receive) |
+| `app/src/services/i2p.ts` | High-level I2P API (identity, peers, send/receive, accept loop) |
+| `app/src/services/samNative.ts` | Native SAM plugin for Android (direct TCP) |
 | `app/src/utils/base32.ts` | RFC 4648 Base32 + base64 helpers |

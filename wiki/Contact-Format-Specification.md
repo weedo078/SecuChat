@@ -106,6 +106,10 @@ Before saving an imported contact, `cryptoService.validatePublicKey()` is called
 
 The fingerprint field is stored as provided. Cross-checking the provided fingerprint against the parsed key fingerprint is left to the user (show the fingerprint in the UI and verify out-of-band).
 
+## Verification Data
+
+Contacts can be accompanied by **safety number** verification data. After importing a contact, use the `contactVerification` service to generate a safety number from both PGP fingerprints. This produces a QR code and a 6-word phrase for out-of-band verification. See [Adding Contacts](Adding-Contacts) for the verification workflow.
+
 ---
 
 ## File Export

@@ -61,6 +61,25 @@ After adding a contact, their status is shown as:
 
 Status is not persisted — it resets to `unknown` on each app restart.
 
+## Contact Verification (Safety Numbers)
+
+After adding a contact, you can verify their identity using **safety numbers**:
+
+1. Open the contact's chat → tap the verification icon
+2. A **safety number** is generated from both your PGP fingerprints
+3. Compare the safety number with your contact through a trusted out-of-band channel
+
+Two verification methods are available:
+
+| Method | Description |
+|--------|-------------|
+| **QR code** | Scan each other's QR codes in person |
+| **6-word phrase** | Human-readable phrase derived from the safety number — read it aloud or compare manually |
+
+Verified contacts show a verification badge in the chat. If either party's keys change, the safety number changes and the badge is removed — alerting you to potential man-in-the-middle interference.
+
+---
+
 ## Troubleshooting
 
 **"Export not possible — I2P never connected"**

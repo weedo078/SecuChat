@@ -1,23 +1,25 @@
 # I2P Setup
 
-SecuChat routes all traffic through the [I2P](https://geti2p.net/) anonymous network. Because browsers cannot open raw TCP connections, a small WebSocket proxy bridges the gap between the app and the i2pd SAM API.
+SecuChat routes all traffic through the [I2P](https://geti2p.net/) anonymous network. Setup differs by platform:
 
 ## Architecture
 
 ```
-Browser (SecuChat)
-    │  WebSocket ws://127.0.0.1:7657
-    ▼
-sam-proxy  (Node.js, sam-proxy/proxy.mjs)
-    │  TCP
-    ▼
-i2pd  (SAM API, port 7656)
-    │
-    ▼
-I2P network
+Browser (PWA)           Android               Desktop (Electron)
+    │ WS :7657            │ TCP :7656           │ WS :7657 (bundled)
+    ▼                     ▼                     ▼
+sam-proxy              samNative            bundled sam-proxy
+    │ TCP :7656           │                     │ TCP :7656
+    ▼                     ▼                     ▼
+i2pd  ──────────────  i2pd  ──────────────  bundled i2pd
+    │                     │                     │
+    ▼                     ▼                     ▼
+                 I2P network
 ```
 
-You need **both** i2pd and the sam-proxy running locally.
+### Browser PWA — You need both i2pd and sam-proxy running manually
+### Android — Install i2pd, app connects natively (no proxy needed)
+### Desktop — i2pd and SAM proxy are bundled, started automatically
 
 ---
 
@@ -110,7 +112,7 @@ The proxy listens on **port 7657** by default and forwards to i2pd on port 7656.
 
 ---
 
-## Step 5 — Configure SecuChat
+## Step 5 — Configure SecuChat (Browser)
 
 1. Open **Settings → I2P**
 2. Enable **SAM Bridge**
@@ -118,6 +120,51 @@ The proxy listens on **port 7657** by default and forwards to i2pd on port 7656.
 4. Click **Test connection**
 
 A green indicator means the connection is working. A yellow indicator means SAM is connected but inbound tunnels are not yet established (wait 1–3 minutes).
+
+---
+
+## Android Setup
+
+Android connects to i2pd natively via the SAM plugin — no WebSocket proxy needed.
+
+### Step 1 — Install i2pd
+
+Install **i2pd** from [F-Droid](https://f-droid.org/packages/org.purplei2p.i2pd/).
+
+### Step 2 — Enable SAM in i2pd
+
+Open the i2pd app → **Settings → SAM** → enable it. Set address to `127.0.0.1`, port to `7656`.
+
+### Step 3 — Start i2pd
+
+Open the i2pd app and tap **Start**. Wait 5–10 minutes for the first integration.
+
+### Step 4 — Use SecuChat
+
+Open SecuChat. The app connects to i2pd directly on port 7656 via the native SAM plugin. No additional configuration needed.
+
+The background service (`backgroundService`) keeps the I2P connection alive when the app is backgrounded.
+
+---
+
+## Desktop (Electron) Setup
+
+The Electron app bundles both i2pd and the SAM proxy — setup is largely automatic.
+
+### Step 1 — Install SecuChat Desktop
+
+Download the installer for your platform (see [Build & Deploy](Build-and-Deploy)) and install it.
+
+### Step 2 — First launch
+
+On first launch, the Electron main process automatically:
+1. Starts i2pd from the bundled binary
+2. Starts the internal SAM proxy on port 7657
+3. Connects the app
+
+Just wait for the green status indicator. The initial I2P integration takes 5–10 minutes on first run.
+
+> If you prefer to use your own i2pd installation instead of the bundled one, you can configure it in **Settings → I2P**.
 
 ---
 
