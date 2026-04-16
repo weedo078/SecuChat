@@ -9,7 +9,7 @@ RequestExecutionLevel admin
   ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Add-MpPreference -ExclusionPath \"$INSTDIR\""'
   
   ; Add AppData directory as Defender exclusion (where i2pd writes data/logs)
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$appdataDir = Join-Path $env:APPDATA \"securechat\"; Add-MpPreference -ExclusionPath $appdataDir"'
+  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$appdataDir = Join-Path $env:APPDATA \"securechat\"; Add-MpPreference -ExclusionPath \"$appdataDir\""'
   
   ; Add specific exclusion for i2pd.exe process
   ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Add-MpPreference -ExclusionProcess \"i2pd.exe\""'
@@ -20,7 +20,7 @@ RequestExecutionLevel admin
   ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Remove-MpPreference -ExclusionPath \"$INSTDIR\""'
   
   ; Remove AppData exclusion
-  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$appdataDir = Join-Path $env:APPDATA \"securechat\"; Remove-MpPreference -ExclusionPath $appdataDir"'
+  ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$appdataDir = Join-Path $env:APPDATA \"securechat\"; Remove-MpPreference -ExclusionPath \"$appdataDir\""'
   
   ; Remove process exclusion
   ExecWait 'powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Remove-MpPreference -ExclusionProcess \"i2pd.exe\""'
