@@ -129,9 +129,9 @@ export function NotificationSettings({ className }: NotificationSettingsProps) {
     switch (permission) {
       case 'granted':
         return {
-          icon: <Check className="h-4 w-4 text-green-500" />,
+          icon: <Check className="h-4 w-4 text-teal-400" />,
           text: t('notifications.permissionGranted'),
-          color: 'text-green-500',
+          color: 'text-teal-400',
         };
       case 'denied':
         return {

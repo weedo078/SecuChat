@@ -13,9 +13,9 @@ export function AnonymityBadge({ level, size = 'sm', showText = false }: Anonymi
   const config = {
     green: {
       icon: Shield,
-      color: 'text-green-500',
-      bgColor: 'bg-green-500/10',
-      borderColor: 'border-green-500/30',
+      color: 'text-teal-400',
+      bgColor: 'bg-teal-400/10',
+      borderColor: 'border-teal-400/30',
       text: t('anonymity.anonymous'),
       description: t('anonymity.anonymousDesc'),
     },

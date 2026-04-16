@@ -396,7 +396,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   // ── Anonymity display ──────────────────────────────────────────────────────
 
   const anonymity = i2pStatus?.samConnected
-    ? { icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />, text: t('addContact.anonymous'), color: 'text-green-500', description: t('addContact.anonymousDesc') }
+    ? { icon: <Shield className="h-4 w-4 text-teal-400" aria-hidden="true" />, text: t('addContact.anonymous'), color: 'text-teal-400', description: t('addContact.anonymousDesc') }
     : { icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />, text: t('addContact.notConnected'), color: 'text-red-500', description: t('addContact.notConnectedDesc') };
 
   return (
@@ -477,10 +477,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
               </>
             ) : (
               <div className="space-y-4">
-                <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
+                <div className="p-4 bg-teal-400/10 rounded-lg border border-teal-400/30">
                   <div className="flex items-center gap-2 mb-3">
-                    <Check className="h-5 w-5 text-green-500" aria-hidden="true" />
-                    <p className="font-medium text-green-500">{t('addContact.contactDetected')}</p>
+                    <Check className="h-5 w-5 text-teal-400" aria-hidden="true" />
+                    <p className="font-medium text-teal-400">{t('addContact.contactDetected')}</p>
                   </div>
                   <div className="space-y-1.5 text-sm">
                     <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.metadata.username}</span></p>

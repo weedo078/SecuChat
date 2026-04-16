@@ -99,7 +99,7 @@ export function ContactVerificationDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             {trustLevel === 'verified' ? (
-              <ShieldCheck className="h-5 w-5 text-green-500" />
+              <ShieldCheck className="h-5 w-5 text-teal-400" />
             ) : (
               <ShieldAlert className="h-5 w-5 text-yellow-500" />
             )}
@@ -193,7 +193,7 @@ export function VerificationBadge({ contactId }: { contactId: string }) {
 
   if (trustLevel === 'verified') {
     return (
-      <span className="text-green-500 flex items-center gap-1 text-xs">
+      <span className="text-teal-400 flex items-center gap-1 text-xs">
         <ShieldCheck className="h-3 w-3" />
         {t('verification.verified')}
       </span>

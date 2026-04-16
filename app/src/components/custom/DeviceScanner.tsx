@@ -130,8 +130,8 @@ export function DeviceScanner({ onDevicePaired }: DeviceScannerProps) {
   if (success) {
     return (
       <div className="text-center py-8">
-        <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-          <Check className="h-8 w-8 text-green-500" />
+        <div className="w-16 h-16 rounded-full bg-teal-400/10 flex items-center justify-center mx-auto mb-4">
+          <Check className="h-8 w-8 text-teal-400" />
         </div>
         <p className="font-medium">Gerät erfolgreich verbunden!</p>
       </div>

@@ -355,7 +355,7 @@ export function MobileChatList({
                       <span
                         className={cn(
                           'absolute bottom-0 right-0 h-3 w-3 rounded-full border-2',
-                          isActive ? 'border-primary bg-green-400' : 'border-card bg-green-500'
+                          isActive ? 'border-primary bg-teal-300' : 'border-card bg-teal-400'
                         )}
                         aria-label={t('common.online')}
                       />
@@ -440,7 +440,7 @@ export function MobileEmptyState() {
       <p className="text-center mb-6">{t('chat.welcomeDescription')}</p>
       <div className="flex flex-col items-center gap-2 text-sm">
         <div className="flex items-center gap-2">
-          <div className="h-2 w-2 rounded-full bg-green-500" />
+          <div className="h-2 w-2 rounded-full bg-teal-400" />
           <span>{t('chat.pgpActive')}</span>
         </div>
       </div>

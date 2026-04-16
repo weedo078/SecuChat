@@ -197,7 +197,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                   </Avatar>
                   {chat.contact?.status === 'online' && (
                     <span
-                      className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-card"
+                      className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-teal-400 border-2 border-card"
                       aria-label={t('common.online')}
                       role="status"
                     />

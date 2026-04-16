@@ -477,10 +477,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
             {/* Validation info */}
             {restoreValidation?.valid && (
-              <div className="p-4 bg-green-500/10 rounded-lg space-y-1">
+              <div className="p-4 bg-teal-400/10 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span className="font-medium text-green-500">{t('onboarding.validBackup')}</span>
+                  <Check className="h-4 w-4 text-teal-400" />
+                  <span className="font-medium text-teal-400">{t('onboarding.validBackup')}</span>
                 </div>
                 {restoreValidation.username && (
                   <p className="text-sm text-muted-foreground">{t('onboarding.user', { name: restoreValidation.username })}</p>
@@ -714,8 +714,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="p-4 bg-green-500/10 rounded-lg text-center">
-                    <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                  <div className="p-4 bg-teal-400/10 rounded-lg text-center">
+                    <Check className="h-8 w-8 text-teal-400 mx-auto mb-2" />
                     <p className="font-medium">{t('onboarding.keysCreated')}</p>
                   </div>
 
@@ -1044,9 +1044,9 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
       )}
 
       {success && (
-        <Alert className="bg-green-500/10 border-green-500/30">
-          <Check className="h-4 w-4 text-green-500" />
-          <AlertDescription className="text-green-500">{t('onboarding.contactImported')}</AlertDescription>
+        <Alert className="bg-teal-400/10 border-teal-400/30">
+          <Check className="h-4 w-4 text-teal-400" />
+          <AlertDescription className="text-teal-400">{t('onboarding.contactImported')}</AlertDescription>
         </Alert>
       )}
 

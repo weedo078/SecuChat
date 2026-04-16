@@ -132,7 +132,7 @@ export function UpdateNotification() {
         {updateState.status === 'downloaded' && (
           <div className="space-y-3">
             <div className="flex items-start gap-3">
-              <CheckCircle className="h-5 w-5 text-green-500 mt-0.5" />
+              <CheckCircle className="h-5 w-5 text-teal-400 mt-0.5" />
               <div className="flex-1">
                 <p className="font-medium text-sm">{t('update.ready')}</p>
                 <p className="text-xs text-muted-foreground">

@@ -10,7 +10,7 @@
     --card-foreground: 210 20% 96%;
     --popover: 220 18% 10%;
     --popover-foreground: 210 20% 96%;
-    --primary: 142 76% 45%;
+    --primary: 170 70% 51%;
     --primary-foreground: 220 20% 8%;
     --secondary: 220 15% 15%;
     --secondary-foreground: 210 20% 96%;
@@ -22,16 +22,16 @@
     --destructive-foreground: 210 20% 96%;
     --border: 220 15% 18%;
     --input: 220 15% 18%;
-    --ring: 142 76% 45%;
+    --ring: 170 70% 51%;
     --radius: 0.625rem;
     --sidebar-background: 220 18% 8%;
     --sidebar-foreground: 210 20% 96%;
-    --sidebar-primary: 142 76% 45%;
+    --sidebar-primary: 170 70% 51%;
     --sidebar-primary-foreground: 220 20% 8%;
     --sidebar-accent: 220 15% 15%;
     --sidebar-accent-foreground: 210 20% 96%;
     --sidebar-border: 220 15% 18%;
-    --sidebar-ring: 142 76% 45%;
+    --sidebar-ring: 170 70% 51%;
   }
 }
 
@@ -139,7 +139,7 @@
 
   /* Security-focused styles */
   .security-border {
-    @apply border border-green-500/30;
+    @apply border border-teal-400/30;
   }
   
   .security-glow {

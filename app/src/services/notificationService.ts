@@ -289,7 +289,7 @@ async function flushPendingNotifications(settings: NotificationSettings): Promis
       body: notificationBody,
       largeBody: pending.lastMessage,
       summaryText: `${pending.messageCount} Nachrichten`,
-      iconColor: '#10b981', // emerald-500
+      iconColor: '#2dd4bf', // emerald-500
       sound: settings.sound ? 'default' : undefined,
       group: contactId, // Group by contact
       // Deep link to open specific chat
@@ -421,7 +421,7 @@ export async function createNotificationChannels(): Promise<void> {
           sound: 'default',
           vibration: true,
           lights: true,
-          lightColor: '#10b981',
+          lightColor: '#2dd4bf',
         },
       });
 
@@ -436,7 +436,7 @@ export async function createNotificationChannels(): Promise<void> {
           sound: 'default',
           vibration: true,
           lights: true,
-          lightColor: '#10b981',
+          lightColor: '#2dd4bf',
         },
       });
 
