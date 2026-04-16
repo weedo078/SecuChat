@@ -10,9 +10,12 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import com.secuchat.app.plugin.SAMPlugin.events.SAMEventEmitter;
 
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Capacitor Plugin for I2P SAM (Simple Anonymous Messaging) v3.1 protocol.
@@ -35,6 +38,11 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     private final ExecutorService executorService;
     private final SAMEventEmitter eventEmitter;
     private volatile String currentSessionId = null; // Track the current session nickname (thread-safe)
+    private final ConcurrentHashMap<Integer, SAMStream> activeStreams = new ConcurrentHashMap<>();
+    private final AtomicBoolean acceptLoopActive = new AtomicBoolean(false);
+    private final AtomicInteger streamIdCounter = new AtomicInteger(0);
+    private String samHost;
+    private int samPort;
 
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
@@ -133,6 +141,12 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
+                acceptLoopActive.set(false);
+                for (SAMStream stream : activeStreams.values()) {
+                    try { stream.close(); } catch (Exception e) { /* ignore */ }
+                }
+                activeStreams.clear();
+
                 socketManager.disconnect();
 
                 // Clear session ID on disconnect
@@ -411,6 +425,8 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     result.put("success", true);
                     // Store the session ID for later use in STREAM CONNECT/ACCEPT
                     currentSessionId = nickname;
+                    this.samHost = socketManager.getHost();
+                    this.samPort = socketManager.getPort();
                     Log.d(TAG, "Session created with ID: " + nickname);
                 } else {
                     result.put("success", false);
@@ -426,11 +442,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         });
     }
 
-    private int nextStreamId = 1;
-
-    private synchronized int generateStreamId() {
-        return nextStreamId++;
-    }
+    private int generateStreamId() { return streamIdCounter.incrementAndGet(); }
 
     /**
      * Connect to a remote peer via STREAM CONNECT.
@@ -449,28 +461,33 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
-                // Use the stored session ID from createSession
                 String sessionId = currentSessionId != null ? currentSessionId : "secuchat";
+                SAMStream stream = new SAMStream(sessionId, samHost, samPort);
                 int streamId = generateStreamId();
-                String cmd = String.format("STREAM CONNECT ID=%s DESTINATION=%s SILENT=false",
-                    sessionId, destination);
-                Log.d(TAG, "STREAM CONNECT command: " + cmd + " (timeout: " + timeout + "ms)");
-                String response = socketManager.sendCommandAndWait(cmd, timeout);
+
+                stream.connect();
+                stream.streamConnect(destination);
+
+                stream.setMessageListener(new SAMStream.MessageListener() {
+                    @Override public void onMessage(String data) {
+                        eventEmitter.emitMessage(destination, data, streamId);
+                    }
+                    @Override public void onConnected() {}
+                    @Override public void onDisconnected() {
+                        activeStreams.remove(streamId);
+                        eventEmitter.emitStreamClosed(streamId, "peer disconnected");
+                    }
+                    @Override public void onError(String error) {
+                        eventEmitter.emitError(error, "STREAM_ERROR", streamId);
+                    }
+                });
+
+                activeStreams.put(streamId, stream);
 
                 JSObject result = new JSObject();
-
-                if (response != null && response.contains("RESULT=OK")) {
-                    result.put("success", true);
-                    result.put("streamId", streamId);
-                    Log.d(TAG, "STREAM CONNECT successful, streamId: " + streamId);
-                } else {
-                    result.put("success", false);
-                    result.put("error", response != null ? response : "No response");
-                    Log.e(TAG, "STREAM CONNECT failed: " + response);
-                }
-
+                result.put("success", true);
+                result.put("streamId", streamId);
                 call.resolve(result);
-
             } catch (Exception e) {
                 Log.e(TAG, "STREAM CONNECT failed: " + e.getMessage(), e);
                 call.reject("STREAM CONNECT failed: " + e.getMessage());
@@ -493,19 +510,47 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         }
 
         executorService.execute(() -> {
-            try {
-                // STREAM ACCEPT is handled asynchronously - we just initiate it
-                String cmd = String.format("STREAM ACCEPT ID=%s SILENT=false", nickname);
-                socketManager.sendCommand(cmd);
+            acceptLoopActive.set(true);
+            while (acceptLoopActive.get()) {
+                SAMStream acceptStream = null;
+                try {
+                    String sessionId = currentSessionId != null ? currentSessionId : nickname;
+                    acceptStream = new SAMStream(sessionId, samHost, samPort);
+                    acceptStream.connect();
+                    String peerDest = acceptStream.streamAccept();
 
-                JSObject result = new JSObject();
-                result.put("success", true);
-                call.resolve(result);
+                    int streamId = generateStreamId();
 
-            } catch (Exception e) {
-                Log.e(TAG, "STREAM ACCEPT failed: " + e.getMessage(), e);
-                call.reject("STREAM ACCEPT failed: " + e.getMessage());
+                    final String dest = peerDest;
+                    acceptStream.setMessageListener(new SAMStream.MessageListener() {
+                        @Override public void onMessage(String data) {
+                            eventEmitter.emitMessage(dest, data, streamId);
+                        }
+                        @Override public void onConnected() {}
+                        @Override public void onDisconnected() {
+                            activeStreams.remove(streamId);
+                            eventEmitter.emitStreamClosed(streamId, "peer disconnected");
+                        }
+                        @Override public void onError(String error) {
+                            eventEmitter.emitError(error, "STREAM_ERROR", streamId);
+                        }
+                    });
+
+                    activeStreams.put(streamId, acceptStream);
+                    eventEmitter.emitStreamConnected(peerDest, streamId);
+                    Log.i(TAG, "Accepted incoming connection, streamId=" + streamId);
+                } catch (Exception e) {
+                    Log.e(TAG, "Accept loop error: " + e.getMessage(), e);
+                    if (acceptStream != null) acceptStream.close();
+                    if (!acceptLoopActive.get()) break;
+                    try { Thread.sleep(2000); } catch (InterruptedException ie) { break; }
+                }
             }
+            Log.i(TAG, "Accept loop stopped");
+
+            JSObject result = new JSObject();
+            result.put("success", true);
+            call.resolve(result);
         });
     }
 
@@ -529,18 +574,19 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             return;
         }
 
-        final String finalData = data;
-
         executorService.execute(() -> {
             try {
-                // SAM sends data raw over the socket after STREAM CONNECT/ACCEPT
-                // For now, we'll send it as a command to be written
-                boolean success = socketManager.sendData(finalData);
+                SAMStream stream = activeStreams.get(streamId);
+                if (stream == null) {
+                    call.reject("Stream not found: " + streamId);
+                    return;
+                }
+                boolean success = stream.send(data);
 
                 JSObject result = new JSObject();
                 result.put("success", success);
                 if (success) {
-                    result.put("bytesSent", finalData.length());
+                    result.put("bytesSent", data.length());
                 }
                 call.resolve(result);
 
@@ -567,8 +613,8 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
         executorService.execute(() -> {
             try {
-                // Close the underlying socket connection for this stream
-                socketManager.closeStream();
+                SAMStream stream = activeStreams.remove(streamId);
+                if (stream != null) stream.close();
 
                 JSObject result = new JSObject();
                 result.put("success", true);
