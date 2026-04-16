@@ -171,47 +171,8 @@ export async function importContact(): Promise<{
       return { success: false, error: 'Invalid JSON file' };
     }
 
-    // Handle v1.0 format (full export from AddContactDialog)
-    if (contactData.version === '1.0' && contactData.metadata && contactData.keys && contactData.network) {
-      const v1 = contactData as {
-        version: string;
-        metadata: { username: string; timestamp: string; deviceId: string };
-        keys: { pgpPublicKey: string; fingerprint: string };
-        network: { p2pIdentifier: string; protocol: string; i2pAddress: string };
-      };
-
-      if (!v1.keys.fingerprint) {
-        return { success: false, error: 'Fehlender Fingerprint — Kontaktdatei möglicherweise manipuliert' };
-      }
-      if (!v1.network.i2pAddress) {
-        return { success: false, error: 'Fehlende I2P-Adresse — ungültige Kontaktdatei' };
-      }
-
-      if (v1.keys.pgpPublicKey) {
-        try {
-          const { valid } = await cryptoService.validatePublicKey(v1.keys.pgpPublicKey);
-          if (!valid) {
-            return { success: false, error: 'Ungültiger PGP-Schlüssel in Kontaktdatei' };
-          }
-        } catch {
-          return { success: false, error: 'PGP-Schlüssel konnte nicht validiert werden' };
-        }
-      }
-
-      return {
-        success: true,
-        data: {
-          name: v1.metadata.username || '',
-          i2pAddress: v1.network.i2pAddress,
-          fingerprint: v1.keys.fingerprint,
-          pgpPublicKey: v1.keys.pgpPublicKey || undefined,
-        },
-      };
-    }
-
-    // Handle v2 compact format
+    // v2 format only
     if (contactData.v === '2' && contactData.t === 'sc') {
-      // Validate required fields
       if (!contactData.f) {
         return { success: false, error: 'Fehlender Fingerprint — Kontaktdatei möglicherweise manipuliert' };
       }
@@ -219,7 +180,6 @@ export async function importContact(): Promise<{
         return { success: false, error: 'Fehlende I2P-Adresse — ungültige Kontaktdatei' };
       }
 
-      // Validate PGP key if present
       if (contactData.k) {
         try {
           const { valid } = await cryptoService.validatePublicKey(contactData.k);

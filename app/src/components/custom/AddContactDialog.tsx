@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
+import { Upload, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
 import { cryptoService } from '@/services/crypto';
@@ -16,30 +15,11 @@ interface AddContactDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onContactAdded?: (contact: Contact) => void;
-  initialTab?: 'import' | 'share' | 'manual';
+  initialTab?: 'import' | 'share';
 }
 
-/** Internal contact data representation */
+/** v2 contact format - the canonical format for .secuchat files */
 interface ContactData {
-  version: '1.0';
-  metadata: {
-    timestamp: string;
-    username: string;
-    deviceId: string;
-  };
-  keys: {
-    pgpPublicKey: string;
-    fingerprint: string;
-  };
-  network: {
-    p2pIdentifier: string;
-    protocol: string;
-    i2pAddress: string;
-  };
-}
-
-/** v2 compact format - the canonical export format for .secuchat files */
-interface ContactDataLegacy {
   v: '2';
   t: 'sc';
   n: string;
@@ -62,11 +42,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(false);
-
-  const [manualName, setManualName] = useState('');
-  const [manualI2p, setManualI2p] = useState('');
-  const [manualPgp, setManualPgp] = useState('');
-  const [manualError, setManualError] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -94,38 +69,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const parseContactData = (raw: string): ContactData | null => {
     try {
       const data = JSON.parse(raw);
-      console.log('[Import] Parsed JSON keys:', Object.keys(data));
-
-      // v2 format (current)
-      if (data.v === '2' && data.t === 'sc') {
-        console.log('[Import] Recognized as v2 format');
-        const v2 = data as ContactDataLegacy;
-        return {
-          version: '1.0',
-          metadata: {
-            timestamp: new Date(v2.ts || Date.now()).toISOString(),
-            username: v2.n,
-            deviceId: '',
-          },
-          keys: {
-            pgpPublicKey: v2.k || '',
-            fingerprint: v2.f,
-          },
-          network: {
-            p2pIdentifier: '',
-            protocol: v2.i ? 'i2p-webrtc' : 'webrtc',
-            i2pAddress: v2.i,
-          },
-        };
-      }
-
-      // Legacy v1.0 format
-      if (data.version === '1.0' && data.metadata && data.keys && data.network) {
-        console.log('[Import] Recognized as legacy v1.0 format');
+      if (data.v === '2' && data.t === 'sc' && data.f && data.i) {
         return data as ContactData;
       }
-
-      console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
       return null;
     } catch (e) {
       console.error('[Import] JSON parse error:', e);
@@ -145,23 +91,14 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       const result = await importContact();
 
       if (result.success && result.data) {
-        // Convert to ContactData format
         const contact: ContactData = {
-          version: '1.0',
-          metadata: {
-            timestamp: new Date().toISOString(),
-            username: result.data.name,
-            deviceId: '',
-          },
-          keys: {
-            pgpPublicKey: result.data.pgpPublicKey || '',
-            fingerprint: result.data.fingerprint,
-          },
-          network: {
-            p2pIdentifier: '',
-            protocol: 'i2p',
-            i2pAddress: result.data.i2pAddress,
-          },
+          v: '2',
+          t: 'sc',
+          n: result.data.name || '',
+          i: result.data.i2pAddress,
+          f: result.data.fingerprint,
+          k: result.data.pgpPublicKey,
+          ts: Date.now(),
         };
         setImportedContact(contact);
       } else {
@@ -195,7 +132,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       });
 
       console.log('[Import] Contact parse result:', contact
-        ? { version: contact.version, username: contact.metadata.username, hasKey: !!contact.keys.pgpPublicKey }
+        ? { name: contact.n, hasKey: !!contact.k }
         : null);
 
       if (contact) {
@@ -218,9 +155,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     if (!importedContact) return;
     setIsAddingContact(true);
     try {
-      if (importedContact.keys.pgpPublicKey) {
-        console.log('[Import] Validating PGP key, length:', importedContact.keys.pgpPublicKey.length, 'starts with:', importedContact.keys.pgpPublicKey.slice(0, 30));
-        const validation = await cryptoService.validatePublicKey(importedContact.keys.pgpPublicKey);
+      if (importedContact.k) {
+        console.log('[Import] Validating PGP key, length:', importedContact.k.length, 'starts with:', importedContact.k.slice(0, 30));
+        const validation = await cryptoService.validatePublicKey(importedContact.k);
         console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
           setImportError(t('addContact.invalidPgpKey'));
@@ -232,11 +169,11 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
       const contact: Contact = {
         id: crypto.randomUUID(),
-        name: importedContact.metadata.username,
-        pgpPublicKey: importedContact.keys.pgpPublicKey || '',
-        fingerprint: importedContact.keys.fingerprint,
-        p2pIdentifier: importedContact.network.p2pIdentifier || importedContact.network.i2pAddress,
-        i2pAddress: importedContact.network.i2pAddress,
+        name: importedContact.n,
+        pgpPublicKey: importedContact.k || '',
+        fingerprint: importedContact.f,
+        p2pIdentifier: importedContact.i,
+        i2pAddress: importedContact.i,
         status: 'unknown',
       };
 
@@ -244,10 +181,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       console.log('[AddContact] Saving contact to storage:', contact.name);
       await addContact(contact);
 
-      if (i2pStatus?.samConnected && importedContact.network.i2pAddress) {
-        console.log('[AddContact] I2P connected, attempting peer connection to:', importedContact.network.i2pAddress.slice(0, 20) + '...');
+      if (i2pStatus?.samConnected && importedContact.i) {
+        console.log('[AddContact] I2P connected, attempting peer connection to:', importedContact.i.slice(0, 20) + '...');
         try {
-          await i2pService.connectToPeer(importedContact.network.i2pAddress);
+          await i2pService.connectToPeer(importedContact.i);
           console.log('[AddContact] Peer connected successfully, updating status to online');
           const onlineContact = { ...contact, status: 'online' as const };
           await updateContact(onlineContact);
@@ -334,52 +271,11 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     });
   };
 
-  // ── Manual ─────────────────────────────────────────────────────────────────
-
-  const addManualContact = async () => {
-    if (!manualName || !manualI2p || !manualPgp) {
-      setManualError(t('addContact.allFieldsRequired'));
-      return;
-    }
-    setIsAddingContact(true);
-    try {
-      const validation = await cryptoService.validatePublicKey(manualPgp);
-      if (!validation.valid) {
-        setManualError(t('addContact.invalidPgpKeyManual'));
-        return;
-      }
-      const contact: Contact = {
-        id: crypto.randomUUID(),
-        name: manualName,
-        pgpPublicKey: manualPgp,
-        fingerprint: validation.fingerprint!,
-        p2pIdentifier: manualI2p,
-        i2pAddress: manualI2p,
-        status: 'unknown',
-      };
-      await addContact(contact);
-      if (i2pStatus?.samConnected) {
-        try {
-          await i2pService.connectToPeer(manualI2p);
-          await updateContact({ ...contact, status: 'online' as const });
-        } catch { /* I2P not ready */ }
-      }
-      onContactAdded?.(contact);
-      resetAndClose();
-    } finally {
-      setIsAddingContact(false);
-    }
-  };
-
   // ── Reset ──────────────────────────────────────────────────────────────────
 
   const resetAndClose = () => {
     setImportedContact(null);
     setImportError(null);
-    setManualError(null);
-    setManualName('');
-    setManualI2p('');
-    setManualPgp('');
     setActiveTab('import');
     setIsAddingContact(false);
     onClose();
@@ -411,7 +307,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="import">
               <Upload className="h-4 w-4 mr-2" aria-hidden="true" />
               {t('addContact.importTab')}
@@ -419,10 +315,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             <TabsTrigger value="share">
               <FileDown className="h-4 w-4 mr-2" aria-hidden="true" />
               {t('addContact.shareTab')}
-            </TabsTrigger>
-            <TabsTrigger value="manual">
-              <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
-              {t('addContact.manualTab')}
             </TabsTrigger>
           </TabsList>
 
@@ -475,10 +367,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                     <p className="font-medium text-teal-400">{t('addContact.contactDetected')}</p>
                   </div>
                   <div className="space-y-1.5 text-sm">
-                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.metadata.username}</span></p>
-                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.network.i2pAddress.slice(0, 40)}…</p>
-                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.keys.fingerprint.slice(0, 16)}…</p>
-                    {!importedContact.keys.pgpPublicKey && (
+                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.n}</span></p>
+                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.i.slice(0, 40)}…</p>
+                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.f.slice(0, 16)}…</p>
+                    {!importedContact.k && (
                       <p className="text-xs text-yellow-500 mt-2">{t('addContact.noPgpKey')}</p>
                     )}
                   </div>
@@ -549,54 +441,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             )}
           </TabsContent>
 
-          {/* ── Manual Tab ── */}
-          <TabsContent value="manual" className="space-y-4">
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Name</label>
-                <Input
-                  placeholder={t('addContact.contactName')}
-                  value={manualName}
-                  onChange={(e) => setManualName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">{t('addContact.i2pAddress')}</label>
-                <Input
-                  placeholder="xxxx...xxxx.b32.i2p"
-                  value={manualI2p}
-                  onChange={(e) => setManualI2p(e.target.value)}
-                  className="font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">{t('addContact.pgpPublicKey')}</label>
-                <textarea
-                  className="w-full h-32 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
-                  placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
-                  value={manualPgp}
-                  onChange={(e) => setManualPgp(e.target.value)}
-                />
-              </div>
-              <Button
-                className="w-full"
-                onClick={addManualContact}
-                disabled={!manualName || !manualI2p || !manualPgp || isAddingContact}
-              >
-                {isAddingContact ? (
-                  <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />{t('addContact.adding')}</>
-                ) : (
-                  <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />{t('addContact.addContact')}</>
-                )}
-              </Button>
-            </div>
-
-            {manualError && (
-              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
-                {manualError}
-              </div>
-            )}
-          </TabsContent>
         </Tabs>
       </DialogContent>
     </Dialog>
