@@ -19,7 +19,7 @@ interface AddContactDialogProps {
   initialTab?: 'import' | 'share' | 'manual';
 }
 
-/** New format (v1.0) */
+/** Internal contact data representation */
 interface ContactData {
   version: '1.0';
   metadata: {
@@ -38,7 +38,7 @@ interface ContactData {
   };
 }
 
-/** Legacy format (v2 compact) for backwards compatibility */
+/** v2 compact format - the canonical export format for .secuchat files */
 interface ContactDataLegacy {
   v: '2';
   t: 'sc';
@@ -96,33 +96,33 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       const data = JSON.parse(raw);
       console.log('[Import] Parsed JSON keys:', Object.keys(data));
 
-      // New format (v1.0)
-      if (data.version === '1.0' && data.metadata && data.keys && data.network) {
-        console.log('[Import] Recognized as v1.0 format');
-        return data as ContactData;
-      }
-
-      // Legacy compact format (v2)
+      // v2 format (current)
       if (data.v === '2' && data.t === 'sc') {
-        console.log('[Import] Recognized as legacy v2 format, converting...');
-        const legacy = data as ContactDataLegacy;
+        console.log('[Import] Recognized as v2 format');
+        const v2 = data as ContactDataLegacy;
         return {
           version: '1.0',
           metadata: {
-            timestamp: new Date(legacy.ts || Date.now()).toISOString(),
-            username: legacy.n,
+            timestamp: new Date(v2.ts || Date.now()).toISOString(),
+            username: v2.n,
             deviceId: '',
           },
           keys: {
-            pgpPublicKey: legacy.k || '',
-            fingerprint: legacy.f,
+            pgpPublicKey: v2.k || '',
+            fingerprint: v2.f,
           },
           network: {
             p2pIdentifier: '',
-            protocol: legacy.i ? 'i2p-webrtc' : 'webrtc',
-            i2pAddress: legacy.i,
+            protocol: v2.i ? 'i2p-webrtc' : 'webrtc',
+            i2pAddress: v2.i,
           },
         };
+      }
+
+      // Legacy v1.0 format
+      if (data.version === '1.0' && data.metadata && data.keys && data.network) {
+        console.log('[Import] Recognized as legacy v1.0 format');
+        return data as ContactData;
       }
 
       console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
@@ -313,21 +313,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
     // Use browser download for web/PWA
     const contactData = {
-      version: '1.0',
-      metadata: {
-        timestamp: new Date().toISOString(),
-        username: user.username,
-        deviceId: user.deviceId,
-      },
-      keys: {
-        pgpPublicKey: user.pgpPublicKey,
-        fingerprint: user.fingerprint,
-      },
-      network: {
-        p2pIdentifier: user.id,
-        protocol: user.i2pAddress ? 'i2p-webrtc' : 'webrtc',
-        i2pAddress: user.i2pAddress,
-      },
+      v: '2',
+      t: 'sc',
+      n: user.username,
+      i: user.i2pAddress || '',
+      f: user.fingerprint,
+      k: user.pgpPublicKey,
+      ts: Date.now(),
     };
     const blob = new Blob([JSON.stringify(contactData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);

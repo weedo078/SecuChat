@@ -162,18 +162,8 @@ export async function importContact(): Promise<{
     const content = atob(file.data);
 
     // Parse JSON
-    let contactData: {
-      v?: string;
-      t?: string;
-      n?: string;
-      i?: string;
-      f?: string;
-      k?: string;
-      name?: string;
-      i2pAddress?: string;
-      fingerprint?: string;
-      pgpPublicKey?: string;
-    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let contactData: any;
 
     try {
       contactData = JSON.parse(content);
