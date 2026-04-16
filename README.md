@@ -1,10 +1,12 @@
 # SecuChat 🔒
 
-![SecuChat Preview](https://i.imgur.com/mnWP6pn.png)
+<p align="center">
+  <img src="docs/banner.png" alt="SecuChat Banner" width="600">
+</p>
 
 **Private messenger without servers, without metadata, without compromises.**
 
-SecuChat is a desktop messaging app with end-to-end encryption (PGP) and anonymous routing via the I2P network. Your messages are only readable by you and your conversation partner – no one else can eavesdrop, not even us.
+SecuChat is a cross-platform messaging app with end-to-end encryption (PGP) and anonymous routing via the I2P network. Your messages are only readable by you and your conversation partner – no one else can eavesdrop, not even us.
 
 > ⚠️ **IMPORTANT NOTICE:** This app is still in active development and currently **not fully functional**. Basic features are implemented, but there are still bugs and incomplete features. Use at your own risk!
 
@@ -19,10 +21,18 @@ SecuChat is a desktop messaging app with end-to-end encryption (PGP) and anonymo
 | 🖥️ **No Servers** | Your data stays on your device – no cloud, no accounts |
 | 📁 **Contact Import** | Exchange contacts easily via `.secuchat` files |
 | 🖼️ **File Uploads** | Send images and files (up to 50MB) encrypted |
+| 📱 **Android Support** | Native Android app via Capacitor (direct TCP to SAM) |
 
 ---
 
 ## 📥 Download & Installation
+
+### Android
+1. Download the latest `.apk` from the [Releases page](https://github.com/weedo078/SecuChat/releases)
+2. Install [i2pd](https://github.com/PurpleI2P/i2pd/releases) from F-Droid or GitHub
+3. In i2pd settings: enable SAM (`SAM enabled = true`, port `7656`)
+4. Open the SecuChat APK and grant install permissions
+5. In SecuChat Settings → I2P: enable SAM, host `127.0.0.1`, port `7656`
 
 ### Windows
 1. Download the latest version from the [Releases page](https://github.com/weedo078/SecuChat/releases)
@@ -39,7 +49,7 @@ chmod +x SecuChat-*.AppImage
 sudo dpkg -i secuchat_*.deb
 ```
 
-> **Note:** i2pd is already included in all installers. No separate installation required!
+> **Note:** i2pd is already included in the Windows installer. On Android and Linux, install i2pd separately.
 
 ---
 
