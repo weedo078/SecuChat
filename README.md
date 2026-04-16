@@ -29,10 +29,8 @@ SecuChat is a cross-platform messaging app with end-to-end encryption (PGP) and 
 
 ### Android
 1. Download the latest `.apk` from the [Releases page](https://github.com/weedo078/SecuChat/releases)
-2. Install [i2pd](https://github.com/PurpleI2P/i2pd/releases) from F-Droid or GitHub
-3. In i2pd settings: enable SAM (`SAM enabled = true`, port `7656`)
-4. Open the SecuChat APK and grant install permissions
-5. In SecuChat Settings → I2P: enable SAM, host `127.0.0.1`, port `7656`
+2. Install the APK (grant install permissions if prompted)
+3. Follow the in-app setup to configure i2pd and I2P connectivity
 
 ### Windows
 1. Download the latest version from the [Releases page](https://github.com/weedo078/SecuChat/releases)
