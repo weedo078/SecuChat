@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { send } from '@lo-fi/qr-data-sync';
+import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import { StopCircle } from 'lucide-react';
 
@@ -16,39 +16,67 @@ interface AnimatedContactQRProps {
   };
 }
 
+const CHUNK_SIZE = 100;
+const FPS = 4;
+
+function splitIntoFrames(data: string, chunkSize: number): string[] {
+  const frames: string[] = [];
+  const totalFrames = Math.ceil(data.length / chunkSize);
+  for (let i = 0; i < totalFrames; i++) {
+    const chunk = data.slice(i * chunkSize, (i + 1) * chunkSize);
+    frames.push(JSON.stringify({ i, t: totalFrames, d: chunk.padEnd(chunkSize) }));
+  }
+  return frames;
+}
+
 export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
   const { t } = useTranslation();
-  const qrRef = useRef<HTMLDivElement>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isRunning, setIsRunning] = useState(true);
   const [frameInfo, setFrameInfo] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
+  const abortedRef = useRef(false);
+
+  const raw = JSON.stringify(contactData);
+  const frames = splitIntoFrames(raw, CHUNK_SIZE);
+
+  const renderFrame = useCallback(async (frameIndex: number) => {
+    if (!canvasRef.current || abortedRef.current) return;
+    const frame = frames[frameIndex % frames.length];
+    try {
+      await QRCode.toCanvas(canvasRef.current, frame, {
+        width: 280,
+        margin: 2,
+        color: { dark: '#000000', light: '#ffffff' },
+        errorCorrectionLevel: 'M',
+      });
+      setFrameInfo({ index: (frameIndex % frames.length) + 1, total: frames.length });
+    } catch (err) {
+      console.error('[AnimatedContactQR] Render error:', err);
+    }
+  }, [frames]);
 
   useEffect(() => {
-    if (!qrRef.current) return;
+    abortedRef.current = false;
+    let frameIndex = 0;
 
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const animate = async () => {
+      if (abortedRef.current) return;
+      await renderFrame(frameIndex);
+      frameIndex++;
+      if (!abortedRef.current) {
+        setTimeout(animate, 1000 / FPS);
+      }
+    };
 
-    send(contactData, qrRef.current, {
-      maxFramesPerSecond: 4,
-      frameTextChunkSize: 120,
-      signal: controller.signal,
-      onFrameRendered: (info) => {
-        setFrameInfo({ index: info.frameIndex + 1, total: info.frameCount });
-      },
-    }).catch((err) => {
-      if (err instanceof DOMException && err.name === 'AbortError') return;
-      console.error('[AnimatedContactQR] Error:', err);
-    });
+    animate();
 
     return () => {
-      controller.abort();
-      abortRef.current = null;
+      abortedRef.current = true;
     };
-  }, [contactData]);
+  }, [renderFrame]);
 
   const stop = () => {
-    abortRef.current?.abort();
+    abortedRef.current = true;
     setIsRunning(false);
   };
 
@@ -63,7 +91,9 @@ export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
   return (
     <div className="space-y-4">
       <div className="flex justify-center">
-        <div className="p-4 bg-white rounded-lg" ref={qrRef} />
+        <div className="p-4 bg-white rounded-lg">
+          <canvas ref={canvasRef} width={280} height={280} />
+        </div>
       </div>
       <div className="text-center text-sm text-muted-foreground">
         {frameInfo.total > 0 && (
