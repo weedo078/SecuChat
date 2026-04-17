@@ -499,13 +499,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ch.contactId === contact.id ? { ...ch, contact: updated } : ch
         ));
       } catch {
-        // Peer not reachable — mark as offline
-        const updated = { ...contact, status: 'offline' as const };
-        await storageService.saveContact(updated);
-        setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-        setChats(prev => prev.map(ch =>
-          ch.contactId === contact.id ? { ...ch, contact: updated } : ch
-        ));
+        // Don't immediately mark offline on first check — I2P tunnel build can take minutes.
+        // The periodic status check will handle offline detection after consecutive failures.
+        console.log(`[I2P Connect] ${contact.name} not yet reachable, keeping current status`);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
@@ -577,44 +573,65 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // In I2P, peers may be temporarily unreachable (LeaseSet propagation, network issues)
   // We continuously retry to detect when they come back online
   useEffect(() => {
-    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+    if (!i2pStatus?.samConnected) return;
 
-    // Track last retry time per contact to avoid hammering (10s minimum interval)
-    const lastRetryMap = new Map<string, number>();
+    // Track consecutive failures per contact — only mark offline after 3 failures
+    const consecutiveFailures = new Map<string, number>();
+    const FAILURE_THRESHOLD = 3;
 
     const interval = setInterval(() => {
-      contacts.forEach(async (contact) => {
-        if (!contact.i2pAddress) return;
+      // Read contacts from current state via functional updater pattern
+      setContacts(prevContacts => {
+        // Process contacts that have an I2P address
+        const contactsToCheck = prevContacts.filter(c => c.i2pAddress);
+        if (contactsToCheck.length === 0) return prevContacts;
 
-        // Don't retry same contact within 10 seconds
-        const now = Date.now();
-        const lastRetry = lastRetryMap.get(contact.id) || 0;
-        if (now - lastRetry < 10000) return;
-        lastRetryMap.set(contact.id, now);
-        try {
-          console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
-          await i2pService.connectToPeer(contact.i2pAddress);
-          console.log(`[Status Check] ${contact.name} is online`);
-          // Still online - update lastSeen
-          const updated = { ...contact, lastSeen: new Date().toISOString() };
-          await storageService.saveContact(updated);
-          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-        } catch (err) {
-          // Mark as offline
-          console.log(`[Status Check] ${contact.name} unreachable, marking offline:`, err instanceof Error ? err.message : err);
-          const updated = { ...contact, status: 'offline' as const };
-          await storageService.saveContact(updated);
-          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-          setChats(prev => prev.map(ch =>
-            ch.contactId === contact.id ? { ...ch, contact: updated } : ch
-          ));
-        }
+        // Fire off async checks (don't await — return current state immediately)
+        contactsToCheck.forEach(async (contact) => {
+          try {
+            console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
+            await i2pService.connectToPeer(contact.i2pAddress);
+            console.log(`[Status Check] ${contact.name} is online`);
+            // Reset failure counter on success
+            consecutiveFailures.delete(contact.id);
+            // Update lastSeen and ensure status is online
+            const updated = { ...contact, lastSeen: new Date().toISOString(), status: 'online' as const };
+            await storageService.saveContact(updated);
+            setContacts(prev => {
+              // Only update if still offline/unknown (avoid unnecessary re-renders)
+              const existing = prev.find(c => c.id === contact.id);
+              if (existing?.status === 'online') return prev;
+              return prev.map(c => c.id === contact.id ? updated : c);
+            });
+            setChats(prev => prev.map(ch =>
+              ch.contactId === contact.id && ch.contact?.status !== 'online'
+                ? { ...ch, contact: updated }
+                : ch
+            ));
+          } catch (err) {
+            const failures = (consecutiveFailures.get(contact.id) || 0) + 1;
+            consecutiveFailures.set(contact.id, failures);
+            console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD}):`, err instanceof Error ? err.message : err);
+            // Only mark offline after consecutive failures reach threshold
+            if (failures >= FAILURE_THRESHOLD) {
+              const updated = { ...contact, status: 'offline' as const };
+              await storageService.saveContact(updated);
+              setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+              setChats(prev => prev.map(ch =>
+                ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+              ));
+            }
+          }
+        });
+
+        // Return unchanged — actual updates happen in the async callbacks
+        return prevContacts;
       });
     }, 30000); // Check every 30 seconds
-    console.log('[Status Check] Started periodic status check (30s interval)');
+    console.log('[Status Check] Started periodic status check (30s interval, offline after 3 consecutive failures)');
 
     return () => clearInterval(interval);
-  }, [i2pStatus?.samConnected, contacts]);
+  }, [i2pStatus?.samConnected]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState
   useEffect(() => {
@@ -753,10 +770,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       savedMessage = message;
       setMessages(prev => [...prev, message]);
 
-      // Try to send via I2P (i2pService.sendMessage handles JSON.stringify internally)
+      // Try to send via I2P with retry — peer may need time for LeaseSet propagation
       let sent = false;
       if (i2pStatus?.samConnected) {
-        sent = await i2pService.sendMessage(contact.i2pAddress, {
+        const i2pMessage = {
           type: 'chat-message',
           id: message.id,
           chatId: message.chatId,
@@ -766,7 +783,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           encryptedContent: message.encryptedContent,
           timestamp: message.timestamp,
           sequenceNumber: message.sequenceNumber,
-        });
+        };
+
+        sent = await i2pService.sendMessage(contact.i2pAddress, i2pMessage);
+
+        // If first attempt failed, retry once after a short delay (tunnel build can be slow)
+        if (!sent) {
+          console.log('[sendMessage] First attempt failed, retrying in 5s...');
+          await new Promise(r => setTimeout(r, 5000));
+          sent = await i2pService.sendMessage(contact.i2pAddress, i2pMessage);
+        }
       }
 
       // Update message status
