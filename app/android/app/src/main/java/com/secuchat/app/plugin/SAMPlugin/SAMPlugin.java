@@ -16,6 +16,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.ThreadFactory;
 
 /**
  * Capacitor Plugin for I2P SAM (Simple Anonymous Messaging) v3.1 protocol.
@@ -43,6 +44,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     private final AtomicInteger streamIdCounter = new AtomicInteger(0);
     private String samHost;
     private int samPort;
+    private volatile Thread acceptThread = null;
 
     public SAMPlugin() {
         this.socketManager = SAMSocketManager.getInstance();
@@ -142,6 +144,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         executorService.execute(() -> {
             try {
                 acceptLoopActive.set(false);
+                if (acceptThread != null) {
+                    acceptThread.interrupt();
+                    acceptThread = null;
+                }
                 for (SAMStream stream : activeStreams.values()) {
                     try { stream.close(); } catch (Exception e) { /* ignore */ }
                 }
@@ -509,12 +515,27 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             return;
         }
 
-        executorService.execute(() -> {
+        // Stop previous accept loop if running
+        if (acceptLoopActive.getAndSet(true)) {
+            Log.w(TAG, "Accept loop already active, restarting");
+            acceptLoopActive.set(false);
+            if (acceptThread != null) {
+                acceptThread.interrupt();
+                try { acceptThread.join(3000); } catch (InterruptedException ignored) {}
+            }
             acceptLoopActive.set(true);
+        }
+
+        final String acceptNickname = nickname;
+
+        // Run accept loop on a dedicated thread — it must NOT block executorService
+        // or all other SAM operations (connectTo, send, etc.) will be queued indefinitely.
+        acceptThread = new Thread(() -> {
+            Log.i(TAG, "Accept loop thread started for session: " + acceptNickname);
             while (acceptLoopActive.get()) {
                 SAMStream acceptStream = null;
                 try {
-                    String sessionId = currentSessionId != null ? currentSessionId : nickname;
+                    String sessionId = currentSessionId != null ? currentSessionId : acceptNickname;
                     acceptStream = new SAMStream(sessionId, samHost, samPort);
                     acceptStream.connect();
                     String peerDest = acceptStream.streamAccept();
@@ -546,12 +567,15 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     try { Thread.sleep(2000); } catch (InterruptedException ie) { break; }
                 }
             }
-            Log.i(TAG, "Accept loop stopped");
+            Log.i(TAG, "Accept loop thread stopped");
+        }, "SAM-AcceptLoop");
 
-            JSObject result = new JSObject();
-            result.put("success", true);
-            call.resolve(result);
-        });
+        acceptThread.setDaemon(true);
+        acceptThread.start();
+
+        JSObject result = new JSObject();
+        result.put("success", true);
+        call.resolve(result);
     }
 
     /**

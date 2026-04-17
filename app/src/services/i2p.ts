@@ -41,6 +41,8 @@ class I2PService {
   private identity: I2PIdentity | null = null;
   private peers: Map<string, I2PPeer> = new Map();
   private ownDevices: Set<string> = new Set();
+  // Track in-flight connectToPeer calls to prevent connect storms
+  private pendingConnects: Map<string, Promise<I2PPeer>> = new Map();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- incoming messages have dynamic structure
   private messageHandlers: ((from: string, message: any) => void)[] = [];
   private statusHandlers: ((status: I2PStatus) => void)[] = [];
@@ -264,9 +266,28 @@ class I2PService {
   }
 
   /**
-   * Connect to a peer via I2P SAM
+   * Connect to a peer via I2P SAM.
+   * Deduplicates concurrent calls for the same peer to prevent connect storms.
    */
   async connectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
+    // If a connect is already in flight for this peer, piggyback on it
+    const pending = this.pendingConnects.get(b32Address);
+    if (pending) {
+      logger.log(`[I2P] Connect already in flight for: ${b32Address.slice(0, 20)}`);
+      return pending;
+    }
+
+    const connectPromise = this.doConnectToPeer(b32Address, publicKey);
+    this.pendingConnects.set(b32Address, connectPromise);
+
+    try {
+      return await connectPromise;
+    } finally {
+      this.pendingConnects.delete(b32Address);
+    }
+  }
+
+  private async doConnectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
     logger.log(`[I2P] Connecting to peer: ${b32Address.slice(0, 20)}...`);
     logger.log(`[I2P] Our address: ${this.getAddress()?.slice(0, 20)}..., leasesetPublished: ${this.currentStatus.leasesetPublished}`);
 
