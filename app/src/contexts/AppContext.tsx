@@ -580,6 +580,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const FAILURE_THRESHOLD = 3;
 
     const interval = setInterval(() => {
+      // Live-check: if SAM session died, update status so auto-reconnect triggers
+      if (!i2pService.isReady()) {
+        const status = i2pService.getStatus();
+        if (!status.samConnected && i2pStatus?.samConnected) {
+          console.log('[Status Check] SAM session lost, updating status');
+          setI2pStatus(status);
+        }
+        return; // Skip peer pings until SAM reconnects
+      }
+
       // Read contacts from current state via functional updater pattern
       setContacts(prevContacts => {
         // Process contacts that have an I2P address

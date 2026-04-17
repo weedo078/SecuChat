@@ -299,6 +299,8 @@ class SAMService {
         logger.log('[SAM] Connection closed');
         this.isConnected = false;
         this.helloCompleted = false;
+        this.sessionNickname = null;
+        this.acceptLoopActive = false;
         this.attemptReconnect();
       };
       
@@ -1079,7 +1081,13 @@ class SAMService {
   }
 
   private attemptReconnect(): void {
-    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) return;
+    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        logger.warn('[SAM] Max reconnect attempts reached, resetting counter for next cycle');
+        this.reconnectAttempts = 0;
+      }
+      return;
+    }
     this.isReconnecting = true;
     this.reconnectAttempts++;
     // Exponential backoff with jitter: min(30s, 1000 * 2^attempt) + random(0-1s)
@@ -1097,12 +1105,25 @@ class SAMService {
           const freshNick = `${base}-${Date.now()}`;
           await this.createSession(freshNick, this.lastSessionPrivateKey);
           logger.log('[SAM] Session restored after reconnect as:', freshNick);
+          this.reconnectAttempts = 0;
           this.reconnectHandlers.forEach(h => h());
+        } else if (ok) {
+          // Connected but no session to restore — this shouldn't happen normally
+          logger.warn('[SAM] Connected but no session to restore');
+        } else {
+          // Connection failed — schedule another attempt
+          logger.warn('[SAM] Reconnect failed, will retry');
         }
       } catch (err) {
         logger.warn('[SAM] Reconnect/session restore failed:', err);
       } finally {
         this.isReconnecting = false;
+        // If still not connected, schedule another reconnect after a delay
+        if (!this.isConnected && this.lastSessionPrivateKey) {
+          const retryDelay = 10000;
+          logger.log(`[SAM] Still disconnected, retrying in ${retryDelay / 1000}s...`);
+          this.reconnectTimer = setTimeout(() => this.attemptReconnect(), retryDelay);
+        }
       }
     }, delay);
   }

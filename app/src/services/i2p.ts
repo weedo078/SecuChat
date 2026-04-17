@@ -240,6 +240,15 @@ class I2PService {
   }
 
   isReady(): boolean {
+    // Live-check SAM connection — WebSocket may have dropped without i2pService knowing
+    if (this.currentStatus.samConnected && !samService.isSAMConnected()) {
+      this.currentStatus = {
+        ...this.currentStatus,
+        samConnected: false,
+        error: 'SAM-Verbindung verloren.',
+      };
+      this.notifyStatusChange();
+    }
     return this.currentStatus.samConnected && this.identity !== null;
   }
 
