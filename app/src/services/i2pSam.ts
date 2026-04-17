@@ -299,9 +299,6 @@ class SAMService {
         logger.log('[SAM] Connection closed');
         this.isConnected = false;
         this.helloCompleted = false;
-        // Keep sessionNickname intact — attemptReconnect will restore the session.
-        // Clearing it here causes "No session created" errors for in-flight operations.
-        this.acceptLoopActive = false;
         this.attemptReconnect();
       };
       
