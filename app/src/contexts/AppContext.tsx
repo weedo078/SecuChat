@@ -466,10 +466,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const samCfg = effectiveSamConfig(settings.i2p.sam);
     if (!user || i2pStatus?.samConnected || !samCfg.enabled) return;
-    const timer = setTimeout(() => {
-      i2pService.initialize(samCfg).then(setI2pStatus).catch((err) => {
+    const timer = setTimeout(async () => {
+      try {
+        const status = await i2pService.initialize(samCfg);
+        setI2pStatus(status);
+        if (status.samConnected && user) {
+          const identity = i2pService.getIdentity();
+          if (identity?.samDestination && !user.i2pSamDestination) {
+            const updatedUser = { ...user, i2pSamDestination: identity.samDestination };
+            await storageService.saveUser(updatedUser);
+            setUser(updatedUser);
+          }
+        }
+      } catch (err) {
         setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-      });
+      }
     }, 30000);
     return () => clearTimeout(timer);
   }, [user, i2pStatus, settings.i2p.sam]);
