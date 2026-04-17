@@ -288,6 +288,12 @@ public class SAMSocketManager {
                         Log.w(TAG, "Read thread: end of stream");
                         break;
                     }
+                } catch (java.net.SocketTimeoutException e) {
+                    // SocketTimeoutException is expected — the main socket sits idle after
+                    // SESSION CREATE. Don't break the loop; just continue waiting.
+                    // Accept loops run on their own SAMStream sockets, not here.
+                    Log.d(TAG, "Read thread: socket timeout (normal for idle session)");
+                    continue;
                 } catch (IOException e) {
                     if (isConnected.get()) {
                         Log.e(TAG, "Read error: " + e.getMessage(), e);
