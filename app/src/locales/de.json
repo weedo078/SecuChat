@@ -400,7 +400,17 @@
     "pgpPublicKey": "PGP Public Key",
     "addContact": "Kontakt hinzufügen",
     "allFieldsRequired": "Alle Felder sind erforderlich",
-    "invalidPgpKeyManual": "Ungültiger PGP Public Key"
+    "invalidPgpKeyManual": "Ungültiger PGP Public Key",
+    "scanQR": "QR-Code scannen"
+  },
+  "qr": {
+    "showQR": "Als QR-Code anzeigen",
+    "hideQR": "QR-Code ausblenden",
+    "frameProgress": "Frame {{current}} von {{total}}",
+    "scanProgress": "{{current}} von {{total}} Frames gescannt",
+    "scanInstructions": "Halte die Kamera auf den QR-Code des anderen Geräts",
+    "pointAtQR": "Halte die Kamera auf den animierten QR-Code",
+    "stopped": "QR-Code wurde gestoppt"
   },
 
   "verification": {

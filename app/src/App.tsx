@@ -89,7 +89,7 @@ function App() {
       </div>
 
       {/* Main content with padding for fixed header */}
-      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : undefined }} >
+      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : '4rem' }} >
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
           <Sidebar

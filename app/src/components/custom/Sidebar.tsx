@@ -1,13 +1,21 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { MessageSquare, Settings, Search, Share2, UserPlus, Trash2 } from 'lucide-react';
+import { MessageSquare, Settings, Plus, Search, Share2, UserPlus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { useApp } from '@/contexts/AppContext';
-import type { Chat } from '@/types';
+import type { Chat, Contact } from '@/types';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,8 +36,9 @@ interface SidebarProps {
 
 export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: SidebarProps) {
   const { t } = useTranslation();
-  const { chats, activeChat, setActiveChat, user, deleteChat } = useApp();
+  const { chats, activeChat, setActiveChat, contacts, createChat, user, deleteChat } = useApp();
   const [searchQuery, setSearchQuery] = useState('');
+  const [showNewChatDialog, setShowNewChatDialog] = useState(false);
   const [chatToDelete, setChatToDelete] = useState<string | null>(null);
 
   const filteredChats = chats.filter(chat =>
@@ -38,6 +47,12 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
 
   const handleChatClick = (chat: Chat) => {
     setActiveChat(chat);
+  };
+
+  const handleNewChat = async (contact: Contact) => {
+    const chat = await createChat(contact);
+    setActiveChat(chat);
+    setShowNewChatDialog(false);
   };
 
   const formatTime = (timestamp?: string) => {
@@ -74,6 +89,53 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-lg">{t('sidebar.chats')}</h2>
           <div className="flex gap-1">
+            <Dialog open={showNewChatDialog} onOpenChange={setShowNewChatDialog}>
+              <DialogTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={t('sidebar.createNewChat')}
+                  className="hover:bg-accent"
+                >
+                  <Plus className="h-5 w-5" aria-hidden="true" />
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t('sidebar.newChat')}</DialogTitle>
+                  <DialogDescription>
+                    {t('sidebar.newChatDescription')}
+                  </DialogDescription>
+                </DialogHeader>
+                <ScrollArea className="max-h-[300px] mt-4">
+                  <div className="space-y-2">
+                    {contacts.filter(c => !chats.find(ch => ch.contactId === c.id)).map(contact => (
+                      <button
+                        key={contact.id}
+                        onClick={() => handleNewChat(contact)}
+                        className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-accent transition-colors text-left"
+                        aria-label={t('sidebar.startChatWith', { name: contact.name })}
+                      >
+                        <Avatar className="h-10 w-10">
+                          <AvatarFallback>{getInitials(contact.name)}</AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="font-medium">{contact.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {contact.fingerprint.slice(0, 16)}...
+                          </p>
+                        </div>
+                      </button>
+                    ))}
+                    {contacts.filter(c => !chats.find(ch => ch.contactId === c.id)).length === 0 && (
+                      <p className="text-center text-muted-foreground py-4">
+                        {t('sidebar.noMoreContacts')}
+                      </p>
+                    )}
+                  </div>
+                </ScrollArea>
+              </DialogContent>
+            </Dialog>
             <Button
               variant="ghost"
               size="icon"

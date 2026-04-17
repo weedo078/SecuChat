@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Upload, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
+import { Upload, Shield, AlertTriangle, Check, Download, UserPlus, FileDown, QrCode, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
@@ -9,6 +9,8 @@ import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
 import { cryptoService } from '@/services/crypto';
 import { exportContact, importContact, canShareNatively } from '@/services/nativeFileSharing';
+import { AnimatedContactQR } from '@/components/custom/AnimatedContactQR';
+import { QRContactScanner } from '@/components/custom/QRContactScanner';
 import type { Contact } from '@/types';
 
 interface AddContactDialogProps {
@@ -42,6 +44,8 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(false);
+  const [showQRShare, setShowQRShare] = useState(false);
+  const [showQRScan, setShowQRScan] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -63,6 +67,18 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     window.addEventListener('secuchat-contact-import', handler);
     return () => window.removeEventListener('secuchat-contact-import', handler);
   }, [t]);
+
+  // ── QR Scan Result ────────────────────────────────────────────────────────
+
+  const handleQRScanned = (raw: string) => {
+    const contact = parseContactData(raw);
+    if (contact) {
+      setImportedContact(contact);
+      setShowQRScan(false);
+    } else {
+      setImportError(t('addContact.invalidFile'));
+    }
+  };
 
   // ── Parse ──────────────────────────────────────────────────────────────────
 
@@ -320,7 +336,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
           {/* ── Import Tab ── */}
           <TabsContent value="import" className="space-y-4">
-            {!importedContact ? (
+            {showQRScan ? (
+              <QRContactScanner
+                onContactScanned={handleQRScanned}
+                onError={(err) => { setImportError(err); setShowQRScan(false); }}
+              />
+            ) : !importedContact ? (
               <>
                 <button
                   onClick={() => canShareNatively() ? handleNativeImport() : fileInputRef.current?.click()}
@@ -337,6 +358,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                     </p>
                   </div>
                 </button>
+
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => setShowQRScan(true)}
+                >
+                  <ScanLine className="h-4 w-4 mr-2" />
+                  {t('addContact.scanQR')}
+                </Button>
 
                 <input
                   ref={fileInputRef}
@@ -431,6 +461,31 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 </Button>
 
                 {user.i2pSamDestination && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => setShowQRShare(!showQRShare)}
+                  >
+                    <QrCode className="h-4 w-4 mr-2" />
+                    {showQRShare ? t('qr.hideQR') : t('qr.showQR')}
+                  </Button>
+                )}
+
+                {showQRShare && user.i2pSamDestination && (
+                  <AnimatedContactQR
+                    contactData={{
+                      v: '2',
+                      t: 'sc',
+                      n: user.username,
+                      i: user.i2pAddress || '',
+                      f: user.fingerprint,
+                      k: user.pgpPublicKey,
+                      ts: Date.now(),
+                    }}
+                  />
+                )}
+
+                {user.i2pSamDestination && !showQRShare && (
                   <p className="text-xs text-muted-foreground text-center">
                     {t('addContact.sendFileToContact')}
                   </p>

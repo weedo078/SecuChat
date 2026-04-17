@@ -33,6 +33,7 @@
     "@capawesome-team/capacitor-android-foreground-service": "^8.0.1",
     "@capawesome/capacitor-file-picker": "^8.0.2",
     "@hookform/resolvers": "^5.2.2",
+    "@lo-fi/qr-data-sync": "^0.999.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-aspect-ratio": "^1.1.8",
