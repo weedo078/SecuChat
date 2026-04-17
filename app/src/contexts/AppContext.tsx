@@ -609,11 +609,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
                 : ch
             ));
           } catch (err) {
-            const failures = (consecutiveFailures.get(contact.id) || 0) + 1;
+            // Skip counting if SAM session is dead — the auto-reconnect will handle it
+            const errMsg = err instanceof Error ? err.message : String(err);
+            if (errMsg.includes('No session created') || errMsg.includes('INVALID_ID')) {
+              console.log(`[Status Check] SAM session lost, skipping ping for ${contact.name}`);
+              return;
+            }
+            // Cap at threshold + 1 to avoid unbounded counter growth
+            const rawFailures = (consecutiveFailures.get(contact.id) || 0) + 1;
+            const failures = Math.min(rawFailures, FAILURE_THRESHOLD + 1);
             consecutiveFailures.set(contact.id, failures);
-            console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD}):`, err instanceof Error ? err.message : err);
+            console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD})`);
             // Only mark offline after consecutive failures reach threshold
-            if (failures >= FAILURE_THRESHOLD) {
+            if (failures === FAILURE_THRESHOLD) {
               const updated = { ...contact, status: 'offline' as const };
               await storageService.saveContact(updated);
               setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
