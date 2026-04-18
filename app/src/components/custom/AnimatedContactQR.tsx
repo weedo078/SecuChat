@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
@@ -36,35 +36,32 @@ export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
   const [frameInfo, setFrameInfo] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
   const abortedRef = useRef(false);
 
-  const raw = JSON.stringify(contactData);
-  const frames = splitIntoFrames(raw, CHUNK_SIZE);
-
-  const renderFrame = useCallback(async (frameIndex: number) => {
-    if (!canvasRef.current || abortedRef.current) return;
-    const frame = frames[frameIndex % frames.length];
-    try {
-      await QRCode.toCanvas(canvasRef.current, frame, {
-        width: 280,
-        margin: 2,
-        color: { dark: '#000000', light: '#ffffff' },
-        errorCorrectionLevel: 'M',
-      });
-      setFrameInfo({ index: (frameIndex % frames.length) + 1, total: frames.length });
-    } catch (err) {
-      console.error('[AnimatedContactQR] Render error:', err);
-    }
-  }, [frames]);
+  // Memoize frames so the array is stable across renders and doesn't
+  // trigger endless effect restarts
+  const frames = useMemo(() => splitIntoFrames(JSON.stringify(contactData), CHUNK_SIZE), [contactData]);
 
   useEffect(() => {
     abortedRef.current = false;
     let frameIndex = 0;
+    let timeoutId: ReturnType<typeof setTimeout>;
 
     const animate = async () => {
-      if (abortedRef.current) return;
-      await renderFrame(frameIndex);
+      if (abortedRef.current || !canvasRef.current) return;
+      const frame = frames[frameIndex % frames.length];
+      try {
+        await QRCode.toCanvas(canvasRef.current, frame, {
+          width: 280,
+          margin: 2,
+          color: { dark: '#000000', light: '#ffffff' },
+          errorCorrectionLevel: 'M',
+        });
+        setFrameInfo({ index: (frameIndex % frames.length) + 1, total: frames.length });
+      } catch (err) {
+        console.error('[AnimatedContactQR] Render error:', err);
+      }
       frameIndex++;
       if (!abortedRef.current) {
-        setTimeout(animate, 1000 / FPS);
+        timeoutId = setTimeout(animate, 1000 / FPS);
       }
     };
 
@@ -72,8 +69,9 @@ export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
 
     return () => {
       abortedRef.current = true;
+      clearTimeout(timeoutId);
     };
-  }, [renderFrame]);
+  }, [frames]);
 
   const stop = () => {
     abortedRef.current = true;
