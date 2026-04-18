@@ -924,7 +924,8 @@ class SAMService {
   }
 
   /**
-   * Disconnect everything
+   * Disconnect the transport (socket, streams, pending commands).
+   * Preserves registered event handlers so they survive auto-reconnect.
    */
   disconnect(): void {
     if (this.reconnectTimer) {
@@ -947,10 +948,9 @@ class SAMService {
     });
     this.pendingResolvers = [];
 
-    // Clear all event handlers to prevent memory leaks
-    this.messageHandlers = [];
-    this.streamHandlers = [];
-    this.reconnectHandlers = [];
+    // NOTE: messageHandlers, streamHandlers, reconnectHandlers are NOT cleared here.
+    // They are registered once by i2pService.setupSAMListeners() and must persist
+    // across auto-reconnect cycles so incoming messages are not lost.
 
     // Remove native event handlers if using native bridge
     this.removeNativeEventHandlers();
@@ -967,6 +967,17 @@ class SAMService {
     }
     this.lastSessionPrivateKey = undefined;
     this.sessionNickname = null;
+  }
+
+  /**
+   * Full teardown — disconnects transport AND clears all event handlers.
+   * Call this when the service is being permanently destroyed (e.g. user logout).
+   */
+  shutdown(): void {
+    this.disconnect();
+    this.messageHandlers = [];
+    this.streamHandlers = [];
+    this.reconnectHandlers = [];
   }
 
   /**

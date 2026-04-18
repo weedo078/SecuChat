@@ -600,10 +600,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         contactsToCheck.forEach(async (contact) => {
           try {
             console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
-            // Force close cached stream before ping — the peer cache may hold a dead
-            // stream whose WebSocket is still OPEN but the I2P tunnel behind it is gone.
-            i2pService.disconnectPeer(contact.i2pAddress);
-            await i2pService.connectToPeer(contact.i2pAddress);
+            // Only disconnect+reconnect if peer is NOT already connected.
+            // Blind disconnect kills active streams — any message sent during the
+            // reconnect window would be lost.
+            const peerStatus = i2pService.getPeerStatus(contact.i2pAddress);
+            if (peerStatus !== 'connected') {
+              i2pService.disconnectPeer(contact.i2pAddress);
+              await i2pService.connectToPeer(contact.i2pAddress);
+            }
             console.log(`[Status Check] ${contact.name} is online`);
             // Reset failure counter on success
             consecutiveFailures.delete(contact.id);

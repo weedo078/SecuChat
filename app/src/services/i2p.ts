@@ -596,7 +596,7 @@ class I2PService {
     }
     this.identity = null;
     this.peers.clear();
-    samService.disconnect();
+    samService.shutdown();
     this.currentStatus = {
       samConnected: false,
       samAvailable: false,
