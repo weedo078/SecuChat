@@ -40,8 +40,12 @@ function isElectronRenderer(): boolean {
 
 /**
  * Detect if running in Electron (main or renderer)
+ * IMPORTANT: Must exclude Capacitor — Android WebView can have
+ * window.process or other Electron-like globals.
  */
 export function isElectron(): boolean {
+  // If Capacitor has been detected, this is NOT Electron
+  if (capacitorChecked && isCapacitorNative) return false;
   return isElectronMain() || isElectronRenderer();
 }
 
@@ -86,12 +90,14 @@ export function isBrowser(): boolean {
  * Returns 'capacitor' if in Capacitor native, 'electron' if in Electron, 'browser' otherwise
  */
 export async function getStoragePlatform(): Promise<StoragePlatform> {
-  if (isElectron()) {
-    return 'electron';
-  }
-
+  // Capacitor MUST be checked first — Android WebView can trigger false-positive
+  // Electron detection via user-agent or other heuristics.
   if (await isCapacitor()) {
     return 'capacitor';
+  }
+
+  if (isElectron()) {
+    return 'electron';
   }
 
   return 'browser';
@@ -101,12 +107,13 @@ export async function getStoragePlatform(): Promise<StoragePlatform> {
  * Synchronous version - use only after platform has been detected
  */
 export function getStoragePlatformSync(): StoragePlatform {
-  if (isElectron()) {
-    return 'electron';
-  }
-
+  // Capacitor first (same reasoning as async version)
   if (isCapacitorSync()) {
     return 'capacitor';
+  }
+
+  if (isElectron()) {
+    return 'electron';
   }
 
   return 'browser';

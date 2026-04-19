@@ -97,6 +97,8 @@ class PlatformService {
   }
 
   isElectron(): boolean {
+    // Capacitor native is never Electron
+    if (capacitorPlatform !== null) return false;
     // Primary: contextBridge API set by preload.ts
     const api = (window as unknown as Record<string, { isElectron?: boolean } | undefined>).electronAPI;
     if (api?.isElectron) return true;
@@ -105,6 +107,9 @@ class PlatformService {
   }
 
   detectPlatform(): PlatformType {
+    // Capacitor native overrides everything
+    if (capacitorPlatform === 'android') return 'android';
+    if (capacitorPlatform === 'ios') return 'other'; // iOS not fully supported yet
     if (this.isElectron()) return 'desktop';
     const ua = navigator.userAgent;
     
