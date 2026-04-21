@@ -231,21 +231,52 @@ class SAMNativeService {
     }
   }
 
+  private static readonly RETRY_DELAYS = [2000, 5000, 10000, 20000, 30000];
+  private static readonly RETRYABLE_PATTERNS = ['INVALID_ID', 'CANT_REACH_PEER', 'LeaseSet not found'];
+
+  private isRetryableError(error: string): boolean {
+    return SAMNativeService.RETRYABLE_PATTERNS.some(p => error.includes(p));
+  }
+
   /**
-   * Connect to a remote peer
+   * Connect to a remote peer with retry logic for transient I2P errors.
+   * I2P tunnel building can take 1-10 minutes, so INVALID_ID / CANT_REACH_PEER
+   * errors are retried with exponential backoff.
    */
-  async connectTo(destination: string, timeout = 60000): Promise<number | null> {
-    try {
-      const result = await SAMNativePlugin.connectTo({ destination, timeout });
-      if (result.success && result.streamId !== undefined) {
-        return result.streamId;
+  async connectTo(destination: string, timeout = 60000, maxRetries = 5): Promise<number | null> {
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const result = await SAMNativePlugin.connectTo({ destination, timeout });
+        if (result.success && result.streamId !== undefined) {
+          return result.streamId;
+        }
+
+        const errMsg = result.error ?? 'unknown error';
+        if (attempt < maxRetries && this.isRetryableError(errMsg)) {
+          const delay = SAMNativeService.RETRY_DELAYS[attempt] ?? 30000;
+          logger.warn(`[SAMNative] Connect attempt ${attempt + 1} failed: ${errMsg}. Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        logger.error('[SAMNative] Connect failed:', errMsg);
+        return null;
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        if (attempt < maxRetries && this.isRetryableError(errMsg)) {
+          const delay = SAMNativeService.RETRY_DELAYS[attempt] ?? 30000;
+          logger.warn(`[SAMNative] Connect attempt ${attempt + 1} threw: ${errMsg}. Retrying in ${delay}ms...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        logger.error('[SAMNative] Connect error:', error);
+        return null;
       }
-      logger.error('[SAMNative] Connect failed:', result.error);
-      return null;
-    } catch (error) {
-      logger.error('[SAMNative] Connect error:', error);
-      return null;
     }
+
+    logger.error(`[SAMNative] Connect failed after ${maxRetries + 1} attempts`);
+    return null;
   }
 
   /**

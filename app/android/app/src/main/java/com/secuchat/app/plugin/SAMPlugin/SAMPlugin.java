@@ -39,6 +39,9 @@ public class SAMPlugin extends Plugin implements EventNotifier {
     private final ExecutorService executorService;
     private final SAMEventEmitter eventEmitter;
     private volatile String currentSessionId = null; // Track the current session nickname (thread-safe)
+    private volatile String lastSessionNickname = null;
+    private volatile String lastSessionPrivateKey = null;
+    private volatile String lastSessionStyle = null;
     private final ConcurrentHashMap<Integer, SAMStream> activeStreams = new ConcurrentHashMap<>();
     private final AtomicBoolean acceptLoopActive = new AtomicBoolean(false);
     private final AtomicInteger streamIdCounter = new AtomicInteger(0);
@@ -433,6 +436,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     currentSessionId = nickname;
                     this.samHost = socketManager.getHost();
                     this.samPort = socketManager.getPort();
+                    // Persist session params for recreation if currentSessionId gets cleared
+                    lastSessionNickname = nickname;
+                    lastSessionPrivateKey = (privateKey != null && !privateKey.isEmpty()) ? privateKey : null;
+                    lastSessionStyle = style;
                     Log.d(TAG, "Session created with ID: " + nickname);
                 } else {
                     result.put("success", false);
@@ -466,9 +473,46 @@ public class SAMPlugin extends Plugin implements EventNotifier {
         }
 
         executorService.execute(() -> {
+            SAMStream stream = null;
             try {
-                String sessionId = currentSessionId != null ? currentSessionId : "secuchat";
-                SAMStream stream = new SAMStream(sessionId, samHost, samPort);
+                String sessionId = currentSessionId;
+
+                // If no active session, try to recreate one from stored params
+                if (sessionId == null) {
+                    Log.w(TAG, "No active session in connectTo(), attempting session recreation");
+                    if (lastSessionNickname == null) {
+                        call.reject("No active SAM session and no stored session info to recreate. Call createSession() first.");
+                        return;
+                    }
+                    // Perform HELLO handshake before SESSION CREATE
+                    String helloResp = socketManager.sendCommandAndWait("HELLO VERSION MIN=3.1 MAX=3.1");
+                    if (helloResp == null || !helloResp.contains("RESULT=OK")) {
+                        call.reject("Cannot recreate session: SAM HELLO handshake failed");
+                        return;
+                    }
+                    // Recreate the session using stored params
+                    String cmd;
+                    if (lastSessionPrivateKey != null) {
+                        cmd = String.format("SESSION CREATE STYLE=%s ID=%s DESTINATION=%s",
+                            lastSessionStyle != null ? lastSessionStyle : "STREAM",
+                            lastSessionNickname, lastSessionPrivateKey);
+                    } else {
+                        cmd = String.format("SESSION CREATE STYLE=%s ID=%s",
+                            lastSessionStyle != null ? lastSessionStyle : "STREAM",
+                            lastSessionNickname);
+                    }
+                    String sessionResp = socketManager.sendCommandAndWait(cmd);
+                    if (sessionResp == null || !sessionResp.contains("RESULT=OK")) {
+                        call.reject("Cannot recreate session: SESSION CREATE failed - " + (sessionResp != null ? sessionResp : "No response"));
+                        return;
+                    }
+                    sessionId = lastSessionNickname;
+                    currentSessionId = sessionId;
+                    Log.i(TAG, "Session recreated with ID: " + sessionId);
+                }
+
+                Log.d(TAG, "STREAM CONNECT using session ID: " + sessionId + ", destination: " + destination.substring(0, Math.min(20, destination.length())) + "...");
+                stream = new SAMStream(sessionId, samHost, samPort);
                 int streamId = generateStreamId();
 
                 stream.connect();
@@ -496,6 +540,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 call.resolve(result);
             } catch (Exception e) {
                 Log.e(TAG, "STREAM CONNECT failed: " + e.getMessage(), e);
+                // Close the stream to prevent socket leaks
+                if (stream != null) {
+                    try { stream.close(); } catch (Exception closeEx) { /* ignore */ }
+                }
                 call.reject("STREAM CONNECT failed: " + e.getMessage());
             }
         });
