@@ -31,13 +31,11 @@ function splitIntoFrames(data: string, chunkSize: number): string[] {
 
 export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
   const { t } = useTranslation();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isRunning, setIsRunning] = useState(true);
   const [frameInfo, setFrameInfo] = useState<{ index: number; total: number }>({ index: 0, total: 0 });
   const abortedRef = useRef(false);
 
-  // Memoize frames so the array is stable across renders and doesn't
-  // trigger endless effect restarts
   const frames = useMemo(() => splitIntoFrames(JSON.stringify(contactData), CHUNK_SIZE), [contactData]);
 
   useEffect(() => {
@@ -46,15 +44,16 @@ export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
     let timeoutId: ReturnType<typeof setTimeout>;
 
     const animate = async () => {
-      if (abortedRef.current || !canvasRef.current) return;
+      if (abortedRef.current) return;
       const frame = frames[frameIndex % frames.length];
       try {
-        await QRCode.toCanvas(canvasRef.current, frame, {
+        const dataUrl = await QRCode.toDataURL(frame, {
           width: 280,
           margin: 2,
           color: { dark: '#000000', light: '#ffffff' },
           errorCorrectionLevel: 'M',
         });
+        setQrDataUrl(dataUrl);
         setFrameInfo({ index: (frameIndex % frames.length) + 1, total: frames.length });
       } catch (err) {
         console.error('[AnimatedContactQR] Render error:', err);
@@ -90,7 +89,11 @@ export function AnimatedContactQR({ contactData }: AnimatedContactQRProps) {
     <div className="space-y-4">
       <div className="flex justify-center">
         <div className="p-4 bg-white rounded-lg">
-          <canvas ref={canvasRef} width={280} height={280} />
+          {qrDataUrl ? (
+            <img src={qrDataUrl} alt="QR Code" className="w-[280px] h-[280px]" />
+          ) : (
+            <div className="w-[280px] h-[280px] bg-white" />
+          )}
         </div>
       </div>
       <div className="text-center text-sm text-muted-foreground">
