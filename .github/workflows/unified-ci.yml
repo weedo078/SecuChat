@@ -33,7 +33,7 @@ jobs:
       wiki: ${{ steps.filter.outputs.wiki }}
       version-file: ${{ steps.filter.outputs.version-file }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -78,7 +78,7 @@ jobs:
       needs.detect-changes.outputs.app-core == 'true' ||
       needs.detect-changes.outputs.shared == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -116,7 +116,7 @@ jobs:
     name: Security Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -156,7 +156,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Get version info
         id: version
@@ -243,7 +243,7 @@ jobs:
       needs.detect-changes.outputs.app-core == 'true' ||
       needs.detect-changes.outputs.shared == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check if Android directory exists
         id: check-android
@@ -329,7 +329,7 @@ jobs:
       pull-requests: write
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -396,7 +396,7 @@ jobs:
       version: ${{ steps.calc.outputs.version }}
       should-release: ${{ steps.calc.outputs.should-release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -440,7 +440,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -483,7 +483,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -525,7 +525,7 @@ jobs:
     runs-on: windows-latest
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -575,7 +575,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -623,7 +623,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Clone wiki
         run: |
