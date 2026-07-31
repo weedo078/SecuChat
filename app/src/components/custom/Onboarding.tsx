@@ -763,7 +763,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                     <ol className="space-y-2 text-sm mb-4">
                       {platformInfo.instructions.steps.map((step, idx) => (
                         <li key={idx} className="flex items-start gap-2">
-                          <span className="bg-primary/20 text-primary rounded-full w-5 h-5 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+                          <span className="bg-primary/20 text-primary rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">
                             {idx + 1}
                           </span>
                           <span>{step}</span>
