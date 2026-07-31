@@ -138,8 +138,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings>(defaultSecuritySettings);
   
-  // Connection state
-  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  // Connection state (connectionState is derived — see below)
   const [encryptionState, setEncryptionState] = useState<EncryptionState>('unencrypted');
   
   // I2P status
@@ -412,7 +411,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [activeChat, user]);
 
   // Keep the ref in sync so the stable handler always calls the latest version
-  handleIncomingMessageRef.current = handleIncomingMessage;
+  useEffect(() => {
+    handleIncomingMessageRef.current = handleIncomingMessage;
+  });
 
   // Handle sync messages (multi-device) - TODO: Implement for I2P
   // This would require a sync protocol over I2P SAM streams
@@ -561,20 +562,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => clearInterval(interval);
   }, [i2pStatus?.samConnected, contacts]);
 
-  // Sync connectionState with I2P status, isLocked and encryptionState
-  useEffect(() => {
-    if (isLocked) {
-      setConnectionState('locked');
-    } else if (encryptionState === 'error') {
-      setConnectionState('error');
-    } else if (i2pStatus?.samConnected) {
-      setConnectionState('connected');
-    } else if (i2pStatus?.error) {
-      setConnectionState('error');
-    } else {
-      setConnectionState('disconnected');
-    }
-  }, [i2pStatus, isLocked, encryptionState]);
+  // Sync connectionState with I2P status, isLocked and encryptionState (derived)
+  const connectionState: ConnectionState = isLocked
+    ? 'locked'
+    : encryptionState === 'error'
+      ? 'error'
+      : i2pStatus?.samConnected
+        ? 'connected'
+        : i2pStatus?.error
+          ? 'error'
+          : 'disconnected';
 
   // Contact operations
   const addContact = useCallback(async (contact: Contact) => {
@@ -582,17 +579,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setContacts(prev => [...prev, contact]);
   }, []);
 
-  const removeContact = useCallback(async (id: string) => {
-    await storageService.deleteContact(id);
-    setContacts(prev => prev.filter(c => c.id !== id));
 
-    // Also delete associated chat
-    const chat = await storageService.getChatByContactId(id);
-    if (chat) {
-      await deleteChat(chat.id);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- deleteChat excluded to avoid circular dependency
-  }, []);
 
   const updateContact = useCallback(async (contact: Contact) => {
     await storageService.saveContact(contact);
@@ -619,16 +606,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return newChat;
   }, []);
 
+  // Keep a ref to the active chat so deleteChat has stable identity
+  const activeChatRef = useRef<Chat | null>(null);
+  useEffect(() => {
+    activeChatRef.current = activeChat;
+  }, [activeChat]);
+
   const deleteChat = useCallback(async (id: string) => {
     await storageService.deleteChat(id);
     await storageService.deleteMessagesByChat(id);
     setChats(prev => prev.filter(c => c.id !== id));
 
-    if (activeChat?.id === id) {
+    if (activeChatRef.current?.id === id) {
       setActiveChatState(null);
       setMessages([]);
     }
-  }, [activeChat]);
+  }, []);
+
+  const removeContact = useCallback(async (id: string) => {
+    await storageService.deleteContact(id);
+    setContacts(prev => prev.filter(c => c.id !== id));
+
+    // Also delete associated chat
+    const chat = await storageService.getChatByContactId(id);
+    if (chat) {
+      await deleteChat(chat.id);
+    }
+  }, [deleteChat]);
 
   // Wrapper for setActiveChat that resets unread count
   const setActiveChat = useCallback(async (chat: Chat | null) => {
@@ -886,14 +890,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Load active chat messages when changed
-  useEffect(() => {
+  // Load active chat messages when activeChat changes
+  const lastActiveChatIdRef = useRef<string | null | undefined>(undefined);
+  if (lastActiveChatIdRef.current !== (activeChat?.id ?? null)) {
+    lastActiveChatIdRef.current = activeChat?.id ?? null;
     if (activeChat) {
-      loadMessages(activeChat.id);
+      void loadMessages(activeChat.id);
     } else {
       setMessages([]);
     }
-  }, [activeChat, loadMessages]);
+  }
 
   const value: AppContextType = {
     user,
