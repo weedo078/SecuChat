@@ -65,7 +65,7 @@ export async function generateFingerprint(publicKeyArmored: string): Promise<str
     return publicKey.getFingerprint().toUpperCase();
   } catch (error) {
     logger.error('Error generating fingerprint:', error);
-    throw new Error('Failed to generate fingerprint from public key');
+    throw new Error('Failed to generate fingerprint from public key', { cause: error });
   }
 }
 
@@ -121,7 +121,7 @@ export async function generateQRCode(safetyNumber: string): Promise<string> {
     });
   } catch (error) {
     logger.error('Error generating QR code:', error);
-    throw new Error('Failed to generate QR code');
+    throw new Error('Failed to generate QR code', { cause: error });
   }
 }
 

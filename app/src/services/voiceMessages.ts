@@ -96,7 +96,7 @@ class VoiceMessageManager {
       logger.log('[Voice] Recording started');
     } catch (error) {
       logger.error('[Voice] Failed to start recording:', error);
-      throw new Error('Mikrofon-Zugriff fehlgeschlagen. Bitte Berechtigung erteilen.');
+      throw new Error('Mikrofon-Zugriff fehlgeschlagen. Bitte Berechtigung erteilen.', { cause: error });
     }
   }
 

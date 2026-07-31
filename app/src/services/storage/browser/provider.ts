@@ -330,7 +330,7 @@ export class BrowserStorageProvider implements StorageProvider {
       return { migrated: true, message: 'Successfully migrated to v2 encryption format' };
     } catch (error) {
       console.error('[Storage] Migration failed:', error);
-      throw new Error('Migration failed: unable to decrypt legacy data');
+      throw new Error('Migration failed: unable to decrypt legacy data', { cause: error });
     }
   }
 
@@ -376,7 +376,7 @@ export class BrowserStorageProvider implements StorageProvider {
         }
       } catch (error) {
         console.error('Failed to decrypt user data:', error);
-        throw new Error('Falsches Passwort oder Daten beschädigt');
+        throw new Error('Falsches Passwort oder Daten beschädigt', { cause: error });
       }
     }
     return user;

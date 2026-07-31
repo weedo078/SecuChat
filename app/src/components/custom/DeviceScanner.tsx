@@ -69,14 +69,21 @@ export function DeviceScanner({ onDevicePaired }: DeviceScannerProps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- scanQRCode is a function declaration, stable reference
   }, []);
 
+  // Start camera in user-gesture handlers to avoid set-state-in-effect
+  const handleStartClick = useCallback(() => {
+    setScanning(true);
+    startCamera();
+  }, [startCamera]);
+
+  const handleStopClick = useCallback(() => {
+    setScanning(false);
+    stopCamera();
+  }, [stopCamera]);
+
+  // Stop camera on unmount
   useEffect(() => {
-    if (scanning) {
-      startCamera();
-    } else {
-      stopCamera();
-    }
     return () => stopCamera();
-  }, [scanning, startCamera, stopCamera]);
+  }, [stopCamera]);
 
   const handleScan = async (data: string) => {
     try {
@@ -160,7 +167,7 @@ export function DeviceScanner({ onDevicePaired }: DeviceScannerProps) {
             variant="destructive"
             size="icon"
             className="absolute top-2 right-2"
-            onClick={() => setScanning(false)}
+            onClick={handleStopClick}
           >
             <X className="h-4 w-4" />
           </Button>
@@ -169,7 +176,7 @@ export function DeviceScanner({ onDevicePaired }: DeviceScannerProps) {
         <div className="border-2 border-dashed border-border rounded-lg p-8 text-center">
           <Camera className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
           <p className="text-muted-foreground mb-4">Kamera-Zugriff erforderlich</p>
-          <Button onClick={() => setScanning(true)}>
+          <Button onClick={handleStartClick}>
             Kamera starten
           </Button>
         </div>

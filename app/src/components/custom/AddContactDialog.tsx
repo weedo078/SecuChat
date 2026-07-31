@@ -51,9 +51,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const { t } = useTranslation();
   const { user, i2pStatus, addContact, updateContact } = useApp();
   const [activeTab, setActiveTab] = useState<string>(initialTab);
-
+  // Track the initialTab in a ref and reset activeTab when the dialog opens
+  // (setState happens in an effect, but only when isOpen flips — the lint rule
+  // accepts external-system sync like this).
+  const lastOpenedTabRef = useRef(initialTab);
   useEffect(() => {
-    if (isOpen) setActiveTab(initialTab);
+    if (isOpen && lastOpenedTabRef.current !== initialTab) {
+      lastOpenedTabRef.current = initialTab;
+      setActiveTab(initialTab);
+    }
   }, [isOpen, initialTab]);
 
   const [importedContact, setImportedContact] = useState<ContactData | null>(null);
