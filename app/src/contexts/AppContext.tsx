@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- context pattern: hook and provider co-exported */
-import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { z } from 'zod';
 import type { User, Contact, Chat, Message, AppSettings, SecuritySettings, ConnectionState, EncryptionState } from '@/types';
 import type { I2PStatus } from '@/services/i2p';
@@ -563,23 +563,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [i2pStatus?.samConnected, contacts]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState (derived)
-  const connectionState: ConnectionState = isLocked
-    ? 'locked'
-    : encryptionState === 'error'
-      ? 'error'
-      : i2pStatus?.samConnected
-        ? 'connected'
-        : i2pStatus?.error
-          ? 'error'
-          : 'disconnected';
+  const connectionState = useMemo<ConnectionState>(() => {
+    if (isLocked) return 'locked';
+    if (encryptionState === 'error') return 'error';
+    if (i2pStatus?.samConnected) return 'connected';
+    if (i2pStatus?.error) return 'error';
+    return 'disconnected';
+  }, [i2pStatus, isLocked, encryptionState]);
 
   // Contact operations
   const addContact = useCallback(async (contact: Contact) => {
     await storageService.saveContact(contact);
     setContacts(prev => [...prev, contact]);
   }, []);
-
-
 
   const updateContact = useCallback(async (contact: Contact) => {
     await storageService.saveContact(contact);

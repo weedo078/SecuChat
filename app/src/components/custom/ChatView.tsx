@@ -108,36 +108,43 @@ export function ChatView() {
     return () => fileTransferManager.offProgress(handler);
   }, []);
 
-  // Handle typing indicator on input
+  // Hold the latest active address in a ref so the callbacks below are stable
+  const activeAddressRef = useRef<string | undefined>(activeChat?.contact?.i2pAddress);
+  useEffect(() => {
+    activeAddressRef.current = activeChat?.contact?.i2pAddress;
+  }, [activeChat?.contact?.i2pAddress]);
   const handleInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     setMessageText(e.target.value);
-    if (activeChat?.contact?.i2pAddress) {
-      statusMessenger.sendTyping(activeChat.contact.i2pAddress);
+    const addr = activeAddressRef.current;
+    if (addr) {
+      statusMessenger.sendTyping(addr);
     }
-  }, [activeChat?.contact?.i2pAddress]);
+  }, []);
 
   // Handle voice message recorded
   const handleVoiceRecorded = useCallback(async (voiceMsg: VoiceMessage) => {
-    if (!activeChat?.contact?.i2pAddress) return;
+    const addr = activeAddressRef.current;
+    if (!addr) return;
     try {
       const file = new File([voiceMsg.blob], `voice-${voiceMsg.id}.webm`, { type: voiceMsg.mimeType });
-      await sendFile(activeChat.contact.i2pAddress, file);
+      await sendFile(addr, file);
       toast.success(t('chat.voiceSent'));
     } catch {
       toast.error(t('chat.voiceError'));
     }
-  }, [activeChat?.contact?.i2pAddress, sendFile, t]);
+  }, [sendFile, t]);
 
   // Handle file transfer send
   const handleFileTransfer = useCallback(async (file: File) => {
-    if (!activeChat?.contact?.i2pAddress) return;
+    const addr = activeAddressRef.current;
+    if (!addr) return;
     try {
-      await fileTransferManager.sendFile(activeChat.contact.i2pAddress, file);
+      await fileTransferManager.sendFile(addr, file);
       toast.success(t('chat.fileSent'));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('chat.fileSendError'));
     }
-  }, [activeChat?.contact?.i2pAddress, t]);
+  }, [t]);
 
   const handleSend = async () => {
     if (!messageText.trim()) return;

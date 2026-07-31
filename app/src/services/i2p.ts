@@ -300,7 +300,8 @@ class I2PService {
           '• Der andere Nutzer ist offline\n' +
           '• i2pd baut noch Verbindungen auf (1-3 Min warten)\n' +
           '• Falsche I2P-Adresse im Kontakt\n' +
-          '• Firewall blockiert Verbindung'
+          '• Firewall blockiert Verbindung',
+          { cause: error }
         );
       }
       throw error;
@@ -345,7 +346,7 @@ class I2PService {
         await this.connectToPeer(to);
         const reconnectedPeer = this.peers.get(to);
         if (!reconnectedPeer?.samStreamId) {
-          throw new Error('Peer nicht verbunden nach Reconnect');
+          throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
         }
         await samService.send(reconnectedPeer.samStreamId, JSON.stringify(message));
         return true;

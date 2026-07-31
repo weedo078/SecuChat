@@ -53,7 +53,7 @@ export class CryptoService {
       return { publicKey, privateKey, fingerprint };
     } catch (error) {
       logger.error('Error generating key pair:', error);
-      throw new Error(`Failed to generate PGP key pair: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      throw new Error(`Failed to generate PGP key pair: ${error instanceof Error ? error.message : 'Unknown error'}`, { cause: error });
     }
   }
 
@@ -76,7 +76,7 @@ export class CryptoService {
       return { fingerprint };
     } catch (error) {
       logger.error('Error importing key pair:', error);
-      throw new Error('Failed to import PGP key pair');
+      throw new Error('Failed to import PGP key pair', { cause: error });
     }
   }
 
@@ -103,7 +103,7 @@ export class CryptoService {
       return encrypted;
     } catch (error) {
       logger.error('Error encrypting message:', error);
-      throw new Error('Failed to encrypt message');
+      throw new Error('Failed to encrypt message', { cause: error });
     }
   }
 
@@ -138,7 +138,7 @@ export class CryptoService {
       return decrypted;
     } catch (error) {
       logger.error('Error decrypting message:', error);
-      throw new Error('Failed to decrypt message');
+      throw new Error('Failed to decrypt message', { cause: error });
     }
   }
 
@@ -165,7 +165,7 @@ export class CryptoService {
       return signed;
     } catch (error) {
       logger.error('Error signing message:', error);
-      throw new Error('Failed to sign message');
+      throw new Error('Failed to sign message', { cause: error });
     }
   }
 
