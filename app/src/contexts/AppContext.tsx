@@ -128,6 +128,12 @@ function effectiveSamConfig(sam: AppSettings['i2p']['sam']): AppSettings['i2p'][
     config.port = 7656;
   }
 
+  // DEV/TEST: optionaler SAM-Bridge-Host via localStorage (Emulator→10.0.2.2, Telefon→Host-LAN-IP).
+  if (typeof localStorage !== 'undefined') {
+    const hostOverride = localStorage.getItem('secuchat_sam_host');
+    if (hostOverride) config.host = hostOverride;
+  }
+
   return config;
 }
 

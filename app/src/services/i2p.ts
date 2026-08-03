@@ -59,8 +59,16 @@ class I2PService {
    * Initialize I2P service — connects to SAM via proxy
    */
   async initialize(config?: SAMConfig): Promise<I2PStatus> {
+    // DEV/TEST: optionaler SAM-Bridge-Host via localStorage (z.B. Emulator→10.0.2.2, Telefon→Host-LAN-IP)
+    const hostOverride = (typeof localStorage !== 'undefined'
+      ? localStorage.getItem('secuchat_sam_host')
+      : null) || '';
     const defaultPort = platformService.isAndroidNative() ? 7656 : 7657;
-    const samConfig: SAMConfig = config || { host: '127.0.0.1', port: defaultPort, enabled: true };
+    const samConfig: SAMConfig = config || {
+      host: hostOverride || '127.0.0.1',
+      port: defaultPort,
+      enabled: true,
+    };
 
     // Check if SAM proxy is available
     const samAvailable = await samService.isAvailable(samConfig);
@@ -160,23 +168,38 @@ class I2PService {
   }
 
   /**
-   * Generate new I2P identity (Ed25519 keypair for local addressing)
+   * Generate new I2P identity (Ed25519 keypair for local addressing).
+   *
+   * Preserves any samDestination that was already set via setSamDestination()
+   * (e.g. by the auto-onboarding path which generates the SAM destination
+   * via the native plugin before generateIdentity() runs). Without this
+   * guard, a fresh identity object would drop the SAM destination and the
+   * user record would be saved without one.
    */
   async generateIdentity(): Promise<I2PIdentity> {
     const keypair = nacl.sign.keyPair();
     const b32Address = toBase32(keypair.publicKey) + '.b32.i2p';
 
+    // Preserve SAM destination if it was set before identity creation
+    const existingSamDestination = this.identity?.samDestination;
+
     this.identity = {
       publicKey: keypair.publicKey,
       privateKey: keypair.secretKey,
       b32Address,
+      ...(existingSamDestination ? { samDestination: existingSamDestination } : {}),
     };
 
     // Zero the raw keypair bytes — identity now holds the only copy
     keypair.secretKey.fill(0);
 
-    // If SAM is connected, also generate SAM destination
-    if (samService.isSAMConnected()) {
+    // If SAM is connected AND we don't already have a SAM destination
+    // (e.g. set via setSamDestination() before generateIdentity()), reuse
+    // it. Otherwise generate a fresh one.
+    // This fixes a race where the auto-onboarding path sets the destination
+    // via the native plugin first, then calls generateIdentity() which
+    // would otherwise overwrite it with a second one.
+    if (samService.isSAMConnected() && !this.identity.samDestination) {
       try {
         const session = await samService.generateDestination();
         // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
@@ -188,6 +211,16 @@ class I2PService {
         }
       } catch (error) {
         logger.warn('[I2P] Failed to create SAM destination:', error);
+      }
+    } else if (samService.isSAMConnected()) {
+      // We already have a SAM destination; just sync the b32 address from SAM
+      try {
+        const samB32 = await samService.getB32Address();
+        if (samB32) {
+          this.identity.b32Address = samB32;
+        }
+      } catch (error) {
+        logger.warn('[I2P] Failed to read SAM b32:', error);
       }
     }
 
@@ -220,13 +253,31 @@ class I2PService {
   }
 
   /**
-   * Set SAM destination for the current identity
+   * Set SAM destination for the current identity.
+   *
+   * Defensive: if no identity exists yet (auto-onboarding race where
+   * generateIdentity() and a SAM connect run interleaved and the identity
+   * reference is lost), we lazily create a minimal identity from the SAM
+   * destination's public key. Caller should still call restoreIdentity() or
+   * generateIdentity() to populate the Ed25519 keypair.
    */
   setSamDestination(samDestination: string): void {
-    if (this.identity) {
-      this.identity.samDestination = samDestination;
+    if (!this.identity) {
+      // No identity yet — create a minimal placeholder so the destination
+      // is not silently dropped. generateIdentity() / restoreIdentity() will
+      // overwrite this with the real Ed25519 keys.
+      this.identity = {
+        publicKey: new Uint8Array(32),
+        privateKey: new Uint8Array(64),
+        b32Address: '',
+        samDestination,
+      };
+      logger.warn('[I2P] setSamDestination called without identity — created placeholder, caller must populate keys');
       this.notifyStatusChange();
+      return;
     }
+    this.identity.samDestination = samDestination;
+    this.notifyStatusChange();
   }
 
   getIdentity(): I2PIdentity | null {
@@ -607,3 +658,7 @@ class I2PService {
 }
 
 export const i2pService = new I2PService();
+// DEV/TEST: global exposure for CDP-driven E2E tests
+if (typeof window !== 'undefined') {
+  (window as unknown as { __i2pDebug?: unknown }).__i2pDebug = i2pService;
+}

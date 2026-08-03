@@ -21,6 +21,10 @@ interface OnboardingProps {
   isNewDevice?: boolean;  // True if pairing existing account
 }
 
+// Modul-State: schützt gegen parallele Auto-Onboard-Runs, wenn storage-Event
+// und Polling-Listener im selben Tick feuern (z.B. nach CDP setItem).
+let autoOnboardInFlight = false;
+
 export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps) {
   const { t } = useTranslation();
   const [step, setStep] = useState(1);
@@ -49,6 +53,137 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   useEffect(() => {
     const info = platformService.getPlatformInfo();
     setPlatformInfo(info);
+  }, []);
+
+  // === DEV/TEST: Auto-onboard via localStorage flag 'secuchat_auto_onboard' ===
+  // Umgeht die UI komplett (für automatisierte Tests ohne manuelles Tippen).
+  // Aktivierbar nur durch explizites CDP/localStorage-Setzen — nie in Production.
+  //
+  // Re-Mount-Harness (Bug-Fix 2026-08-03): useEffect([], []) feuert beim
+  // WebView-Reload nicht erneut, weil React-State im selben Window bleibt.
+  // Wir lauschen zusätzlich auf 'storage'-Events (CDP-setItem triggert sie
+  // auch same-window in modernen Browsern) und pollen alle 500 ms, falls
+  // der storage-Event aus irgendeinem Grund nicht feuert (z.B. private mode).
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (cancelled) return;
+      if (localStorage.getItem('secuchat_auto_onboard') !== '1') return;
+      if (autoOnboardInFlight) return;
+      autoOnboardInFlight = true;
+      try {
+        console.log('[AUTO-ONBOARD] start');
+        const u = 'Android', p = 'testpass123', dev = 'Pixel Phone';
+        const keys = await cryptoService.generateKeyPair(u, p);
+        if (cancelled) return;
+        // SAM-Destination ZUERST erzeugen (bevor generateIdentity läuft und die
+        // Identity überschreibt). Sonst droht der Race, bei dem setSamDestination
+        // die Destination verwirft, weil this.identity zwischenzeitlich null ist.
+        let samDestination: string | undefined;
+        const samPlugin: {
+          connect: (cfg: { host: string; port: number; enabled: boolean }) => Promise<{ connected: boolean }>;
+          generateDestination: (opts: { signatureType: string }) => Promise<{ success: boolean; privateKey?: string }>;
+        } | null = (window as { Capacitor?: { Plugins?: { SAM?: unknown } } })?.Capacitor?.Plugins?.SAM ?? null;
+        if (samPlugin) {
+          try {
+            // Android-i2pd 2.59/2.61 crashes in DEST GENERATE for RSA types 4-6.
+            // Ed25519 type 7 succeeds and was verified with a raw SAM echo test.
+            // Bridge-Host aus localStorage lesen (Emulator → 10.0.2.2, Telefon → LAN-IP),
+            // sonst Default 127.0.0.1. So vermeiden wir die Symmetric-NAT-Falle.
+            const samHost = (typeof localStorage !== 'undefined'
+              ? (localStorage.getItem('secuchat_auto_onboard_host')
+                  || localStorage.getItem('secuchat_sam_host'))
+              : null) || '127.0.0.1';
+            const connectResult = await samPlugin.connect({ host: samHost, port: 7656, enabled: true });
+            console.log('[AUTO-ONBOARD] samPlugin.connect', { host: samHost, result: connectResult });
+            const d = await samPlugin.generateDestination({ signatureType: '7' });
+            console.log('[AUTO-ONBOARD] samPlugin.generateDestination result', { success: d?.success, hasPrivateKey: !!d?.privateKey });
+            if (d?.success && d.privateKey) {
+              samDestination = d.privateKey;
+              // setSamDestination vor generateIdentity — i2pService legt sonst
+              // eine frische identity ohne samDestination an und unsere Destination
+              // wäre weg.
+              i2pService.setSamDestination(d.privateKey);
+              console.log('[AUTO-ONBOARD] SAM destination generated directly, set on service', {
+                sdLen: d.privateKey.length,
+                identityHasDestination: !!i2pService.exportIdentity()?.samDestination,
+              });
+            } else {
+              console.warn('[AUTO-ONBOARD] generateDestination returned', d);
+            }
+          } catch (e) { console.warn('[AUTO-ONBOARD] direct SAM dest gen failed:', e); }
+        }
+        const i2p = await i2pService.generateIdentity();
+        if (cancelled) return;
+        // Nach generateIdentity nochmal lesen — der Service hat evtl. selbst
+        // eine Destination erzeugt (SAM connected) und wir wollen den echten Wert.
+        if (!samDestination) {
+          samDestination = i2pService.exportIdentity()?.samDestination;
+        }
+        await storageService.init();
+        const userRec = {
+          id: crypto.randomUUID(), username: u, deviceId: crypto.randomUUID(),
+          deviceName: dev, pgpPublicKey: keys.publicKey, pgpPrivateKey: keys.privateKey,
+          fingerprint: keys.fingerprint, i2pAddress: i2p.b32Address,
+          i2pPublicKey: uint8ArrayToBase64(i2p.publicKey), i2pPrivateKey: uint8ArrayToBase64(i2p.privateKey),
+          i2pSamDestination: samDestination, createdAt: new Date().toISOString(),
+        };
+        console.log('[AUTO-ONBOARD] userRec built', {
+          samDestLen: (userRec.i2pSamDestination || '').length,
+          samStart: (userRec.i2pSamDestination || '').slice(0, 32),
+        });
+        storageService.setEncryptionPassphrase(p);
+        await storageService.saveUser(userRec);
+        const platform = platformService.getPlatformInfo();
+        // Host-i2pd-Bridge für Cross-Host-E2E-Test: Emulator → 10.0.2.2:7656, Telefon im LAN → 192.168.179.62:7656
+        const hostOverride = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_host')
+          : null) || '127.0.0.1';
+        await storageService.saveSettings({
+          theme: 'dark', language: 'de', notifications: true,
+          notificationSettings: { enabled: true, sound: true, vibration: true, showPreview: true, priority: 'high' },
+          soundEnabled: true, autoLock: false, lockTimeout: 5, screenshotProtection: true,
+          syncEnabled: true, deviceName: dev,
+          i2p: { mode: platform.i2pSupport === 'native' ? 'auto' : 'sam',
+                 sam: { enabled: true, host: hostOverride, port: 7656, nickname: 'securechat' } },
+        } as AppSettings);
+        localStorage.removeItem('secuchat_auto_onboard');
+        console.log('[AUTO-ONBOARD] success, reloading');
+        autoOnboardInFlight = false;
+        onComplete();
+      } catch (err) {
+        autoOnboardInFlight = false;
+        console.error('[AUTO-ONBOARD] FAILED:', err instanceof Error ? err.message : String(err), err);
+      }
+    };
+
+    // 1) Direkter Mount-Check (für Reload-Szenarien, bei denen das Flag schon gesetzt ist)
+    void run();
+
+    // 2) storage-Event: triggert auch same-window bei modernen Browsern/WebViews,
+    //    wenn CDP ein setItem aufruft, NACHDEM React gemountet wurde.
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === 'secuchat_auto_onboard' && ev.newValue === '1') {
+        void run();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // 3) Polling-Fallback: alle 500 ms prüfen, falls storage-Event im WebView
+    //    nicht zuverlässig same-window feuert (historisch auf manchen Android-WebViews).
+    const pollInterval = setInterval(() => {
+      void run();
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('storage', onStorage);
+      clearInterval(pollInterval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const totalSteps = isNewDevice ? 3 : 5;
