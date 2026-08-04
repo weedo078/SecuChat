@@ -93,6 +93,10 @@ const SAMNativePlugin = registerPlugin<{
     error?: string;
   }>;
   closeStream(options: { streamId: number }): Promise<{ success: boolean; error?: string }>;
+  publishLeaseSet(options?: Record<string, never>): Promise<{
+    success: boolean;
+    raw?: string;
+  }>;
 
   // Event listeners
   addListener(
@@ -322,6 +326,28 @@ class SAMNativeService {
       return result.success;
     } catch (error) {
       logger.error('[SAMNative] Close stream error:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Explicitly publish the current SAM session's LeaseSet to the I2P NetDB.
+   * i2pd only publishes lazily on the first outgoing STREAM CONNECT, so
+   * passive peers (never initiating connections) stay invisible without this.
+   *
+   * @returns true on RESULT=OK, false otherwise
+   */
+  async publishLeaseSet(): Promise<boolean> {
+    try {
+      const result = await SAMNativePlugin.publishLeaseSet({});
+      if (!result.success) {
+        logger.warn('[SAMNative] publishLeaseSet returned not-OK');
+        return false;
+      }
+      logger.log('[SAMNative] publishLeaseSet succeeded');
+      return true;
+    } catch (error) {
+      logger.error('[SAMNative] publishLeaseSet error:', error);
       return false;
     }
   }

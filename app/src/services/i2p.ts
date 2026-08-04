@@ -8,6 +8,7 @@
 import nacl from 'tweetnacl';
 import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
+import { samNativeService } from './samNative';
 import { logger } from '@/utils/logger';
 import { platformService } from './platform';
 export { samService, type SAMConfig };
@@ -54,6 +55,7 @@ class I2PService {
     leasesetPublished: false,
   };
   private tunnelCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private leaseSetRepublishInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Initialize I2P service — connects to SAM via proxy
@@ -125,6 +127,29 @@ class I2PService {
       // with DUPLICATED_ID (old sessions stay alive ~5 min after TCP drop)
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
+
+      // Publish lease set so peers can find us via the DHT.
+      // i2pd publishes lazily on first outgoing STREAM CONNECT, which listener-only
+      // peers (no outgoing connects of their own) never trigger. Explicit publish
+      // makes the destination reachable from the moment SAM is up.
+      if (platformService.isAndroidNative()) {
+        try {
+          const published = await samNativeService.publishLeaseSet();
+          if (published) {
+            logger.log('[I2P] LeaseSet published to DHT');
+            this.currentStatus.leasesetPublished = true;
+          } else {
+            logger.warn('[I2P] LeaseSet publish returned false');
+          }
+        } catch (e) {
+          logger.error('[I2P] LeaseSet publish failed:', e);
+        }
+        // Re-publish every 5 minutes (i2pd lease set lifetime is ~10 min).
+        // Listener-only peers never trigger an outgoing STREAM CONNECT, so
+        // i2pd would let the lease set expire silently. Explicit republish
+        // keeps us reachable.
+        this.startLeaseSetRepublishLoop();
+      }
 
       // Start accepting incoming streams on a dedicated socket (SAM v3.1 spec).
       // Each accepted connection gets its own WebSocket so the session socket
@@ -588,6 +613,31 @@ class I2PService {
       this.tunnelCheckInterval = null;
     }
   }
+
+  /**
+   * Re-publish our LeaseSet every 5 minutes. i2pd's default leaseSet
+   * lifetime is ~10 min; the 5-min interval gives a 2x safety margin and
+   * keeps listener-only peers (no outgoing STREAM CONNECT of their own)
+   * reachable across reconnects.
+   */
+  private startLeaseSetRepublishLoop(): void {
+    this.stopLeaseSetRepublishLoop();
+    this.leaseSetRepublishInterval = setInterval(() => {
+      if (!this.currentStatus.samConnected) return;
+      void samNativeService.publishLeaseSet()
+        .then((ok) => {
+          if (!ok) logger.warn('[I2P] LeaseSet republish failed');
+        })
+        .catch((e) => logger.warn('[I2P] Republish threw:', e));
+    }, 5 * 60 * 1000);
+  }
+
+  private stopLeaseSetRepublishLoop(): void {
+    if (this.leaseSetRepublishInterval) {
+      clearInterval(this.leaseSetRepublishInterval);
+      this.leaseSetRepublishInterval = null;
+    }
+  }
   
   /**
    * Check i2pd web console API for tunnel status
@@ -659,6 +709,7 @@ class I2PService {
     }
     this.identity = null;
     this.peers.clear();
+    this.stopLeaseSetRepublishLoop();
     samService.shutdown();
     this.currentStatus = {
       samConnected: false,

@@ -134,6 +134,34 @@ public class SAMStream {
     }
 
     /**
+     * Publish the LeaseSet for the session attached to this stream.
+     * Must be called AFTER connect() (which performs HELLO). The publish
+     * is sent on this fresh socket bound to the session ID.
+     *
+     * i2pd accepts DESTINATION PUBLISH on any socket that includes the
+     * session ID — it does not require SESSION CREATE on the same socket.
+     *
+     * @return raw SAM response line, or null on socket error / timeout
+     * @throws IOException if the stream is not in SESSION_ATTACHED state
+     */
+    public String publishLeaseSet() throws IOException {
+        if (state != State.SESSION_ATTACHED) {
+            throw new IllegalStateException("Stream not ready for DESTINATION PUBLISH: " + state);
+        }
+        // Tight read timeout: i2pd answers DESTINATION PUBLISH quickly.
+        if (socket != null) {
+            try { socket.setSoTimeout(30000); } catch (Exception ignored) { }
+        }
+        String cmd = "DESTINATION PUBLISH ID=" + sessionId + "\n";
+        Log.d(TAG, "Sending DESTINATION PUBLISH for session: " + sessionId);
+        writer.print(cmd);
+        writer.flush();
+        String response = reader.readLine();
+        Log.d(TAG, "DESTINATION PUBLISH response: " + response);
+        return response;
+    }
+
+    /**
      * Connect to SAM bridge and perform HELLO handshake.
      *
      * @return true if connected and hello completed

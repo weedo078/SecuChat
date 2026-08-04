@@ -443,6 +443,32 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     lastSessionPrivateKey = (privateKey != null && !privateKey.isEmpty()) ? privateKey : null;
                     lastSessionStyle = style;
                     Log.d(TAG, "Session created with ID: " + nickname);
+
+                    // IMMEDIATELY publish the LeaseSet on the SAME socket, before
+                    // i2pd closes the session socket. This is required for inbound
+                    // reachability for listener-only peers — i2pd only publishes
+                    // the LeaseSet lazily on first outgoing STREAM CONNECT.
+                    //
+                    // CRITICAL: i2pd accepts DESTINATION PUBLISH only on the
+                    // session-bound socket, and i2pd closes that socket within
+                    // milliseconds after SESSION STATUS is sent. We piggyback
+                    // the publish on the existing socket while it's still open.
+                    try {
+                        String publishResp = socketManager.sendCommandAndWait(
+                            "DESTINATION PUBLISH ID=" + nickname
+                        );
+                        if (publishResp != null && publishResp.contains("RESULT=OK")) {
+                            Log.i(TAG, "DESTINATION PUBLISH succeeded during createSession: " + publishResp);
+                            result.put("leaseSetPublished", true);
+                            result.put("publishResponse", publishResp);
+                        } else {
+                            Log.w(TAG, "DESTINATION PUBLISH during createSession returned: " + publishResp);
+                            result.put("leaseSetPublished", false);
+                        }
+                    } catch (Exception pubEx) {
+                        Log.w(TAG, "DESTINATION PUBLISH during createSession threw: " + pubEx.getMessage());
+                        result.put("leaseSetPublished", false);
+                    }
                 } else {
                     result.put("success", false);
                     result.put("error", response != null ? response : "No response");
@@ -453,6 +479,81 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             } catch (Exception e) {
                 Log.e(TAG, "SESSION CREATE failed: " + e.getMessage(), e);
                 call.reject("SESSION CREATE failed: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
+     * Re-publish the current session's LeaseSet to the I2P NetDB.
+     *
+     * i2pd lease-set lifetime is ~10 min. Without periodic re-publishes, the
+     * LeaseSet would expire and other peers would see "LeaseSet not found".
+     * This is a separate call from the inline publish-during-createSession
+     * above, used by the 5-minute republish loop in i2p.ts.
+     *
+     * Note: after createSession(), the main SAM socket is typically closed
+     * by i2pd. For republishes we open a fresh SAMStream: HELLO, then
+     * DESTINATION PUBLISH on the fresh socket. i2pd binds the new socket
+     * to the existing session by session ID — this is i2pd-specific
+     * behaviour that works in practice but is NOT standard SAM v3.1.
+     *
+     * Returns: { success: boolean, raw: string }
+     */
+    @PluginMethod
+    public void publishLeaseSet(PluginCall call) {
+        executorService.execute(() -> {
+            SAMStream pubStream = null;
+            try {
+                if (currentSessionId == null) {
+                    call.reject("No active SAM session. Call createSession() first.");
+                    return;
+                }
+                if (samHost == null || samPort == 0) {
+                    call.reject("SAM host/port not initialized");
+                    return;
+                }
+
+                // Fast path: main session-bound socket is still alive.
+                if (socketManager.isConnected()) {
+                    String response = socketManager.sendCommandAndWait(
+                        "DESTINATION PUBLISH ID=" + currentSessionId
+                    );
+                    if (response != null && response.contains("RESULT=OK")) {
+                        Log.i(TAG, "DESTINATION PUBLISH (republish, main socket) succeeded: " + response);
+                        JSObject result = new JSObject();
+                        result.put("success", true);
+                        result.put("raw", response);
+                        call.resolve(result);
+                        return;
+                    }
+                    Log.w(TAG, "DESTINATION PUBLISH (republish, main socket) returned: " + response);
+                }
+
+                // Fallback: fresh socket. i2pd rebinds to the existing session
+                // by session ID.
+                Log.w(TAG, "Falling back to fresh-socket DESTINATION PUBLISH for session " + currentSessionId);
+                pubStream = new SAMStream(currentSessionId, samHost, samPort);
+                pubStream.connect();
+                String response = pubStream.publishLeaseSet();
+                boolean ok = response != null && response.contains("RESULT=OK");
+                if (!ok) {
+                    String errMsg = response != null ? response : "No response from SAM";
+                    Log.e(TAG, "DESTINATION PUBLISH (fresh-socket fallback) failed: " + errMsg);
+                    call.reject("DESTINATION PUBLISH failed: " + errMsg);
+                    return;
+                }
+                Log.i(TAG, "DESTINATION PUBLISH (fresh-socket fallback) succeeded: " + response);
+                JSObject result = new JSObject();
+                result.put("success", true);
+                result.put("raw", response);
+                call.resolve(result);
+            } catch (Exception e) {
+                Log.e(TAG, "DESTINATION PUBLISH error: " + e.getMessage(), e);
+                call.reject("DESTINATION PUBLISH error: " + e.getMessage());
+            } finally {
+                if (pubStream != null) {
+                    try { pubStream.close(); } catch (Exception ignored) { }
+                }
             }
         });
     }
