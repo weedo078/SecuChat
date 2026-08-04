@@ -414,7 +414,8 @@ class I2PService {
           '• Der andere Nutzer ist offline\n' +
           '• i2pd baut noch Verbindungen auf (1-3 Min warten)\n' +
           '• Falsche I2P-Adresse im Kontakt\n' +
-          '• Firewall blockiert Verbindung'
+          '• Firewall blockiert Verbindung',
+          { cause: error }
         );
       }
       throw error;
@@ -428,45 +429,45 @@ class I2PService {
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- message structure varies by type
   async sendMessage(to: string, message: any): Promise<boolean> {
+    try {
+      await this.sendMessageOrThrow(to, message);
+      return true;
+    } catch (error) {
+      logger.error('[I2P] Failed to send message:', error);
+      return false;
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- message structure varies by type
+  private async sendMessageOrThrow(to: string, message: any): Promise<void> {
+    const payload = JSON.stringify(message);
     const peer = this.peers.get(to);
 
-    // Check if stream socket is actually still open
     const streamStillOpen = peer?.samStreamId != null && samService.isStreamOpen(peer.samStreamId);
     if (!peer || peer.status !== 'connected' || !peer.samStreamId || !streamStillOpen) {
-      // Try to connect first
-      try {
-        await this.connectToPeer(to);
-        const updatedPeer = this.peers.get(to);
-        if (!updatedPeer?.samStreamId) {
-          throw new Error('Peer nicht verbunden');
-        }
-        await samService.send(updatedPeer.samStreamId, JSON.stringify(message));
-        return true;
-      } catch (error) {
-        logger.error('[I2P] Failed to send message:', error);
-        return false;
+      if (peer) {
+        peer.status = 'disconnected';
       }
+      await this.connectToPeer(to);
+      const updatedPeer = this.peers.get(to);
+      if (!updatedPeer?.samStreamId || !samService.isStreamOpen(updatedPeer.samStreamId)) {
+        throw new Error('Peer nicht verbunden oder Stream nach Connect nicht offen');
+      }
+      await samService.send(updatedPeer.samStreamId, payload);
+      return;
     }
 
     try {
-      await samService.send(peer.samStreamId, JSON.stringify(message));
-      return true;
+      await samService.send(peer.samStreamId, payload);
     } catch (error) {
       logger.warn('[I2P] Send failed, attempting reconnect:', error);
       peer.status = 'disconnected';
-      // Try reconnect + resend once
-      try {
-        await this.connectToPeer(to);
-        const reconnectedPeer = this.peers.get(to);
-        if (!reconnectedPeer?.samStreamId) {
-          throw new Error('Peer nicht verbunden nach Reconnect');
-        }
-        await samService.send(reconnectedPeer.samStreamId, JSON.stringify(message));
-        return true;
-      } catch (retryError) {
-        logger.error('[I2P] Failed to send message after reconnect:', retryError);
-        return false;
+      await this.connectToPeer(to);
+      const reconnectedPeer = this.peers.get(to);
+      if (!reconnectedPeer?.samStreamId || !samService.isStreamOpen(reconnectedPeer.samStreamId)) {
+        throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
       }
+      await samService.send(reconnectedPeer.samStreamId, payload);
     }
   }
 

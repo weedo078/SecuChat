@@ -208,6 +208,13 @@ class SAMService {
     samNativeService.onMessage(this.nativeMessageHandler);
 
     this.nativeStreamConnectedHandler = (streamId: number, peerDestination: string) => {
+      const existing = this.streams.get(streamId);
+      if (existing) {
+        existing.peerDestination = peerDestination;
+        existing.connected = true;
+        return;
+      }
+
       const stream: SAMStream = {
         id: streamId,
         peerDestination,
@@ -865,7 +872,9 @@ class SAMService {
       }
       const success = await samNativeService.send(streamId, data);
       if (!success) {
-        throw new Error('Native send failed');
+        stream.connected = false;
+        this.streams.delete(streamId);
+        throw new Error(`Native send failed for stream ${streamId}`);
       }
       return;
     }
