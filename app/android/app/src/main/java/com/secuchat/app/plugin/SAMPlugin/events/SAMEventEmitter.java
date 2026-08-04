@@ -61,10 +61,10 @@ public class SAMEventEmitter {
      * Thread-safe: can be called from background threads.
      */
     public void emitMessage(String from, String data, int streamId) {
-        if (!hasListeners(EVENT_MESSAGE)) {
-            return;
-        }
-
+        // Always emit: Capacitor's Plugin.notifyListeners does its own listener
+        // filtering against the eventListeners map populated by JS addListener.
+        // The previous activeEventListeners guard was dead code (nothing ever
+        // called addEventListener), so every incoming message was discarded.
         SAMMessageEvent event = new SAMMessageEvent(from, data, streamId);
         emitOnMainThread(EVENT_MESSAGE, event.toJSObject());
     }
@@ -74,10 +74,6 @@ public class SAMEventEmitter {
      * Thread-safe: can be called from background threads.
      */
     public void emitStreamConnected(String peerDestination, int streamId) {
-        if (!hasListeners(EVENT_STREAM_CONNECTED)) {
-            return;
-        }
-
         SAMConnectionEvent event = SAMConnectionEvent.streamConnected(peerDestination, streamId);
         emitOnMainThread(EVENT_STREAM_CONNECTED, event.toJSObject());
     }
@@ -87,10 +83,6 @@ public class SAMEventEmitter {
      * Thread-safe: can be called from background threads.
      */
     public void emitStreamClosed(int streamId, String reason) {
-        if (!hasListeners(EVENT_STREAM_CLOSED)) {
-            return;
-        }
-
         SAMConnectionEvent event = SAMConnectionEvent.streamClosed(streamId, reason);
         emitOnMainThread(EVENT_STREAM_CLOSED, event.toJSObject());
     }
@@ -100,10 +92,6 @@ public class SAMEventEmitter {
      * Thread-safe: can be called from background threads.
      */
     public void emitError(String error, String code, int streamId) {
-        if (!hasListeners(EVENT_ERROR)) {
-            return;
-        }
-
         SAMConnectionEvent event = SAMConnectionEvent.error(error, code, streamId);
         emitOnMainThread(EVENT_ERROR, event.toJSObject());
     }
