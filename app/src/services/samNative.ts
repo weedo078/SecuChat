@@ -310,6 +310,9 @@ class SAMNativeService {
   async send(streamId: number, data: string): Promise<boolean> {
     try {
       const result = await SAMNativePlugin.send({ streamId, data });
+      if (!result.success) {
+        logger.error('[SAMNative] Send failed:', result.error ?? `stream ${streamId}`);
+      }
       return result.success;
     } catch (error) {
       logger.error('[SAMNative] Send error:', error);

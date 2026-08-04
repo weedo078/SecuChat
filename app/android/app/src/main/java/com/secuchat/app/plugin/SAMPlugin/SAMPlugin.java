@@ -650,6 +650,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 });
 
                 activeStreams.put(streamId, stream);
+                eventEmitter.emitStreamConnected(destination, streamId);
 
                 JSObject result = new JSObject();
                 result.put("success", true);
@@ -798,12 +799,26 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     call.reject("Stream not found: " + streamId);
                     return;
                 }
+                if (!stream.isConnected()) {
+                    activeStreams.remove(streamId);
+                    eventEmitter.emitStreamClosed(streamId, "stream not connected before send");
+                    JSObject result = new JSObject();
+                    result.put("success", false);
+                    result.put("error", "Stream not connected: " + streamId);
+                    call.resolve(result);
+                    return;
+                }
+
                 boolean success = stream.send(data);
 
                 JSObject result = new JSObject();
                 result.put("success", success);
                 if (success) {
                     result.put("bytesSent", data.length());
+                } else {
+                    activeStreams.remove(streamId);
+                    eventEmitter.emitStreamClosed(streamId, "send failed");
+                    result.put("error", "Stream send failed: " + streamId);
                 }
                 call.resolve(result);
 

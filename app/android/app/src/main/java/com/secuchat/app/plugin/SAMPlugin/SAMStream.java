@@ -344,7 +344,7 @@ public class SAMStream {
      * @return true if sent
      */
     public boolean send(String data) {
-        if (state != State.CONNECTED || writer == null) {
+        if (!isConnected()) {
             Log.w(TAG, "Cannot send: stream not connected");
             return false;
         }
@@ -457,7 +457,11 @@ public class SAMStream {
         return state == State.CONNECTED &&
                socket != null &&
                socket.isConnected() &&
-               !socket.isClosed();
+               !socket.isClosed() &&
+               !socket.isInputShutdown() &&
+               !socket.isOutputShutdown() &&
+               writer != null &&
+               !writer.checkError();
     }
 
     /**
