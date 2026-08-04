@@ -141,6 +141,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Refs for tracking listener registration state
   const listenersRegisteredRef = useRef(false);
 
+  // Mount-time anchor for the grace period: peers don't go "offline" during the
+  // first APP_MOUNT_GRACE_MS after the very first component render, because
+  // LeaseSets need minutes to propagate after a fresh SAM session.
+  const mountTimeRef = useRef<number>(Date.now());
+
   // Mirror of `contacts` for use inside intervals/timers. Reading contacts via a
   // ref keeps React state updaters PURE — previously the periodic status check
   // launched its network side-effects from inside a setContacts(prev => ...)
@@ -652,9 +657,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!i2pStatus?.samConnected) return;
 
-    // Track consecutive failures per contact — only mark offline after 3 failures
+    // Track consecutive failures per contact — only mark offline after 6 failures.
+    // LeaseSet propagation after a fresh SAM session can take several minutes; the
+    // old 3 × 30 s = 90 s window flipped legitimate peers to "offline" while they
+    // were still propagating. 6 × 90 s = 9 min + a 5-min grace period covers normal
+    // i2pd tunnel-build + LeaseSet-publish windows.
+    // NOTE: mountTimeRef is declared at component top-level (Rules of Hooks) — it's
+    // initialized once on first render and shared across this useEffect re-runs.
+    const APP_MOUNT_GRACE_MS = 5 * 60 * 1000;
     const consecutiveFailures = new Map<string, number>();
-    const FAILURE_THRESHOLD = 3;
+    const FAILURE_THRESHOLD = 6; // 6×90s = 9 min before marking offline
     // Guards against overlapping pings for the same contact. A single ping can
     // outlive the 30 s interval, and without this a slow peer accumulates one
     // in-flight connect attempt per tick (the connectTo storm).
@@ -700,6 +712,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
           console.log(`[Status Check] SAM session lost, skipping ping for ${contact.name}`);
           return;
         }
+        // Grace-Period nach App-Mount: frische LeaseSets brauchen Minuten zur
+        // Propagation. In den ersten 5 Min keine Offline-Markierung, nur loggen.
+        const sinceMount = Date.now() - mountTimeRef.current;
+        if (sinceMount < APP_MOUNT_GRACE_MS) {
+          console.log(`[Status Check] ${contact.name} not yet reachable — grace period (${Math.round(sinceMount / 1000)}s/${APP_MOUNT_GRACE_MS / 1000}s), not marking offline`);
+          return;
+        }
         // Cap at threshold + 1 to avoid unbounded counter growth
         const rawFailures = (consecutiveFailures.get(contact.id) || 0) + 1;
         const failures = Math.min(rawFailures, FAILURE_THRESHOLD + 1);
@@ -736,8 +755,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
       contactsRef.current.filter(c => c.i2pAddress).forEach(contact => {
         void pingContact(contact);
       });
-    }, 30000); // Check every 30 seconds
-    console.log('[Status Check] Started periodic status check (30s interval, offline after 3 consecutive failures)');
+    }, 90000); // Check every 90s — spart 3× weniger Probe-Traffic als vorher
+    console.log('[Status Check] Started periodic status check (90s interval, 5min grace period, offline after 6 consecutive failures)');
 
     return () => clearInterval(interval);
   }, [i2pStatus?.samConnected]);
