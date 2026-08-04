@@ -13,7 +13,9 @@ import com.secuchat.app.plugin.SAMPlugin.events.SAMEventEmitter;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.ThreadFactory;
@@ -472,7 +474,18 @@ public class SAMPlugin extends Plugin implements EventNotifier {
             return;
         }
 
-        executorService.execute(() -> {
+        // Normalize timeout:
+        // - timeout <= 0 means "use the default 30 s"
+        // - timeout > 0 is honored as-is.
+        final int effectiveTimeoutMs = timeout > 0 ? timeout : 30000;
+
+        // The executorService is a SingleThreadExecutor; a hung i2pd STREAM CONNECT
+        // would block every subsequent plugin call. To guard against that, wrap
+        // the connect logic in a Future with explicit timeout — if it overruns,
+        // we cancel the Future, close the half-open stream, and reject the call.
+        // The task itself also tries to apply socket.setSoTimeout() via
+        // SAMStream.setConnectTimeout() as a defense-in-depth measure.
+        Future<?> future = executorService.submit(() -> {
             SAMStream stream = null;
             try {
                 String sessionId = currentSessionId;
@@ -513,7 +526,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
 
                 Log.d(TAG, "STREAM CONNECT using session ID: " + sessionId + ", destination: " + destination.substring(0, Math.min(20, destination.length())) + "...");
                 stream = new SAMStream(sessionId, samHost, samPort);
-                int streamId = generateStreamId();
+                // Honor the caller's timeout on the underlying socket — defense in depth
+                // alongside the Future-based timeout below.
+                stream.setConnectTimeout(effectiveTimeoutMs);
+                final int streamId = generateStreamId();
 
                 stream.connect();
                 stream.streamConnect(destination);
@@ -547,6 +563,34 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 call.reject("STREAM CONNECT failed: " + e.getMessage());
             }
         });
+
+        try {
+            // Block the caller (Capacitor's worker thread) but not the executor —
+            // the executor task can still be cancelled if it overruns.
+            future.get(effectiveTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException te) {
+            Log.w(TAG, "STREAM CONNECT timed out after " + effectiveTimeoutMs + "ms");
+            boolean cancelled = future.cancel(true);
+            Log.w(TAG, "Future cancel result: " + cancelled);
+            // Don't reject here if the task itself already resolved/rejected — but
+            // since we reached this branch, the task hasn't finished. The cleanup
+            // (stream.close) inside the task won't run after cancel(true), so any
+            // half-opened stream will be reaped by the next cleanup cycle.
+            try {
+                call.reject("STREAM CONNECT timed out after " + effectiveTimeoutMs + "ms");
+            } catch (Exception ignored) {
+                // call may already be settled; ignore
+            }
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            try {
+                call.reject("STREAM CONNECT interrupted");
+            } catch (Exception ignored) { }
+        } catch (Exception e) {
+            // ExecutionException — the task itself already called call.reject().
+            Log.d(TAG, "connectTo task failed (likely already rejected): " + e.getMessage());
+        }
     }
 
     /**

@@ -53,6 +53,11 @@ public class SAMStream {
     private PrintWriter writer;
     private String peerDestination;
 
+    // Caller-supplied connect timeout (ms); 0 = use socket default (60s).
+    // Set via setConnectTimeout() before streamConnect() to honor a plugin-level
+    // timeout on the STREAM CONNECT readLine().
+    private volatile int currentConnectTimeoutMs = 0;
+
     // Async message handling
     private final BlockingQueue<String> messageQueue;
     private MessageListener messageListener;
@@ -116,6 +121,16 @@ public class SAMStream {
      */
     public void setMessageListener(MessageListener listener) {
         this.messageListener = listener;
+    }
+
+    /**
+     * Set the per-stream connect timeout (ms).
+     * Applied to the underlying socket before streamConnect()'s readLine() so a
+     * hung i2pd response cannot block the executor indefinitely.
+     * @param timeoutMs Timeout in ms; 0 = use socket default (60s).
+     */
+    public void setConnectTimeout(int timeoutMs) {
+        this.currentConnectTimeoutMs = timeoutMs > 0 ? timeoutMs : 0;
     }
 
     /**
@@ -194,6 +209,17 @@ public class SAMStream {
 
         state = State.CONNECTING_TO_PEER;
         this.peerDestination = destination;
+
+        // Defense-in-depth: if a caller passes a socket timeout via the plugin,
+        // honor it before the (potentially blocking) readLine().
+        // Default socket timeout from SAMSocketManager.connect() is 60s.
+        if (socket != null && currentConnectTimeoutMs > 0) {
+            try {
+                socket.setSoTimeout(currentConnectTimeoutMs);
+            } catch (Exception e) {
+                Log.w(TAG, "Could not set STREAM CONNECT socket timeout: " + e.getMessage());
+            }
+        }
 
         String connectCmd = SAMProtocolHandler.buildStreamConnect(sessionId, destination);
         Log.d(TAG, "Sending STREAM CONNECT to " + destination.substring(0, Math.min(20, destination.length())) + "...");
@@ -299,8 +325,14 @@ public class SAMStream {
             return true;
         }
 
+        // SAM STREAM framing: the receiver's readLine() blocks until a newline
+        // (or EOF) arrives. Without this, the message stays buffered in the
+        // receiver's reader until the socket closes.
+        // Append \n if not already present so messages are actually delivered.
+        String framed = data.endsWith("\n") ? data : data + "\n";
+
         // SAM protocol: data is sent as-is after connection establishment
-        writer.print(data);
+        writer.print(framed);
         writer.flush();
 
         return !writer.checkError();
