@@ -235,6 +235,11 @@ class SAMService {
 
   /**
    * Remove native event handlers
+   *
+   * Must call each samNativeService.off* to actually drop the closure from
+   * the handler arrays. Previously the streamConnected/Closed/error handlers
+   * were only zeroed locally here, which left them registered on the
+   * service and caused duplicate dispatch after reconnect cycles.
    */
   private removeNativeEventHandlers(): void {
     if (this.nativeMessageHandler) {
@@ -242,15 +247,15 @@ class SAMService {
       this.nativeMessageHandler = undefined;
     }
     if (this.nativeStreamConnectedHandler) {
-      // Note: samNativeService doesn't have offStreamConnected yet - would need to add
+      samNativeService.offStreamConnected(this.nativeStreamConnectedHandler);
       this.nativeStreamConnectedHandler = undefined;
     }
     if (this.nativeStreamClosedHandler) {
-      // Note: samNativeService doesn't have offStreamClosed yet - would need to add
+      samNativeService.offStreamClosed(this.nativeStreamClosedHandler);
       this.nativeStreamClosedHandler = undefined;
     }
     if (this.nativeErrorHandler) {
-      // Note: samNativeService doesn't have offError yet - would need to add
+      samNativeService.offError(this.nativeErrorHandler);
       this.nativeErrorHandler = undefined;
     }
   }
@@ -507,7 +512,7 @@ class SAMService {
     // maxRetries is a RETRY budget, so the number of attempts is maxRetries + 1.
     // This keeps the semantics identical to the native branch above and makes
     // maxRetries = 0 mean "one attempt, fail fast" instead of "never try".
-    const totalAttempts = Math.max(1, maxRetries);
+    const totalAttempts = maxRetries + 1;
 
     for (let attempt = 1; attempt <= totalAttempts; attempt++) {
       try {

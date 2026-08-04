@@ -176,9 +176,13 @@
     "i2pdSamRequired": "i2pd + SAM proxy required",
     "i2pdIntegratedDesc": "i2pd is integrated directly into SecuChat Desktop and starts automatically. Please wait 5-10 minutes on first launch.",
     "i2pdSamRequiredDesc": "For anonymous communication you need i2pd (SAM on port 7656) and the SAM proxy (port 7657). You can configure this later in Settings.",
+    "i2pdAndroidRequired": "i2pd required (SAM TCP)",
+    "i2pdAndroidRequiredDesc": "On Android, SecuChat connects to i2pd directly over SAM TCP on port 7656 — no WebSocket proxy required. i2pd must run on the device or be reachable on the local network. You can configure this later in Settings.",
     "i2pdNotReachable": "i2pd not reachable. Please check that i2pd with SAM proxy is running (port 7657).",
+    "i2pdNotReachableAndroid": "i2pd not reachable. Please check that i2pd is serving SAM TCP on port 7656.",
     "i2pdElectronTimeout": "i2pd is not ready yet ({{timeout}}s timeout). On first launch it takes 1-2 minutes. Click \"Next\" and test later in Settings → I2P, or try again now.",
     "i2pdBrowserTimeout": "Connection timeout after {{timeout}}s. Please check:\n1. Is i2pd running?\n2. Is the SAM proxy reachable on port 7657?\n3. Check firewall settings",
+    "i2pdAndroidTimeout": "Connection timeout after {{timeout}}s. Please check:\n1. Is i2pd running on the device or LAN?\n2. Is SAM TCP reachable on port 7656?\n3. Check firewall settings",
     "i2pdTestError": "Error during connection test. Please check the i2pd configuration.",
 
     "step5Title": "Backup & Devices",

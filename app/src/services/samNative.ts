@@ -415,22 +415,119 @@ class SAMNativeService {
   }
 
   /**
+   * Remove stream-connected handler
+   */
+  offStreamConnected(handler: (streamId: number, peerDestination: string) => void): void {
+    const index = this.streamConnectedHandlers.indexOf(handler);
+    if (index > -1) {
+      this.streamConnectedHandlers.splice(index, 1);
+    }
+  }
+
+  /**
+   * Remove stream-closed handler
+   */
+  offStreamClosed(handler: (streamId: number, reason?: string) => void): void {
+    const index = this.streamClosedHandlers.indexOf(handler);
+    if (index > -1) {
+      this.streamClosedHandlers.splice(index, 1);
+    }
+  }
+
+  /**
+   * Remove error handler
+   */
+  offError(handler: (error: string, streamId: number) => void): void {
+    const index = this.errorHandlers.indexOf(handler);
+    if (index > -1) {
+      this.errorHandlers.splice(index, 1);
+    }
+  }
+
+  /**
+   * Compute the .b32.i2p address from a base64 I2P destination.
+   *
+   * Mirrors the algorithm used by samService.computeB32Address() (SHA-256 of
+   * the destination bytes → lowercase Base32 + ".b32.i2p"). On the native
+   * Android path the inbound message event delivers the peer's full base64
+   * destination as `from`, but downstream message handlers expect the b32
+   * address (matches the Web/Desktop path where accept-loop already converts
+   * via samService.computeB32Address()).
+   *
+   * Returns null for inputs that look already-b32 (short, no base64 padding)
+   * or empty strings so callers can fall back to the raw value without
+   * double-converting.
+   */
+  private async destinationToB32(dest: string): Promise<string | null> {
+    if (!dest) return null;
+    // Heuristic: full SAM destinations are 400+ chars of base64-ish chars.
+    // b32 addresses are 52 chars of [a-z2-7]. Skip work for the b32 case.
+    if (dest.length < 200) return null;
+    if (!/[+/~-]/.test(dest)) return null;
+    try {
+      // I2P uses modified Base64: '-' instead of '+', '~' instead of '/', no padding
+      const standard = dest
+        .replace(/-/g, '+')
+        .replace(/~/g, '/')
+        + '='.repeat((4 - dest.length % 4) % 4);
+      const binaryStr = atob(standard);
+      const bytes = new Uint8Array(binaryStr.length);
+      for (let i = 0; i < binaryStr.length; i++) {
+        bytes[i] = binaryStr.charCodeAt(i);
+      }
+      const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+      return SAMNativeService.toBase32(new Uint8Array(hashBuffer)) + '.b32.i2p';
+    } catch (e) {
+      logger.warn('[SAMNative] destinationToB32 conversion failed, passing raw:', e);
+      return null;
+    }
+  }
+
+  private static toBase32(data: Uint8Array): string {
+    const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+    let output = '';
+    let bits = 0;
+    let value = 0;
+    for (const byte of data) {
+      value = (value << 8) | byte;
+      bits += 8;
+      while (bits >= 5) {
+        output += ALPHABET[(value >>> (bits - 5)) & 31];
+        bits -= 5;
+      }
+    }
+    if (bits > 0) {
+      output += ALPHABET[(value << (5 - bits)) & 31];
+    }
+    return output;
+  }
+
+  /**
    * Setup Capacitor event listeners
    */
   private async setupEventListeners(): Promise<void> {
     await this.cleanupEventListeners();
 
-    // Message listener
+    // Message listener — convert base64 'from' to b32 so message handlers
+    // see the same key shape as the Web/Desktop accept-loop path.
     const messageHandle = await SAMNativePlugin.addListener('message', (event) => {
-      logger.log('[SAMNative] Message received from:', event.from.slice(0, 20));
-      this.messageHandlers.forEach(h => h(event.from, event.data, event.streamId));
+      void (async () => {
+        const b32From = await this.destinationToB32(event.from);
+        const senderId = b32From ?? event.from;
+        logger.log('[SAMNative] Message received from:', senderId.slice(0, 20));
+        this.messageHandlers.forEach(h => h(senderId, event.data, event.streamId));
+      })();
     });
     this.listeners.push(messageHandle);
 
-    // Stream connected listener
+    // Stream connected listener — peerDestination may be base64 too
     const connectedHandle = await SAMNativePlugin.addListener('streamConnected', (event) => {
-      logger.log('[SAMNative] Stream connected:', event.streamId);
-      this.streamConnectedHandlers.forEach(h => h(event.streamId, event.peerDestination));
+      void (async () => {
+        const b32Peer = await this.destinationToB32(event.peerDestination);
+        const peerId = b32Peer ?? event.peerDestination;
+        logger.log('[SAMNative] Stream connected:', event.streamId, 'peer:', peerId.slice(0, 20));
+        this.streamConnectedHandlers.forEach(h => h(event.streamId, peerId));
+      })();
     });
     this.listeners.push(connectedHandle);
 

@@ -365,13 +365,17 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
       setI2pTestStatus(available ? 'success' : 'error');
       if (!available) {
-        setError(t('onboarding.i2pdNotReachable'));
+        setError(platformService.isAndroidNative()
+          ? t('onboarding.i2pdNotReachableAndroid')
+          : t('onboarding.i2pdNotReachable'));
       }
     } catch (err) {
       setI2pTestStatus('error');
       if (err instanceof Error && err.message === 'TIMEOUT') {
         if (platformService.isElectron()) {
           setError(t('onboarding.i2pdElectronTimeout', { timeout: timeoutMs / 1000 }));
+        } else if (platformService.isAndroidNative()) {
+          setError(t('onboarding.i2pdAndroidTimeout', { timeout: timeoutMs / 1000 }));
         } else {
           setError(t('onboarding.i2pdBrowserTimeout', { timeout: timeoutMs / 1000 }));
         }
@@ -985,12 +989,18 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
                 <p className="text-sm text-yellow-500 font-medium flex items-center gap-2">
                   <Lock className="h-4 w-4" />
-                  {platformService.isElectron() ? t('onboarding.i2pdIntegrated') : t('onboarding.i2pdSamRequired')}
+                  {platformService.isElectron()
+                    ? t('onboarding.i2pdIntegrated')
+                    : platformService.isAndroidNative()
+                      ? t('onboarding.i2pdAndroidRequired')
+                      : t('onboarding.i2pdSamRequired')}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {platformService.isElectron()
                     ? t('onboarding.i2pdIntegratedDesc')
-                    : t('onboarding.i2pdSamRequiredDesc')}
+                    : platformService.isAndroidNative()
+                      ? t('onboarding.i2pdAndroidRequiredDesc')
+                      : t('onboarding.i2pdSamRequiredDesc')}
                 </p>
               </div>
             </div>
