@@ -486,7 +486,10 @@ class SAMService {
 
     // Use native bridge for Android
     if (this.useNativeBridge) {
-      const streamId = await samNativeService.connectTo(destination);
+      // Honour maxRetries here too — previously the native branch always used the
+      // service default (5 retries / ~67 s), ignoring the caller's request and
+      // letting attempts stack up behind periodic callers.
+      const streamId = await samNativeService.connectTo(destination, 60000, maxRetries);
       if (streamId === null) {
         throw new Error('STREAM CONNECT failed via native bridge');
       }
@@ -501,7 +504,12 @@ class SAMService {
 
     let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    // maxRetries is a RETRY budget, so the number of attempts is maxRetries + 1.
+    // This keeps the semantics identical to the native branch above and makes
+    // maxRetries = 0 mean "one attempt, fail fast" instead of "never try".
+    const totalAttempts = Math.max(1, maxRetries);
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
       try {
         return await this.attemptStreamConnect(destination);
       } catch (error) {
@@ -512,10 +520,10 @@ class SAMService {
         const isLeaseSetError = errorMessage.includes('LeaseSet not found') ||
                                 errorMessage.includes('CANT_REACH_PEER');
 
-        if (isLeaseSetError && attempt < maxRetries) {
+        if (isLeaseSetError && attempt < totalAttempts) {
           // Wait before retry with exponential backoff
           const delay = Math.min(10000 * attempt, 30000);
-          logger.log(`[SAM] Peer not reachable (attempt ${attempt}/${maxRetries}), waiting ${delay}ms for LeaseSet propagation...`);
+          logger.log(`[SAM] Peer not reachable (attempt ${attempt}/${totalAttempts}), waiting ${delay}ms for LeaseSet propagation...`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }

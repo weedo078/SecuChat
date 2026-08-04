@@ -141,6 +141,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Refs for tracking listener registration state
   const listenersRegisteredRef = useRef(false);
 
+  // Mirror of `contacts` for use inside intervals/timers. Reading contacts via a
+  // ref keeps React state updaters PURE — previously the periodic status check
+  // launched its network side-effects from inside a setContacts(prev => ...)
+  // updater, which React may invoke more than once per commit. That turned every
+  // 30 s tick into a burst of duplicate connectTo() calls and let a single peer
+  // failure increment the shared failure counter 1/3→3/3 in a few milliseconds.
+  const contactsRef = useRef<Contact[]>([]);
+
   // Stable message handler ref — always points to the latest handleIncomingMessage.
   // This avoids stale closure issues when activeChat/user change after initial registration.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -155,6 +163,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Contacts state
   const [contacts, setContacts] = useState<Contact[]>([]);
+  // Keep the ref in sync so interval callbacks can read contacts without
+  // abusing a state updater for side-effects.
+  contactsRef.current = contacts;
   
   // Chats state
   const [chats, setChats] = useState<Chat[]>([]);
@@ -644,6 +655,69 @@ export function AppProvider({ children }: { children: ReactNode }) {
     // Track consecutive failures per contact — only mark offline after 3 failures
     const consecutiveFailures = new Map<string, number>();
     const FAILURE_THRESHOLD = 3;
+    // Guards against overlapping pings for the same contact. A single ping can
+    // outlive the 30 s interval, and without this a slow peer accumulates one
+    // in-flight connect attempt per tick (the connectTo storm).
+    const inFlight = new Set<string>();
+
+    const pingContact = async (contact: Contact) => {
+      if (!contact.i2pAddress || inFlight.has(contact.id)) return;
+      inFlight.add(contact.id);
+      try {
+        console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
+        // Only disconnect+reconnect if peer is NOT already connected.
+        // Blind disconnect kills active streams — any message sent during the
+        // reconnect window would be lost.
+        const peerStatus = i2pService.getPeerStatus(contact.i2pAddress);
+        if (peerStatus !== 'connected') {
+          i2pService.disconnectPeer(contact.i2pAddress);
+          // maxRetries: 0 — this poller IS the retry loop. Letting the SAM layer
+          // run its own ~67 s backoff chain here made attempts outlive the
+          // interval and stack up.
+          await i2pService.connectToPeer(contact.i2pAddress, undefined, { maxRetries: 0 });
+        }
+        console.log(`[Status Check] ${contact.name} is online`);
+        // Reset failure counter on success
+        consecutiveFailures.delete(contact.id);
+        // Update lastSeen and ensure status is online
+        const updated = { ...contact, lastSeen: new Date().toISOString(), status: 'online' as const };
+        await storageService.saveContact(updated);
+        setContacts(prev => {
+          // Only update if still offline/unknown (avoid unnecessary re-renders)
+          const existing = prev.find(c => c.id === contact.id);
+          if (existing?.status === 'online') return prev;
+          return prev.map(c => c.id === contact.id ? updated : c);
+        });
+        setChats(prev => prev.map(ch =>
+          ch.contactId === contact.id && ch.contact?.status !== 'online'
+            ? { ...ch, contact: updated }
+            : ch
+        ));
+      } catch (err) {
+        // Skip counting if SAM session is dead — the auto-reconnect will handle it
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes('No session created') || errMsg.includes('INVALID_ID')) {
+          console.log(`[Status Check] SAM session lost, skipping ping for ${contact.name}`);
+          return;
+        }
+        // Cap at threshold + 1 to avoid unbounded counter growth
+        const rawFailures = (consecutiveFailures.get(contact.id) || 0) + 1;
+        const failures = Math.min(rawFailures, FAILURE_THRESHOLD + 1);
+        consecutiveFailures.set(contact.id, failures);
+        console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD})`);
+        // Only mark offline after consecutive failures reach threshold
+        if (failures === FAILURE_THRESHOLD) {
+          const updated = { ...contact, status: 'offline' as const };
+          await storageService.saveContact(updated);
+          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
+          setChats(prev => prev.map(ch =>
+            ch.contactId === contact.id ? { ...ch, contact: updated } : ch
+          ));
+        }
+      } finally {
+        inFlight.delete(contact.id);
+      }
+    };
 
     const interval = setInterval(() => {
       // Live-check: if SAM session died, update status so auto-reconnect triggers
@@ -656,67 +730,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         return; // Skip peer pings until SAM reconnects
       }
 
-      // Read contacts from current state via functional updater pattern
-      setContacts(prevContacts => {
-        // Process contacts that have an I2P address
-        const contactsToCheck = prevContacts.filter(c => c.i2pAddress);
-        if (contactsToCheck.length === 0) return prevContacts;
-
-        // Fire off async checks (don't await — return current state immediately)
-        contactsToCheck.forEach(async (contact) => {
-          try {
-            console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
-            // Only disconnect+reconnect if peer is NOT already connected.
-            // Blind disconnect kills active streams — any message sent during the
-            // reconnect window would be lost.
-            const peerStatus = i2pService.getPeerStatus(contact.i2pAddress);
-            if (peerStatus !== 'connected') {
-              i2pService.disconnectPeer(contact.i2pAddress);
-              await i2pService.connectToPeer(contact.i2pAddress);
-            }
-            console.log(`[Status Check] ${contact.name} is online`);
-            // Reset failure counter on success
-            consecutiveFailures.delete(contact.id);
-            // Update lastSeen and ensure status is online
-            const updated = { ...contact, lastSeen: new Date().toISOString(), status: 'online' as const };
-            await storageService.saveContact(updated);
-            setContacts(prev => {
-              // Only update if still offline/unknown (avoid unnecessary re-renders)
-              const existing = prev.find(c => c.id === contact.id);
-              if (existing?.status === 'online') return prev;
-              return prev.map(c => c.id === contact.id ? updated : c);
-            });
-            setChats(prev => prev.map(ch =>
-              ch.contactId === contact.id && ch.contact?.status !== 'online'
-                ? { ...ch, contact: updated }
-                : ch
-            ));
-          } catch (err) {
-            // Skip counting if SAM session is dead — the auto-reconnect will handle it
-            const errMsg = err instanceof Error ? err.message : String(err);
-            if (errMsg.includes('No session created') || errMsg.includes('INVALID_ID')) {
-              console.log(`[Status Check] SAM session lost, skipping ping for ${contact.name}`);
-              return;
-            }
-            // Cap at threshold + 1 to avoid unbounded counter growth
-            const rawFailures = (consecutiveFailures.get(contact.id) || 0) + 1;
-            const failures = Math.min(rawFailures, FAILURE_THRESHOLD + 1);
-            consecutiveFailures.set(contact.id, failures);
-            console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD})`);
-            // Only mark offline after consecutive failures reach threshold
-            if (failures === FAILURE_THRESHOLD) {
-              const updated = { ...contact, status: 'offline' as const };
-              await storageService.saveContact(updated);
-              setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-              setChats(prev => prev.map(ch =>
-                ch.contactId === contact.id ? { ...ch, contact: updated } : ch
-              ));
-            }
-          }
-        });
-
-        // Return unchanged — actual updates happen in the async callbacks
-        return prevContacts;
+      // Read contacts from a ref — NOT from inside a state updater. React may call
+      // a state updater multiple times per commit, which previously multiplied
+      // every ping into a burst of duplicate connect attempts.
+      contactsRef.current.filter(c => c.i2pAddress).forEach(contact => {
+        void pingContact(contact);
       });
     }, 30000); // Check every 30 seconds
     console.log('[Status Check] Started periodic status check (30s interval, offline after 3 consecutive failures)');

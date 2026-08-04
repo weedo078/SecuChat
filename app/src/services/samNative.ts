@@ -242,6 +242,11 @@ class SAMNativeService {
    * Connect to a remote peer with retry logic for transient I2P errors.
    * I2P tunnel building can take 1-10 minutes, so INVALID_ID / CANT_REACH_PEER
    * errors are retried with exponential backoff.
+   *
+   * NOTE: callers that already run on their own retry cadence (e.g. the periodic
+   * status check, which pings every 30 s) MUST pass maxRetries = 0. Otherwise the
+   * internal backoff chain (up to ~67 s) outlives the caller's interval and
+   * connect attempts stack up — this caused a connectTo storm on Android.
    */
   async connectTo(destination: string, timeout = 60000, maxRetries = 5): Promise<number | null> {
     for (let attempt = 0; attempt <= maxRetries; attempt++) {

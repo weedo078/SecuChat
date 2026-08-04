@@ -310,8 +310,16 @@ class I2PService {
   /**
    * Connect to a peer via I2P SAM.
    * Deduplicates concurrent calls for the same peer to prevent connect storms.
+   *
+   * @param opts.maxRetries retry budget handed down to the SAM layer. Callers that
+   *   poll on their own schedule (periodic status check) should pass 0 so a failed
+   *   attempt returns immediately instead of occupying the peer slot for ~67 s.
    */
-  async connectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
+  async connectToPeer(
+    b32Address: string,
+    publicKey?: Uint8Array,
+    opts?: { maxRetries?: number }
+  ): Promise<I2PPeer> {
     // If a connect is already in flight for this peer, piggyback on it
     const pending = this.pendingConnects.get(b32Address);
     if (pending) {
@@ -319,7 +327,7 @@ class I2PService {
       return pending;
     }
 
-    const connectPromise = this.doConnectToPeer(b32Address, publicKey);
+    const connectPromise = this.doConnectToPeer(b32Address, publicKey, opts?.maxRetries);
     this.pendingConnects.set(b32Address, connectPromise);
 
     try {
@@ -329,7 +337,11 @@ class I2PService {
     }
   }
 
-  private async doConnectToPeer(b32Address: string, publicKey?: Uint8Array): Promise<I2PPeer> {
+  private async doConnectToPeer(
+    b32Address: string,
+    publicKey?: Uint8Array,
+    maxRetries = 3
+  ): Promise<I2PPeer> {
     logger.log(`[I2P] Connecting to peer: ${b32Address.slice(0, 20)}...`);
     logger.log(`[I2P] Our address: ${this.getAddress()?.slice(0, 20)}..., leasesetPublished: ${this.currentStatus.leasesetPublished}`);
 
@@ -360,7 +372,7 @@ class I2PService {
 
     try {
       logger.log('[I2P] Calling samService.connectTo for:', b32Address.slice(0, 20));
-      const stream = await samService.connectTo(b32Address);
+      const stream = await samService.connectTo(b32Address, maxRetries);
       peer.samStreamId = stream.id;
       peer.status = 'connected';
       peer.lastSeen = Date.now();
