@@ -54,12 +54,6 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [isRestoring, setIsRestoring] = useState(false);
   const { setUser } = useApp();
 
-  // Detect platform on mount
-  useEffect(() => {
-    const info = platformService.getPlatformInfo();
-    setPlatformInfo(info);
-  }, []);
-
   // === DEV/TEST: Auto-onboard via localStorage flag 'secuchat_auto_onboard' ===
   // Umgeht die UI komplett (für automatisierte Tests ohne manuelles Tippen).
   // Aktivierbar nur durch explizites CDP/localStorage-Setzen — nie in Production.

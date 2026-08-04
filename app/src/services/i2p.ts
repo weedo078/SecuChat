@@ -470,10 +470,8 @@ class I2PService {
           throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
         }
         await samService.send(reconnectedPeer.samStreamId, payload);
-        return true;
       } catch (retryError) {
         console.error('[I2P] Failed to send message after reconnect:', retryError);
-        return false;
       }
     }
   }

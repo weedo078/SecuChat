@@ -186,8 +186,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Theme state
   const [theme, setThemeState] = useState<'dark' | 'light'>(settings.theme);
 
-  // Connection state
-  const [connectionState, setConnectionState] = useState<ConnectionState>('disconnected');
+  // Connection state (derived from i2pStatus, isLocked, encryptionState — see below)
   const [encryptionState, setEncryptionState] = useState<EncryptionState>('unencrypted');
   
   // I2P status
