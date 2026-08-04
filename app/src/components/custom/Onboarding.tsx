@@ -86,7 +86,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         const samPlugin: {
           connect: (cfg: { host: string; port: number; enabled: boolean }) => Promise<{ connected: boolean }>;
           generateDestination: (opts: { signatureType: string }) => Promise<{ success: boolean; privateKey?: string }>;
-        } | null = (window as { Capacitor?: { Plugins?: { SAM?: unknown } } })?.Capacitor?.Plugins?.SAM ?? null;
+        } | null = ((window as { Capacitor?: { Plugins?: { SAM?: unknown } } })?.Capacitor?.Plugins?.SAM as {
+          connect: (cfg: { host: string; port: number; enabled: boolean }) => Promise<{ connected: boolean }>;
+          generateDestination: (opts: { signatureType: string }) => Promise<{ success: boolean; privateKey?: string }>;
+        } | undefined) ?? null;
         if (samPlugin) {
           try {
             // Android-i2pd 2.59/2.61 crashes in DEST GENERATE for RSA types 4-6.
@@ -136,6 +139,14 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           samStart: (userRec.i2pSamDestination || '').slice(0, 32),
         });
         storageService.setEncryptionPassphrase(p);
+        // TEST-ONLY: Passphrase + Test-Mode-Flag in localStorage ablegen, damit
+        // AppContext beim nächsten Mount automatisch entsperren kann (ohne Unlock-Prompt).
+        // Nur aktiv, wenn secuchat_test_mode='1' gesetzt ist — siehe AppContext.
+        if (typeof localStorage !== 'undefined') {
+          if (localStorage.getItem('secuchat_test_mode') === '1') {
+            localStorage.setItem('secuchat_test_pw', p);
+          }
+        }
         await storageService.saveUser(userRec);
         const platform = platformService.getPlatformInfo();
         // Host-i2pd-Bridge für Cross-Host-E2E-Test: Emulator → 10.0.2.2:7656, Telefon im LAN → 192.168.179.62:7656

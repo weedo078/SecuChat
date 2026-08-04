@@ -206,7 +206,67 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const keysEncrypted = savedUser.pgpPrivateKey &&
           !savedUser.pgpPrivateKey.startsWith('-----BEGIN PGP');
 
-        if (keysEncrypted) {
+        // TEST-ONLY Auto-Unlock: wenn das Auto-Onboarding eine Test-Passphrase in
+        // localStorage abgelegt hat, beim Mount automatisch entsperren. Nur aktiv,
+        // wenn explizit secuchat_test_mode='1' gesetzt ist — niemals in Production.
+        const testModeEnabled = typeof localStorage !== 'undefined'
+          && localStorage.getItem('secuchat_test_mode') === '1';
+        const testPassphrase = testModeEnabled && typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_test_pw')
+          : null;
+
+        if (keysEncrypted && testPassphrase) {
+          // Auto-Onboarding hat einen Test-Modus-Pass hinterlegt — direkt entsperren
+          try {
+            storageService.setEncryptionPassphrase(testPassphrase);
+            const decryptedUser = await storageService.getUser();
+            if (decryptedUser?.pgpPrivateKey?.startsWith('-----BEGIN PGP')) {
+              await cryptoService.importKeyPair(
+                decryptedUser.pgpPrivateKey,
+                decryptedUser.pgpPublicKey,
+                testPassphrase
+              );
+              setUser(decryptedUser);
+              setIsLocked(false);
+              setIsAuthenticated(true);
+              setEncryptionState('encrypted');
+              console.log('[AppContext] Test-mode auto-unlock successful');
+              // Auch i2pService.restoreIdentity + initialize triggern — sonst
+              // bleibt der i2pService.identity leer und SAM kann nicht starten.
+              if (decryptedUser.i2pAddress && decryptedUser.i2pPublicKey
+                  && decryptedUser.i2pPrivateKey) {
+                try {
+                  await i2pService.restoreIdentity(
+                    decryptedUser.i2pPublicKey,
+                    decryptedUser.i2pPrivateKey,
+                    decryptedUser.i2pSamDestination,
+                    decryptedUser.i2pAddress
+                  );
+                  const savedSettings = await storageService.getSettings();
+                  const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
+                  const status = await i2pService.initialize(
+                    effectiveSamConfig(i2pSettings.sam)
+                  );
+                  setI2pStatus(status);
+                  console.log('[AppContext] Test-mode I2P init:', {
+                    samConnected: status.samConnected,
+                    address: status.address?.slice(0, 20),
+                    leasesetPublished: status.leasesetPublished,
+                  });
+                } catch (i2pErr) {
+                  console.warn('[AppContext] Test-mode I2P init failed:', i2pErr);
+                }
+              }
+            } else {
+              needsUnlock = true;
+              setIsLocked(true);
+            }
+          } catch (err) {
+            console.warn('[AppContext] Test-mode auto-unlock failed:', err);
+            needsUnlock = true;
+            setIsLocked(true);
+          }
+        } else if (keysEncrypted) {
           // Keys are encrypted in storage — need passphrase to unlock
           needsUnlock = true;
           setIsLocked(true);
