@@ -29,7 +29,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const { t } = useTranslation();
   const [step, setStep] = useState(1);
   const [username, setUsername] = useState('');
-  const [deviceName, setDeviceName] = useState('');
+  const [deviceName, setDeviceName] = useState<string>(() => {
+    const info = platformService.getPlatformInfo();
+    if (info.type === 'android') return 'Android Phone';
+    if (info.type === 'desktop') return 'Desktop Browser';
+    return 'My Device';
+  });
   const [passphrase, setPassphrase] = useState('');
   const [confirmPassphrase, setConfirmPassphrase] = useState('');
   const [showPassphrase, setShowPassphrase] = useState(false);
@@ -39,7 +44,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPairing, setShowPairing] = useState(false);
-  const [platformInfo, setPlatformInfo] = useState<PlatformInfo | null>(null);
+  const [platformInfo] = useState<PlatformInfo | null>(() => platformService.getPlatformInfo());
   const [i2pTestStatus, setI2pTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
   const [showRestoreFlow, setShowRestoreFlow] = useState(false);
   const [restoreBackupFile, setRestoreBackupFile] = useState<File | null>(null);
@@ -200,14 +205,6 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const totalSteps = isNewDevice ? 3 : 5;
   const progress = (step / totalSteps) * 100;
 
-  useEffect(() => {
-    // Auto-detect device name based on platform
-    const info = platformService.getPlatformInfo();
-    if (info.type === 'android') setDeviceName('Android Phone');
-    else if (info.type === 'desktop') setDeviceName('Desktop Browser');
-    else setDeviceName('My Device');
-  }, []);
-
   const handleNext = () => {
     if (step < totalSteps) {
       setStep(step + 1);
@@ -232,9 +229,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   }, []);
 
   // In Electron, auto-test the connection when the user reaches step 4
+  const testI2PConnectionRef = useRef<() => Promise<void>>(() => Promise.resolve());
   useEffect(() => {
     if (step === 4 && platformService.isElectron() && i2pTestStatus === 'idle') {
-      testI2PConnection();
+      testI2PConnectionRef.current();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
@@ -384,6 +382,11 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       }
     }
   };
+
+  // Keep the ref in sync so the auto-run effect above always calls the latest version
+  useEffect(() => {
+    testI2PConnectionRef.current = testI2PConnection;
+  });
 
   const handleCopyPublicKey = async () => {
     if (keyPair) {
@@ -922,7 +925,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                     <ol className="space-y-2 text-sm mb-4">
                       {platformInfo.instructions.steps.map((step, idx) => (
                         <li key={idx} className="flex items-start gap-2">
-                          <span className="bg-primary/20 text-primary rounded-full w-5 h-5 flex items-center justify-center text-xs flex-shrink-0 mt-0.5">
+                          <span className="bg-primary/20 text-primary rounded-full w-5 h-5 flex items-center justify-center text-xs shrink-0 mt-0.5">
                             {idx + 1}
                           </span>
                           <span>{step}</span>

@@ -462,12 +462,19 @@ class I2PService {
     } catch (error) {
       logger.warn('[I2P] Send failed, attempting reconnect:', error);
       peer.status = 'disconnected';
-      await this.connectToPeer(to);
-      const reconnectedPeer = this.peers.get(to);
-      if (!reconnectedPeer?.samStreamId || !samService.isStreamOpen(reconnectedPeer.samStreamId)) {
-        throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
+      // Try reconnect + resend once
+      try {
+        await this.connectToPeer(to);
+        const reconnectedPeer = this.peers.get(to);
+        if (!reconnectedPeer?.samStreamId || !samService.isStreamOpen(reconnectedPeer.samStreamId)) {
+          throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
+        }
+        await samService.send(reconnectedPeer.samStreamId, payload);
+        return true;
+      } catch (retryError) {
+        console.error('[I2P] Failed to send message after reconnect:', retryError);
+        return false;
       }
-      await samService.send(reconnectedPeer.samStreamId, payload);
     }
   }
 

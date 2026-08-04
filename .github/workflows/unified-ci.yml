@@ -42,7 +42,7 @@ jobs:
       wiki: ${{ steps.filter.outputs.wiki }}
       version-file: ${{ steps.filter.outputs.version-file }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -87,7 +87,7 @@ jobs:
       needs.detect-changes.outputs.app-core == 'true' ||
       needs.detect-changes.outputs.shared == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -118,7 +118,7 @@ jobs:
     name: Security Checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -158,7 +158,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Update version for PR build
         shell: bash
@@ -233,6 +233,17 @@ jobs:
           path: electron/release/*.exe
           retention-days: 7
 
+      - name: Comment PR
+        uses: actions/github-script@v9
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `🪟 **Windows Build fertig!**\n\n[⬇️ Hier herunterladen](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})\n\n> ⚠️ Dies ist ein PR-Build für Testzwecke.`
+            })
+
   # ═══════════════════════════════════════════════════════════════
   # ANDROID BUILD
   # ═══════════════════════════════════════════════════════════════
@@ -245,7 +256,7 @@ jobs:
       needs.detect-changes.outputs.app-core == 'true' ||
       needs.detect-changes.outputs.shared == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check if Android directory exists
         id: check-android
@@ -368,8 +379,49 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Comment PR with build links
-        uses: actions/github-script@v8
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Get changed files
+        id: changed-files
+        run: |
+          git fetch origin ${{ github.base_ref }} --depth=1
+          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|json)$' | head -50 || true)
+          echo "files<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run Kimi Code Review
+        id: review
+        env:
+          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
+        run: |
+          REVIEW_CONTENT=""
+          for file in ${{ steps.changed-files.outputs.files }}; do
+            if [ -f "$file" ]; then
+              REVIEW_CONTENT+="\n=== $file ===\n"
+              REVIEW_CONTENT+=$(cat "$file" | head -100)
+            fi
+          done
+
+          PAYLOAD=$(jq -n \
+            --arg content "$REVIEW_CONTENT" \
+            --arg pr "${{ github.event.pull_request.number }}" \
+            '{model: "kimi-coding/k2p5", messages: [{role: "system", content: "You are a code reviewer. Review the following code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
+
+          RESPONSE=$(curl -s -X POST "https://api.openrouter.ai/v1/chat/completions" \
+            -H "Authorization: Bearer $KIMI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          REVIEW_TEXT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No review generated"')
+          echo "review<<EOF" >> $GITHUB_OUTPUT
+          echo "$REVIEW_TEXT" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Post review comment
+        uses: actions/github-script@v9
         with:
           script: |
             const windowsStatus = '${{ needs.build-windows-pr.result }}';
@@ -411,7 +463,7 @@ jobs:
       version: ${{ steps.calc.outputs.version }}
       should-release: ${{ steps.calc.outputs.should-release }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -455,7 +507,7 @@ jobs:
     runs-on: ubuntu-latest
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -498,7 +550,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -540,7 +592,7 @@ jobs:
     runs-on: windows-latest
     if: needs.determine-version.outputs.should-release == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: actions/setup-node@v4
         with:
@@ -671,7 +723,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -707,7 +759,7 @@ jobs:
         run: find release-artifacts -type f | sort
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.determine-version.outputs.version }}
           files: release-artifacts/**
@@ -728,7 +780,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Clone wiki
         run: |
