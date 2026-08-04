@@ -25,6 +25,8 @@ npm-debug.log*
 # Claude Code local settings
 .claude/
 plan/
+# Local temp/scratch space (verify scripts, debug logs)
+.tmp/
 # Editor
 .vscode/
 .idea/
