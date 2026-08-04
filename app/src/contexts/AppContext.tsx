@@ -144,7 +144,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Mount-time anchor for the grace period: peers don't go "offline" during the
   // first APP_MOUNT_GRACE_MS after the very first component render, because
   // LeaseSets need minutes to propagate after a fresh SAM session.
-  const mountTimeRef = useRef<number>(Date.now());
+  const mountTimeRef = useRef<number>(0);
 
   // Mirror of `contacts` for use inside intervals/timers. Reading contacts via a
   // ref keeps React state updaters PURE — previously the periodic status check
@@ -168,10 +168,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Contacts state
   const [contacts, setContacts] = useState<Contact[]>([]);
-  // Keep the ref in sync so interval callbacks can read contacts without
-  // abusing a state updater for side-effects.
-  contactsRef.current = contacts;
-  
+  // Mirror contacts into a ref so interval callbacks can read the latest list
+  // without forcing a re-render. Updates are scheduled as a post-render effect
+  // to keep render pure (eslint react-hooks/refs).
+  useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]);
+
   // Chats state
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChatState] = useState<Chat | null>(null);
@@ -196,8 +199,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   
-  // Inactivity tracking for auto-lock
-  const [lastActivity, setLastActivity] = useState(Date.now());
+  // Inactivity tracking for auto-lock. lastActivityRef is updated by event handlers
+  // (no Date.now() during render). We mirror it into state for components that
+  // re-render on inactivity changes (e.g. auto-lock countdown).
+  const lastActivityRef = useRef<number>(0);
+  const [lastActivity, setLastActivity] = useState<number>(0);
+  // Initialize on first effect — keeps Date.now() out of render but the state
+  // is available for the consumer effect's first run.
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+    setLastActivity(lastActivityRef.current);
+  }, []);
   
   // Loading state
   const [isLoading, setIsLoading] = useState(true);
@@ -657,6 +669,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // We continuously retry to detect when they come back online
   useEffect(() => {
     if (!i2pStatus?.samConnected) return;
+
+    // Lazy-init mountTime on first effect run (avoids Date.now() in render).
+    if (mountTimeRef.current === 0) {
+      mountTimeRef.current = Date.now();
+    }
 
     // Track consecutive failures per contact — only mark offline after 6 failures.
     // LeaseSet propagation after a fresh SAM session can take several minutes; the

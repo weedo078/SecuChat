@@ -37,7 +37,7 @@ async function initSharingPlugins(): Promise<void> {
     console.log('[NativeFileSharing] Sharing plugins initialized');
   } catch (error) {
     console.error('[NativeFileSharing] Failed to load sharing plugins:', error);
-    throw new Error('Sharing plugins not available');
+    throw new Error('Sharing plugins not available', { cause: error });
   }
 }
 

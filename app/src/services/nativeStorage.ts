@@ -45,7 +45,7 @@ async function initPlugins(): Promise<void> {
     console.log('[NativeStorage] Capacitor plugins initialized');
   } catch (error) {
     console.error('[NativeStorage] Failed to load Capacitor plugins:', error);
-    throw new Error('Capacitor plugins not available');
+    throw new Error('Capacitor plugins not available', { cause: error });
   }
 }
 

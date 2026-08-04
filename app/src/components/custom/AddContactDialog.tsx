@@ -50,10 +50,47 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(false);
-  const [showQRShare, setShowQRShare] = useState(false);
+  const [qrShareData, setQRShareData] = useState<{
+    v: '2'; t: 'sc'; n: string; i: string; f: string; k: string; ts: number;
+  } | null>(null);
+  const showQRShare = qrShareData !== null;
   const [showQRScan, setShowQRScan] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Toggle handler — runs in a click event, so Date.now() is allowed (not in render).
+  const handleToggleQRShare = () => {
+    if (qrShareData) {
+      setQRShareData(null);
+      return;
+    }
+    if (!user?.i2pSamDestination) return;
+    setQRShareData({
+      v: '2',
+      t: 'sc',
+      n: user.username,
+      i: user.i2pAddress || '',
+      f: user.fingerprint,
+      k: user.pgpPublicKey,
+      ts: Date.now(),
+    });
+  };
+
+
+  // ── Parse ──────────────────────────────────────────────────────────────────
+
+  const parseContactData = (raw: string): ContactData | null => {
+    try {
+      const data = JSON.parse(raw);
+      if (data.v === '2' && data.t === 'sc' && data.f && data.i) {
+        return data as ContactData;
+      }
+      return null;
+    } catch (e) {
+      console.error('[Import] JSON parse error:', e);
+      return null;
+    }
+  };
 
   // Listen for contact import from native Android (file opened from file manager)
   useEffect(() => {
@@ -83,21 +120,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       setShowQRScan(false);
     } else {
       setImportError(t('addContact.invalidFile'));
-    }
-  };
-
-  // ── Parse ──────────────────────────────────────────────────────────────────
-
-  const parseContactData = (raw: string): ContactData | null => {
-    try {
-      const data = JSON.parse(raw);
-      if (data.v === '2' && data.t === 'sc' && data.f && data.i) {
-        return data as ContactData;
-      }
-      return null;
-    } catch (e) {
-      console.error('[Import] JSON parse error:', e);
-      return null;
     }
   };
 
@@ -470,7 +492,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                   <Button
                     variant="outline"
                     className="w-full"
-                    onClick={() => setShowQRShare(!showQRShare)}
+                    onClick={handleToggleQRShare}
                   >
                     <QrCode className="h-4 w-4 mr-2" />
                     {showQRShare ? t('qr.hideQR') : t('qr.showQR')}
@@ -479,15 +501,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
                 {showQRShare && user.i2pSamDestination && (
                   <AnimatedContactQR
-                    contactData={{
-                      v: '2',
-                      t: 'sc',
-                      n: user.username,
-                      i: user.i2pAddress || '',
-                      f: user.fingerprint,
-                      k: user.pgpPublicKey,
-                      ts: Date.now(),
-                    }}
+                    contactData={qrShareData}
                   />
                 )}
 
