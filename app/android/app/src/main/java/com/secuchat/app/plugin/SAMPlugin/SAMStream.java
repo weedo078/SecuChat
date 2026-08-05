@@ -58,6 +58,16 @@ public class SAMStream {
     // timeout on the STREAM CONNECT readLine().
     private volatile int currentConnectTimeoutMs = 0;
 
+    // Local private destination (908-byte base64) — required so we can issue
+    // an inline SESSION CREATE on a freshly-opened socket before STREAM
+    // CONNECT/ACCEPT. Without it, i2pd closes the original session socket
+    // within milliseconds after SESSION STATUS, and any subsequent STREAM
+    // CONNECT/ACCEPT on a new socket is rejected with RESULT=INVALID_ID.
+    // Set via the 4-arg constructor or setOwnDestination() before streamConnect().
+    // null means TRANSIENT session (i2pd will generate a fresh destination, which
+    // does NOT preserve the original session identity — see sessionCreate()).
+    private volatile String ownDestination = null;
+
     // Async message handling
     private final BlockingQueue<String> messageQueue;
     private MessageListener messageListener;
@@ -86,13 +96,42 @@ public class SAMStream {
      * @param samPort SAM bridge port
      */
     public SAMStream(String sessionId, String samHost, int samPort) {
+        this(sessionId, null, samHost, samPort);
+    }
+
+    /**
+     * Create a new SAM stream with a known local private destination.
+     *
+     * The ownDestination is used by streamConnect()/streamAccept() to issue an
+     * inline SESSION CREATE on a freshly-opened socket — required because i2pd
+     * closes the original session socket within milliseconds after SESSION
+     * STATUS, so without this the next STREAM CONNECT/ACCEPT (on a new socket)
+     * would be rejected with RESULT=INVALID_ID.
+     *
+     * @param sessionId SAM session ID to attach to
+     * @param ownDestination Local private destination (908-byte base64), or
+     *                       null to use TRANSIENT (NOT recommended for restore)
+     * @param samHost SAM bridge host
+     * @param samPort SAM bridge port
+     */
+    public SAMStream(String sessionId, String ownDestination, String samHost, int samPort) {
         this.streamId = streamIdCounter.incrementAndGet();
         this.sessionId = sessionId;
+        this.ownDestination = ownDestination;
         this.samHost = samHost;
         this.samPort = samPort;
         this.state = State.DISCONNECTED;
         this.messageQueue = new LinkedBlockingQueue<>();
         this.isRunning = new AtomicBoolean(false);
+    }
+
+    /**
+     * Set/override the local private destination. Call this before
+     * streamConnect()/streamAccept() if you used the 3-arg constructor and
+     * the destination is now known.
+     */
+    public void setOwnDestination(String destination) {
+        this.ownDestination = destination;
     }
 
     /**
@@ -224,6 +263,64 @@ public class SAMStream {
     }
 
     /**
+     * Re-attach this freshly-opened socket to the session by sending an
+     * inline SESSION CREATE on it, BEFORE the STREAM CONNECT/ACCEPT.
+     *
+     * Why this is required (i2pd-specific behaviour, 2026-08-05):
+     * i2pd closes the original session socket within milliseconds after
+     * SESSION STATUS is sent. Any subsequent STREAM CONNECT/ACCEPT on a
+     * newly-opened socket is rejected with RESULT=INVALID_ID unless we first
+     * send SESSION CREATE on the new socket — i2pd rebinds the new socket
+     * to the existing session by ID. This is the same pattern that
+     * DESTINATION PUBLISH uses (see SAMPlugin.createSession() inline publish).
+     *
+     * Caller MUST invoke this after connect() (state == SESSION_ATTACHED)
+     * and before streamConnect()/streamAccept().
+     *
+     * @return true on SESSION STATUS RESULT=OK
+     * @throws IOException on I/O failure
+     */
+    public boolean sessionCreate() throws IOException {
+        if (state != State.SESSION_ATTACHED) {
+            throw new IllegalStateException("Stream not ready for SESSION CREATE: " + state);
+        }
+        if (ownDestination == null || ownDestination.isEmpty()) {
+            // TRANSIENT fallback: i2pd generates a fresh destination. This
+            // does NOT preserve the original session identity, but it keeps
+            // i2pd from rejecting STREAM CONNECT/ACCEPT outright.
+            Log.w(TAG, "sessionCreate without ownDestination — using TRANSIENT (identity will differ)");
+        }
+
+        // Reasonable read timeout — SESSION STATUS arrives promptly once
+        // DESTINATION is provided, but allow some slack.
+        if (socket != null) {
+            try { socket.setSoTimeout(30000); } catch (Exception ignored) { }
+        }
+
+        String cmd = (ownDestination != null && !ownDestination.isEmpty())
+            ? SAMProtocolHandler.buildSessionCreate(sessionId, ownDestination)
+            : "SESSION CREATE STYLE=STREAM ID=" + sessionId + "\n";
+        Log.d(TAG, "Sending inline SESSION CREATE for session " + sessionId + " (on fresh socket)");
+        writer.print(cmd);
+        writer.flush();
+
+        String response = reader.readLine();
+        Log.d(TAG, "SESSION CREATE response: " + response);
+
+        if (response == null) {
+            state = State.ERROR;
+            throw new IOException("No response to SESSION CREATE");
+        }
+
+        boolean ok = SAMProtocolHandler.parseSessionStatus(response);
+        if (!ok) {
+            state = State.ERROR;
+            throw new IOException("SESSION CREATE on stream socket failed: " + response);
+        }
+        return true;
+    }
+
+    /**
      * Connect to a remote I2P destination via STREAM CONNECT.
      *
      * @param destination Target destination (b32.i2p or full base64)
@@ -234,6 +331,10 @@ public class SAMStream {
         if (state != State.SESSION_ATTACHED) {
             throw new IllegalStateException("Stream not ready for CONNECT: " + state);
         }
+
+        // i2pd closes the original session socket after SESSION STATUS; the
+        // session must be re-bound on this fresh socket before STREAM CONNECT.
+        sessionCreate();
 
         state = State.CONNECTING_TO_PEER;
         this.peerDestination = destination;
@@ -290,6 +391,10 @@ public class SAMStream {
         if (state != State.SESSION_ATTACHED) {
             throw new IllegalStateException("Stream not ready for ACCEPT: " + state);
         }
+
+        // i2pd closes the original session socket after SESSION STATUS; the
+        // session must be re-bound on this fresh socket before STREAM ACCEPT.
+        sessionCreate();
 
         state = State.ACCEPTING;
 
