@@ -626,15 +626,19 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 }
 
                 Log.d(TAG, "STREAM CONNECT using session ID: " + sessionId + ", destination: " + destination.substring(0, Math.min(20, destination.length())) + "...");
-                // Pass lastSessionPrivateKey so streamConnect() can re-attach the
-                // session on the freshly-opened socket (i2pd INVALID_ID fix, 2026-08-05).
-                stream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
+                // Centralized HELLO + SESSION CREATE via the pool (commits 1+2).
+                // The pool's obtainBoundSocket runs the i2pd-required handshake
+                // on a fresh socket; SAMStream skips its own connect()/sessionCreate().
+                SAMSessionSocketPool.BoundSocketResult bound =
+                        SAMSessionSocketPool.getInstance().obtainBoundSocket(
+                                sessionId, lastSessionPrivateKey, samHost, samPort, effectiveTimeoutMs);
+                stream = new SAMStream(sessionId, lastSessionPrivateKey,
+                        bound.socket, bound.reader, bound.writer);
                 // Honor the caller's timeout on the underlying socket — defense in depth
                 // alongside the Future-based timeout below.
                 stream.setConnectTimeout(effectiveTimeoutMs);
                 final int streamId = generateStreamId();
 
-                stream.connect();
                 stream.streamConnect(destination);
 
                 stream.setMessageListener(new SAMStream.MessageListener() {
