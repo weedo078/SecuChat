@@ -126,6 +126,39 @@ public class SAMStream {
     }
 
     /**
+     * Create a SAM stream on top of an already-bound socket.
+     *
+     * The socket must already have completed HELLO + SESSION CREATE (both
+     * RESULT=OK and RESULT=DUPLICATED_ID are acceptable). This is the path
+     * used by SAMSessionSocketPool: HELLO + SESSION CREATE happen on the
+     * pool side, this constructor accepts the resulting triple and skips
+     * the per-stream HELLO/CREATE which would re-do the work.
+     *
+     * The constructed stream is in {@link State#SESSION_ATTACHED}; streamConnect
+     * and streamAccept go straight to STREAM CONNECT / STREAM ACCEPT.
+     *
+     * @param sessionId      SAM session ID
+     * @param ownDestination Local private destination (908-byte base64), or null
+     * @param boundSocket    Already HELLO+SESSION CREATE-d socket
+     * @param reader         BufferedReader on boundSocket.getInputStream()
+     * @param writer         PrintWriter on boundSocket.getOutputStream()
+     */
+    public SAMStream(String sessionId, String ownDestination, Socket boundSocket,
+                     BufferedReader reader, PrintWriter writer) {
+        this.streamId = streamIdCounter.incrementAndGet();
+        this.sessionId = sessionId;
+        this.ownDestination = ownDestination;
+        this.samHost = "(bound)";
+        this.samPort = 0;
+        this.socket = boundSocket;
+        this.reader = reader;
+        this.writer = writer;
+        this.state = State.SESSION_ATTACHED;
+        this.messageQueue = new LinkedBlockingQueue<>();
+        this.isRunning = new AtomicBoolean(false);
+    }
+
+    /**
      * Set/override the local private destination. Call this before
      * streamConnect()/streamAccept() if you used the 3-arg constructor and
      * the destination is now known.
@@ -341,9 +374,17 @@ public class SAMStream {
             throw new IllegalStateException("Stream not ready for CONNECT: " + state);
         }
 
-        // i2pd closes the original session socket after SESSION STATUS; the
-        // session must be re-bound on this fresh socket before STREAM CONNECT.
-        sessionCreate();
+        // If we were constructed via the 5-arg (bound-socket) constructor,
+        // HELLO + SESSION CREATE are already done on this socket — skip the
+        // redundant inline sessionCreate() to avoid the SESSION CREATE →
+        // DUPLICATED_ID → socket-already-in-use race we observed in the wild.
+        // The 4-arg constructor path (legacy self-managed socket) still uses
+        // sessionCreate() to re-attach the session to its own fresh socket.
+        if (samHost == null || "(bound)".equals(samHost)) {
+            Log.d(TAG, "streamConnect: socket already bound (5-arg path), skipping SESSION CREATE");
+        } else {
+            sessionCreate();
+        }
 
         state = State.CONNECTING_TO_PEER;
         this.peerDestination = destination;
@@ -401,9 +442,13 @@ public class SAMStream {
             throw new IllegalStateException("Stream not ready for ACCEPT: " + state);
         }
 
-        // i2pd closes the original session socket after SESSION STATUS; the
-        // session must be re-bound on this fresh socket before STREAM ACCEPT.
-        sessionCreate();
+        // Same rationale as streamConnect: bound-socket constructor path
+        // already did HELLO + SESSION CREATE, so we skip the inline re-attach.
+        if (samHost == null || "(bound)".equals(samHost)) {
+            Log.d(TAG, "streamAccept: socket already bound (5-arg path), skipping SESSION CREATE");
+        } else {
+            sessionCreate();
+        }
 
         state = State.ACCEPTING;
 

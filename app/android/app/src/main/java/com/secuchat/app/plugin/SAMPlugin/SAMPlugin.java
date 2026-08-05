@@ -529,11 +529,15 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     Log.w(TAG, "DESTINATION PUBLISH (republish, main socket) returned: " + response);
                 }
 
-                // Fallback: fresh socket. i2pd rebinds to the existing session
-                // by session ID.
+                // Fallback: fresh socket via the shared pool (commits 1+2). Pool
+                // encapsulates HELLO + SESSION CREATE; we just reuse the
+                // bound socket for DESTINATION PUBLISH.
                 Log.w(TAG, "Falling back to fresh-socket DESTINATION PUBLISH for session " + currentSessionId);
-                pubStream = new SAMStream(currentSessionId, lastSessionPrivateKey, samHost, samPort);
-                pubStream.connect();
+                SAMSessionSocketPool.BoundSocketResult bound =
+                        SAMSessionSocketPool.getInstance().obtainBoundSocket(
+                                currentSessionId, lastSessionPrivateKey, samHost, samPort, 30000);
+                pubStream = new SAMStream(currentSessionId, lastSessionPrivateKey,
+                        bound.socket, bound.reader, bound.writer);
                 String response = pubStream.publishLeaseSet();
                 boolean ok = response != null && response.contains("RESULT=OK");
                 if (!ok) {
@@ -626,15 +630,19 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 }
 
                 Log.d(TAG, "STREAM CONNECT using session ID: " + sessionId + ", destination: " + destination.substring(0, Math.min(20, destination.length())) + "...");
-                // Pass lastSessionPrivateKey so streamConnect() can re-attach the
-                // session on the freshly-opened socket (i2pd INVALID_ID fix, 2026-08-05).
-                stream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
+                // Centralized HELLO + SESSION CREATE via the pool (commits 1+2).
+                // The pool's obtainBoundSocket runs the i2pd-required handshake
+                // on a fresh socket; SAMStream skips its own connect()/sessionCreate().
+                SAMSessionSocketPool.BoundSocketResult bound =
+                        SAMSessionSocketPool.getInstance().obtainBoundSocket(
+                                sessionId, lastSessionPrivateKey, samHost, samPort, effectiveTimeoutMs);
+                stream = new SAMStream(sessionId, lastSessionPrivateKey,
+                        bound.socket, bound.reader, bound.writer);
                 // Honor the caller's timeout on the underlying socket — defense in depth
                 // alongside the Future-based timeout below.
                 stream.setConnectTimeout(effectiveTimeoutMs);
                 final int streamId = generateStreamId();
 
-                stream.connect();
                 stream.streamConnect(destination);
 
                 stream.setMessageListener(new SAMStream.MessageListener() {
@@ -732,10 +740,14 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 SAMStream acceptStream = null;
                 try {
                     String sessionId = currentSessionId != null ? currentSessionId : acceptNickname;
-                    // Pass lastSessionPrivateKey so streamAccept() can re-attach
-                    // the session on the freshly-opened socket (i2pd INVALID_ID fix).
-                    acceptStream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
-                    acceptStream.connect();
+                    // Centralized HELLO + SESSION CREATE via the pool (commits 1+2).
+                    // Same path as connectTo: skip inline sessionCreate() since
+                    // the pool already bound the session to this socket.
+                    SAMSessionSocketPool.BoundSocketResult bound =
+                            SAMSessionSocketPool.getInstance().obtainBoundSocket(
+                                    sessionId, lastSessionPrivateKey, samHost, samPort, 0);
+                    acceptStream = new SAMStream(sessionId, lastSessionPrivateKey,
+                            bound.socket, bound.reader, bound.writer);
                     String peerDest = acceptStream.streamAccept();
 
                     int streamId = generateStreamId();
