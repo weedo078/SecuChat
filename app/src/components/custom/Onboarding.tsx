@@ -13,6 +13,7 @@ import { backupService } from '@/services/backup';
 import { i2pService, samService } from '@/services/i2p';
 import { platformService, type PlatformInfo } from '@/services/platform';
 import { uint8ArrayToBase64 } from '@/utils/base32';
+import { TEST_PASSPHRASE } from '@/utils/testMode';
 import { DeviceQRCode } from './DeviceQRCode';
 import type { AppSettings } from '@/types';
 
@@ -75,7 +76,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       autoOnboardInFlight = true;
       try {
         console.log('[AUTO-ONBOARD] start');
-        const u = 'Android', p = 'testpass123', dev = 'Pixel Phone';
+        const u = 'Android', p = TEST_PASSPHRASE, dev = 'Pixel Phone';
         const keys = await cryptoService.generateKeyPair(u, p);
         if (cancelled) return;
         // SAM-Destination ZUERST erzeugen (bevor generateIdentity läuft und die
@@ -138,14 +139,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           samStart: (userRec.i2pSamDestination || '').slice(0, 32),
         });
         storageService.setEncryptionPassphrase(p);
-        // TEST-ONLY: Passphrase + Test-Mode-Flag in localStorage ablegen, damit
-        // AppContext beim nächsten Mount automatisch entsperren kann (ohne Unlock-Prompt).
-        // Nur aktiv, wenn secuchat_test_mode='1' gesetzt ist — siehe AppContext.
-        if (typeof localStorage !== 'undefined') {
-          if (localStorage.getItem('secuchat_test_mode') === '1') {
-            localStorage.setItem('secuchat_test_pw', p);
-          }
-        }
+        // Test-Passphrase liegt als Konstante in utils/testMode.ts — der AppContext
+        // liest sie beim Auto-Unlock direkt von dort, nicht mehr aus einem
+        // verlustbaren localStorage-Flag.
         await storageService.saveUser(userRec);
         const platform = platformService.getPlatformInfo();
         // Host-i2pd-Bridge für Cross-Host-E2E-Test: Emulator → 10.0.2.2:7656, Telefon im LAN → 192.168.179.62:7656

@@ -7,6 +7,7 @@ import { storageService } from '@/services/storage';
 import { cryptoService } from '@/services/crypto';
 import { i2pService, samService } from '@/services/i2p';
 import { platformService } from '@/services/platform';
+import { isTestMode, TEST_PASSPHRASE } from '@/utils/testMode';
 
 // Zod Schema for incoming message validation
 const incomingMessageSchema = z.object({
@@ -233,14 +234,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const keysEncrypted = savedUser.pgpPrivateKey &&
           !savedUser.pgpPrivateKey.startsWith('-----BEGIN PGP');
 
-        // TEST-ONLY Auto-Unlock: wenn das Auto-Onboarding eine Test-Passphrase in
-        // localStorage abgelegt hat, beim Mount automatisch entsperren. Nur aktiv,
-        // wenn explizit secuchat_test_mode='1' gesetzt ist — niemals in Production.
-        const testModeEnabled = typeof localStorage !== 'undefined'
-          && localStorage.getItem('secuchat_test_mode') === '1';
-        const testPassphrase = testModeEnabled && typeof localStorage !== 'undefined'
-          ? localStorage.getItem('secuchat_test_pw')
-          : null;
+        // TEST-ONLY Auto-Unlock: Im Test-Mode (secuchat_test_mode='1') direkt mit
+        // der festen Test-Passphrase entsperren — ohne UnlockDialog. Die Passphrase
+        // liegt als Konstante in utils/testMode.ts und geht daher nie verloren
+        // (früher aus localStorage gelesen, was nach Wipe/App-Neustart fehlte).
+        const testModeEnabled = isTestMode();
+        const testPassphrase = testModeEnabled ? TEST_PASSPHRASE : null;
 
         if (keysEncrypted && testPassphrase) {
           // Auto-Onboarding hat einen Test-Modus-Pass hinterlegt — direkt entsperren
