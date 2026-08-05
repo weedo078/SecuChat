@@ -529,11 +529,15 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                     Log.w(TAG, "DESTINATION PUBLISH (republish, main socket) returned: " + response);
                 }
 
-                // Fallback: fresh socket. i2pd rebinds to the existing session
-                // by session ID.
+                // Fallback: fresh socket via the shared pool (commits 1+2). Pool
+                // encapsulates HELLO + SESSION CREATE; we just reuse the
+                // bound socket for DESTINATION PUBLISH.
                 Log.w(TAG, "Falling back to fresh-socket DESTINATION PUBLISH for session " + currentSessionId);
-                pubStream = new SAMStream(currentSessionId, lastSessionPrivateKey, samHost, samPort);
-                pubStream.connect();
+                SAMSessionSocketPool.BoundSocketResult bound =
+                        SAMSessionSocketPool.getInstance().obtainBoundSocket(
+                                currentSessionId, lastSessionPrivateKey, samHost, samPort, 30000);
+                pubStream = new SAMStream(currentSessionId, lastSessionPrivateKey,
+                        bound.socket, bound.reader, bound.writer);
                 String response = pubStream.publishLeaseSet();
                 boolean ok = response != null && response.contains("RESULT=OK");
                 if (!ok) {
