@@ -274,11 +274,18 @@ public class SAMStream {
      * to the existing session by ID. This is the same pattern that
      * DESTINATION PUBLISH uses (see SAMPlugin.createSession() inline publish).
      *
+     * i2pd accepts DUPLICATED_ID on subsequent SESSION CREATE attempts for
+     * an already-registered session ID — we treat this as success because
+     * the session is already known to i2pd and the new socket is now
+     * eligible for STREAM CONNECT/ACCEPT. This is what makes
+     * startAccepting's accept loop work after the first session-bound socket
+     * has been taken over by publishLeaseSet.
+     *
      * Caller MUST invoke this after connect() (state == SESSION_ATTACHED)
      * and before streamConnect()/streamAccept().
      *
-     * @return true on SESSION STATUS RESULT=OK
-     * @throws IOException on I/O failure
+     * @return true on SESSION STATUS RESULT=OK or RESULT=DUPLICATED_ID
+     * @throws IOException on I/O failure or any other SESSION STATUS error
      */
     public boolean sessionCreate() throws IOException {
         if (state != State.SESSION_ATTACHED) {
@@ -312,12 +319,14 @@ public class SAMStream {
             throw new IOException("No response to SESSION CREATE");
         }
 
-        boolean ok = SAMProtocolHandler.parseSessionStatus(response);
-        if (!ok) {
-            state = State.ERROR;
-            throw new IOException("SESSION CREATE on stream socket failed: " + response);
+        // Both OK and DUPLICATED_ID are acceptable — the session is known
+        // to i2pd in both cases and the fresh socket can now issue
+        // STREAM CONNECT/ACCEPT. Any other RESULT is a real failure.
+        if (response.contains("RESULT=OK") || response.contains("RESULT=DUPLICATED_ID")) {
+            return true;
         }
-        return true;
+        state = State.ERROR;
+        throw new IOException("SESSION CREATE on stream socket failed: " + response);
     }
 
     /**
