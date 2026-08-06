@@ -11,10 +11,11 @@ import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
 import { UnlockDialog } from '@/components/custom/UnlockDialog';
 import { UpdateNotification } from '@/components/custom/UpdateNotification';
+import { MobileNav } from '@/components/custom/MobileNav';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
-  const { user, initialize, isLoading, isLocked, unlockApp } = useApp();
+  const { user, initialize, isLoading, isLocked, unlockApp, activeChat } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showContactManager, setShowContactManager] = useState(false);
   const [showShareContact, setShowShareContact] = useState(false);
@@ -80,8 +81,9 @@ function App() {
 
   return (
     <div className="fixed inset-0 bg-background flex flex-col">
-      {/* Fixed Header - stays below notification bar on Android */}
-      <div className="fixed top-0 left-0 right-0 z-50" style={{ paddingTop: isAndroid() ? '28px' : undefined }} >
+      {/* Fixed Header — with StatusBar.setOverlaysWebView(false) the layout already
+          starts below the system status bar, so no manual top padding is needed. */}
+      <div className="fixed top-0 left-0 right-0 z-50">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
           onSettingsClick={() => setShowSettings(true)}
@@ -89,7 +91,7 @@ function App() {
       </div>
 
       {/* Main content with padding for fixed header */}
-      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : '4rem' }} >
+      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: '4rem' }}>
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
           <Sidebar
@@ -101,7 +103,7 @@ function App() {
 
         {/* Mobile Sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: isAndroid() ? '28px' : 'env(safe-area-inset-top, 0px)' }}>
+          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
             <Sidebar
               onAddContact={() => {
                 setSidebarOpen(false);
@@ -125,8 +127,18 @@ function App() {
         </div>
       </div>
 
+      {/* Mobile bottom navigation — only on the chat list (no active chat), so it
+          never overlaps the message input of an open conversation. */}
+      {!activeChat && (
+        <MobileNav
+          onAddContact={() => setShowContactManager(true)}
+          onSettingsClick={() => setShowSettings(true)}
+          activeTab="chats"
+        />
+      )}
+
       {/* Dialogs */}
-      <ContactManager 
+      <ContactManager
         isOpen={showContactManager} 
         onClose={() => setShowContactManager(false)} 
       />

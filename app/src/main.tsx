@@ -22,6 +22,14 @@ async function initApp() {
     // Ignore errors on web platform
   })
 
+  // Render the WebView BELOW the system status bar instead of edge-to-edge.
+  // Robust Android fix: the layout no longer extends under the status bar, so we
+  // can drop fragile per-element paddingTop workarounds (hardcoded px / isAndroid()
+  // checks). No-op on web/Electron (rejected by .catch).
+  StatusBar.setOverlaysWebView({ overlay: false }).catch(() => {
+    // Ignore on web / unsupported platforms
+  })
+
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <AppProvider>
