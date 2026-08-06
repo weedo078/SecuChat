@@ -532,7 +532,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 // Fallback: fresh socket. i2pd rebinds to the existing session
                 // by session ID.
                 Log.w(TAG, "Falling back to fresh-socket DESTINATION PUBLISH for session " + currentSessionId);
-                pubStream = new SAMStream(currentSessionId, lastSessionPrivateKey, samHost, samPort);
+                pubStream = new SAMStream(currentSessionId, samHost, samPort);
                 pubStream.connect();
                 String response = pubStream.publishLeaseSet();
                 boolean ok = response != null && response.contains("RESULT=OK");
@@ -626,9 +626,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 }
 
                 Log.d(TAG, "STREAM CONNECT using session ID: " + sessionId + ", destination: " + destination.substring(0, Math.min(20, destination.length())) + "...");
-                // Pass lastSessionPrivateKey so streamConnect() can re-attach the
-                // session on the freshly-opened socket (i2pd INVALID_ID fix, 2026-08-05).
-                stream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
+                stream = new SAMStream(sessionId, samHost, samPort);
                 // Honor the caller's timeout on the underlying socket — defense in depth
                 // alongside the Future-based timeout below.
                 stream.setConnectTimeout(effectiveTimeoutMs);
@@ -732,9 +730,7 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 SAMStream acceptStream = null;
                 try {
                     String sessionId = currentSessionId != null ? currentSessionId : acceptNickname;
-                    // Pass lastSessionPrivateKey so streamAccept() can re-attach
-                    // the session on the freshly-opened socket (i2pd INVALID_ID fix).
-                    acceptStream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
+                    acceptStream = new SAMStream(sessionId, samHost, samPort);
                     acceptStream.connect();
                     String peerDest = acceptStream.streamAccept();
 
