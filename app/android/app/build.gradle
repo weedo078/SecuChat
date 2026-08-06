@@ -35,11 +35,38 @@ dependencies {
     implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
     implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
     implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // ProcessLifecycleOwner for SecuChatApplication — detects when the app
+    // has been backgrounded for >5s so we can SESSION DESTROY cleanly.
+    implementation "androidx.lifecycle:lifecycle-process:$androidxLifecycleVersion"
     implementation project(':capacitor-android')
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+}
+
+// SECUCHAT:I2P — copy i2p.i2p JARs to app/libs/i2p before any assemble
+tasks.named('preBuild').configure {
+    dependsOn ':i2p-build:copyI2PJars'
+}
+
+// Flat-dir-Repo
+repositories {
+    flatDir { dirs 'libs/i2p' }
+}
+
+dependencies {
+    implementation files('libs/i2p/core-2.13.0.jar')
+    implementation files('libs/i2p/router-2.13.0.jar')
+    implementation files('libs/i2p/ministreaming-2.13.0.jar')
+}
+
+// Compile-Protection: keine GPL/jetty/routerconsole/i2ptunnel-Module in implementation
+configurations.all {
+    exclude group: 'i2p', module: 'i2ptunnel'
+    exclude group: 'i2p', module: 'sam'
+    exclude group: 'i2p', module: 'jetty'
+    exclude group: 'i2p', module: 'routerconsole'
 }
 
 apply from: 'capacitor.build.gradle'
