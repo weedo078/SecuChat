@@ -1,0 +1,4 @@
+[submodule "vendor/i2p.i2p"]
+	path = vendor/i2p.i2p
+	url = https://github.com/i2p/i2p.i2p.git
+	branch = master
