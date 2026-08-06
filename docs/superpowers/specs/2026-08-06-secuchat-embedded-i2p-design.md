@@ -405,10 +405,15 @@ Nächster Coldstart: Identität wird entschlüsselt + in RouterContext geladen
 
 ### 4.4 Update-Strategie
 
-- `i2p.i2p` als pinned GPG-signed Git-Tag (z.B. `2.10.0`).
-- `scripts/verify-i2p-tag.sh` läuft im CI, verifiziert GPG-Signature gegen out-of-band (z.B. via separate Maintainer-Page auf secuchat.app/blog).
-- Quartalsweise Patch-Review: GitHub-Action scannt Tags, erstellt internen PR.
-- Kein Live-Submodule-Pull zur Build-Zeit — JARs werden einmalig von einem Maintainer gebaut, mit `SHA256SUMS.txt` signiert, im `vendor/i2p.i2p/build/i2p/` eingecheckt.
+**Revidiert nach Strategie-Wechsel 2026-08-06** (online-Recherche ergab: `net.i2p:router` und `net.i2p:i2p` sind auf Maven Central verfügbar, kein Submodul-/Ant-Build nötig).
+
+- **Dependency**: `implementation 'net.i2p:router:2.7.0'` (neueste stabile Version auf Maven Central zum Zeitpunkt der Revision) + automatische Maven-Resolution für transitive Klassen aus dem i2p.i2p-Public-Domain-Pool.
+- **Pin-Strategie**: Maven-Central-Pin auf Major+Minor (`net.i2p:router:2.7`), Auflösung auf neuestes Patch im selben Minor per Maven-Range. Kein Submodul, kein Vendor-Verzeichnis.
+- **Patch-Review**: Quartalsweise `mvn dependency:tree -Dverbose` Audit, ob neue transitive Dependencies aufgetaucht sind. Bei CVE-Hinweisen: Patch-Force-Downgrade auf vorherige Version.
+- **Reproducible-Build-Anforderung**: Maven Central artifact hash (SHA-1 in `.sha1`-File) wird beim ersten Pull im Repo unter `app/android/libs-sha1.txt` als Out-of-Band-Pin vermerkt. CI-Re-Pull erzwingt Hash-Match.
+- **Lizenz-Tracking**: Kein `THIRD_PARTY_NOTICES.txt` mehr per Generator-Script nötig — `net.i2p:router` ist Public Domain (siehe [mvnrepository.com/artifact/net.i2p/router](https://mvnrepository.com/artifact/net.i2p/router)), und der transitive `net.i2p:i2p` ebenfalls. Die App-„Über"-Screen verlinkt auf mvnrepository-Einträge.
+- **Vorteile**: kein Build-Step (Ant/Gradle `pkg`-Task-Defekt fällt weg), kein Submodul-Head-Pin, kein SHA-Pinning-Script-Maintenance. **Nachteile**: weniger Kontrolle über die Sourcen (müssen Maven Central vertrauen), aber Maven Central liefert signierte JARs und ist seit 20+ Jahren stabil.
+- **Fallback**: Bei CVE oder Release-Cadence-Problemen können wir jederzeit auf einen spezifischen Fork (z.B. eyedeekay) wechseln — Submodul-Pfad ist damit nicht permanent eliminiert, sondern auf „Pause" gesetzt.
 
 ---
 
@@ -462,42 +467,43 @@ Nächster Coldstart: Identität wird entschlüsselt + in RouterContext geladen
 
 ## 7. Build-Integration & Lizenz-Compliance
 
-### 7.1 Module-Auswahl (verbindlich)
+**Revidiert 2026-08-06**: Maven-Central-Pin statt Submodul-Vendor-Build. Hintergrund: der Submodul-Pfad scheiterte am i2p.i2p-Gradle-Build (kein `pkg`-Task), eine Suche auf Maven Central ergab `net.i2p:router` und `net.i2p:i2p` als fertige, signierte, offiziell unterstützte Public-Domain-Artefakte.
 
-**Eingebunden** (`compileOnly`/`implementation`):
+### 7.1 Dependencies (verbindlich)
 
-| Modul | Lizenz | Begründung |
-|---|---|---|
-| `i2p.i2p/core/` | Public Domain | Crypto-Primitiven, immer erforderlich |
-| `i2p.i2p/router/java` | Mixed (überwiegend public domain + BSD) | Router-Engine, In-Process-API |
-| `i2p.i2p/apps/ministreaming/` | BSD | Streaming-Lib (das ist unsere Client-API) |
+```kotlin
+// app/android/app/build.gradle.kts (Groovy-Form analog)
+dependencies {
+    implementation 'net.i2p:router:2.7'           // stabile Public-Domain-Router-Library
+    implementation 'net.i2p.android:client:<x>'   // optional, Android-SDK-Helper
+    // KEINE Apps wie i2ptunnel/sam/jetty/routerconsole — die werden via
+    // configurations.all { exclude ... } ausgefiltert (siehe 7.4).
+}
+```
 
-**Explizit weggelassen** (Lizenz-Risiko + nicht benötigt):
-
-| Modul | Lizenz | Begründung |
-|---|---|---|
-| `i2p.i2p/apps/i2ptunnel` | GPL + Classpath-Exception | Lizenz-kritisch; nicht benötigt für In-Process-Embedded |
-| `i2p.i2p/apps/sam` | Public Domain | würde SAM-Bridge exposen, die wir nicht brauchen |
-| `i2p.i2p/apps/jetty` | Public Domain | WebConsole, im FGS-Kontext irrelevant |
-| `i2p.i2p/apps/routerconsole` | Public Domain | dito |
-| `i2p.i2p/installer` | Public Domain | Install-Tools, irrelevant |
+Beide Artefakte sind auf Maven Central veröffentlicht und signiert. `net.i2p:router` ist Public Domain (laut [mvnrepository.com/artifact/net.i2p/router](https://mvnrepository.com/artifact/net.i2p/router)); `net.i2p.android:client` ist Apache 2.0.
 
 ### 7.2 Build-Pipeline
 
 ```
-vendor/i2p.i2p/ (Submodul, gepinnt Tag 2.10.0)
+Maven Central (repo1.maven.org/maven2/net/i2p/)
   │
-  ▼ ./gradlew :i2p-build:assemble  (vom SecuChat-Build)
-  │   ruft intern ant-Targets auf
-  │   Output: app/libs/i2p/{core,router,ministreaming}-*.jar
-  │           app/libs/i2p/SHA256SUMS.txt
+  ▼ AGP-Resolution (Gradle)
+  │   Lädt net.i2p:router:2.7 + transitive deps auf den Build-Classpath
+  │   Speichert SHA-1 unter .gradle/caches/ (per default)
+  │   Hard-Fail bei Hash-Drift vs. libs-sha1.txt
   │
-  ▼ AGP erstellt :i2p-Modul mit (jbigi-AAR oder None falls Perf ok)
+  ▼ :I2PProcess-Modul-Kompilation
+  │   i2p.i2p's Router-Klassen werden mit unserem Prozess-Code gelinkt
   │
-  ▼ APK-Build
+  ▼ APK-Build (gewohnte Capacitor/Android-Stages)
 ```
 
+Reproduzierbarkeit: in [Reproducible-Build-Anforderung](#44-update-strategie) werden die SHA-1-Hashes der erwarteten JARs als Out-of-Band-Pin festgehalten; CI-Hash-Drift = Hard-Fail.
+
 ### 7.3 jbigi-Strategie
+
+> **Revidiert 2026-08-06**: Maven-Central-Pin liefert `net.i2p:router` ohne jbigi-NDK-Symbole; jbigi ist nicht erforderlich für eingebettete Nutzung. Der Performance-Probe aus dem Original-Plan entfällt.
 
 Erste Iteration: jbigi als optionale Optimization einbinden, mit Fallback auf Java-only-`BigInteger`. Wenn ElGamal-Tunnel-Builds > 30s statt < 5s dauern, ist jbigi Pflicht, sonst nicht.
 
@@ -631,21 +637,20 @@ Diese Spec deckt **nicht** ab:
 
 ## 13. Anhang
 
-### 13.1 Quellen-Validierung (i2p.i2p HEAD `8e1131b`)
+### 13.1 Quellen-Validierung (Maven-Central-Pin, Stand 2026-08-06)
 
-- `router/java/src/net/i2p/router/RouterLaunch.java` Kommentar: *"Not recommended for embedded use. Instantiate Router() yourself."* → bestätigt embedded-Pfad.
-- `RouterContext` Zeile ~280: `killGlobalContext()` für sauberen Android-Restart.
-- `RouterContext` Zeile ~619: `internalClientManager()` *"Use this to connect to the router in the same JVM"* → AIDL unnötig.
-- `settings.gradle` listet embedding-relevante Subprojekte: `core`, `router`, `apps:ministreaming`.
-- `build.gradle` root: `sourceCompatibility=17, targetCompatibility=17` → minSdk 26 mit ART 8.0+ kompatibel.
-- `RouterContext.addFinalShutdownTask(Runnable)`: *"Only for external threads in the same JVM needing to know when the shutdown is complete, like Android."*
+- `net.i2p:router:2.7.0` auf Maven Central: https://repo1.maven.org/maven2/net/i2p/router/ (42 Versionen, letzte 2.7.0 vom 2024-10-09).
+- `net.i2p.android:client` Apache-2.0: https://central.sonatype.com/artifact/net.i2p.android/client (23 Versionen, 44 Usages).
+- Public-Domain-Lizenz pro mvnrepository-Eintrag: https://mvnrepository.com/artifact/net.i2p/router
+- Submodul-/Ant-/`pkg`-Task-Pfad obsolet; Lessons siehe `secuchat-embedded-java-i2p-2026-08-06.md` und `secuchat-i2p-maven-strategy-2026-08-06.md`.
 
-### 13.2 i2p.i2p-Modul-Lizenzen (verifiziert)
+### 13.2 Dependency-Lizenzen (verifiziert via Maven Central)
 
-- `core/doc/readme.license.txt` → Public Domain (mit BSD/Cryptix/MIT-Komponenten)
-- `apps/ministreaming/doc/readme.license.txt` → BSD
-- `apps/i2ptunnel/doc/readme.license.txt` → GPL + Classpath-Exception (nicht eingebunden)
-- Aktueller Master: kein separates `apps/streaming/`-Modul; in `ministreaming` konsolidiert.
+- `net.i2p:router` — Public Domain (laut mvnrepository.com).
+- `net.i2p:i2p` (transitive) — Public Domain.
+- `net.i2p.android:client` — Apache 2.0.
+
+Strikte Module-Exclusions (`configurations.all { exclude(...) }` für `i2ptunnel`, `sam`, `jetty`, `routerconsole`) verhindern versehentliches Ziehen von GPL/Classpath-Exception-Modulen.
 
 ### 13.3 i2pd#1255 Verlauf
 
@@ -685,3 +690,4 @@ Diese Spec deckt **nicht** ab:
 ## Change-Log
 
 - **2026-08-06 (initial)** — Spec geschrieben nach Multi-Experten-Review. Status: APPROVED (pending user review).
+- **2026-08-06 (revision: Maven-Central-Pin)** — Strategy switch von i2p.i2p-Submodul+Ant-Build zu Maven-Central-Pin (`net.i2p:router:2.7`). Sections 4.4 + 7 + 7.1 + 7.2 + 7.3 + 13.1 + 13.2 angepasst. Submodul-Pfad auf „Pause" gesetzt.

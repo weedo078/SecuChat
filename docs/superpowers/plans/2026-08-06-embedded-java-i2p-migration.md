@@ -33,283 +33,111 @@ Jeder Stage-Task wird per `superpowers:subagent-driven-development` ausgeführt.
 
 | Stage | Agent-Setup |
 |---|---|
-| 1 (Vendor-Pin) | Agent „Build-Adapter" + paralleler Agent „Git-Submodule-Audit" (Review) |
+| 1 (Maven-Central-Pin) | Agent „Build-Verifier" (dependency-tree mit Lizenz-Scope-Check, jbigi obsolet) |
 | 2 (Standalone-Router) | Agent „FGS-Manifest-Audit" (specialUse, PROPERTY, Android-15-Compat) + Agent „Crypto-Provider-Reihenfolge" (Smoke-Test) |
-| 2 (jbigi-Probe) | Parallel-Agent misst ElGamal-Throughput und entscheidet jbigi-Einbindung |
 | 3 (Identity + Bridge) | Agent „Security-Reviewer" (PBKDF2-AEAD-Test-Vector-Validation) |
 | 5 (I2PPlugin in App) | Agent „Android-Lifecycle-Race-Hunter" |
 | 7 (Akku-Profil) | Agent „SRE-Profiler" (4h-`batterystats`-Analyse) |
 
 ---
 
-# Stage 1: Vendor-Pin + Build-Integration (PR 1)
+# Stage 1: Maven-Central-Pin + libs-sha1.txt (PR 1)
 
-> **Reviewer-Schwerpunkt**: Build-Smoke, SHA-Sums korrekt, GPG-Signature verifizierbar.
-> **Rollback**: Submodul raus + `:i2p-build` löschen, kein App-Impact.
+> **Revidiert 2026-08-06 nach Strategie-Wechsel** (online-Recherche: `net.i2p:router` ist auf Maven Central verfügbar, also kein Submodul-Vendor-Build + kein Ant-/Gradle-`pkg`-Task nötig).
+> **Reviewer-Schwerpunkt**: Pin korrekt, Hash-Drift-Detection, License-Resolve-Output.
+> **Rollback**: Pin auf vorigen Minor zurück, kein App-Impact.
 
-## Task 1.1: i2p.i2p-Submodul mit GPG-Pin
+## Task 1.1: Maven-Central-Pin + SHA-1-Pinning [REVIDIERT 2026-08-06]
 
-**Files:**
-- Create: `.gitmodules`
-- Create: `vendor/.gitkeep` (Platzhalter)
-- Create: `scripts/verify-i2p-tag.sh` (ausführbar)
-
-**Interfaces:**
-- Erzeugt: `vendor/i2p.i2p/` als verifizierter Checkout mit getaggtem Commit.
-
-- [ ] **Step 1: i2p.i2p-Repo als Submodul hinzufügen mit Pin auf Tag `2.10.0`**
-
-```bash
-cd /home/g/dev/SecuChat
-mkdir -p vendor
-git submodule add --branch 2.10.0 https://github.com/i2p/i2p.i2p.git vendor/i2p.i2p
-git -C vendor/i2p.i2p log -1 --format="%H %s"   # expect: tag-commit-SHA
-```
-
-- [ ] **Step 2: GPG-Signature am Tag verifizieren (manuell)**
-
-```bash
-git -C vendor/i2p.i2p tag -v 2.10.0
-```
-
-Erwartet: `Good signature from "i2p release key"`. Falls Maintainer-Key-Wechsel: siehe [Maintainer-Keys-Page](https://i2p.net/en/docs/developers/release_signing_keys).
-
-- [ ] **Step 3: Pflicht-Verifikations-Script `scripts/verify-i2p-tag.sh` anlegen**
-
-```bash
-#!/usr/bin/env bash
-# scripts/verify-i2p-tag.sh — GPG-Signature + Commit-Hash gegen Out-of-Band-Pin
-set -euo pipefail
-
-EXPECTED_TAG="${I2P_EXPECTED_TAG:-2.10.0}"
-EXPECTED_COMMIT_SHA="${I2P_EXPECTED_COMMIT_SHA:-}"   # ausgeliefert via secuchat.app/blog/i2p-pin
-ALLOWED_SIGNING_FPR="${I2P_ALLOWED_FPR:-}"           # GPG-Fingerprint des Maintainer-Keys
-
-cd "$(dirname "$0")/../vendor/i2p.i2p"
-
-echo "[verify-i2p-tag] Checking tag $EXPECTED_TAG ..."
-git fetch --tags origin
-
-# 1. Tag-Signature prüfen
-git tag -v "$EXPECTED_TAG" || {
-    echo "ERROR: GPG signature on tag $EXPECTED_TAG failed"
-    exit 1
-}
-
-# 2. Commit-Hash gegen Out-of-Band-Pin
-ACTUAL_SHA=$(git rev-parse "$EXPECTED_TAG^{commit}")
-if [ -n "$EXPECTED_COMMIT_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_COMMIT_SHA" ]; then
-    echo "ERROR: Tag commits to $ACTUAL_SHA, expected $EXPECTED_COMMIT_SHA"
-    echo "ERROR: Update I2P_EXPECTED_COMMIT_SHA env var from secuchat.app/blog/i2p-pin"
-    exit 1
-fi
-
-# 3. Maintainer-Key-Fingerprint check
-if [ -n "$ALLOWED_SIGNING_FPR" ]; then
-    ACTUAL_FPR=$(git verify-tag --raw "$EXPECTED_TAG" 2>&1 | grep -oP 'using .* key [A-F0-9]+' | head -1)
-    echo "[verify-i2p-tag] Signing FPR: $ACTUAL_FPR"
-    # Note: in CI set I2P_ALLOWED_FPR; locally this is informational
-fi
-
-echo "[verify-i2p-tag] OK: tag $EXPECTED_TAG verified"
-```
-
-- [ ] **Step 4: Script testen**
-
-```bash
-chmod +x scripts/verify-i2p-tag.sh
-./scripts/verify-i2p-tag.sh
-```
-
-Erwartet: Exit 0, Output „OK".
-
-- [ ] **Step 5: Git-Konfiguration für Submodul-Tracking**
-
-```bash
-git add .gitmodules vendor/i2p.i2p
-git -C vendor/i2p.i2p commit -m "vendor(i2p.i2p): pin 2.10.0" --allow-empty  # falls Tag bereits commit ist
-git add scripts/verify-i2p-tag.sh
-git commit -m "feat(vendor): i2p.i2p 2.10.0 + GPG-verify script"
-```
-
----
-
-## Task 1.2: `:i2p-build` Gradle-Modul
+> **Strategie-Wechsel-Notiz**: Die ursprünglich geplanten Sub-Tasks 1.1/1.2/1.3 (Vendor-Submodul, `:i2p-build` Gradle-Modul, jbigi-Probe) sind obsolet. i2p.i2p's Repo-Build hat keinen `pkg`-Task; Ant ist auf den Hosts nicht installiert; JAR-Pfade heißen `build/libs/*.jar` statt `build/*.jar`. Online-Recherche 2026-08-06 ergab, dass `net.i2p:router` und `net.i2p:i2p` bereits als fertige, signierte Public-Domain-Artefakte auf Maven Central liegen (neueste stabile Router-Version: 2.7.0 vom 2024-10-09). Damit entfällt jede Form von Vendor-Lokal-Build.
 
 **Files:**
-- Create: `app/android/i2p-build/build.gradle.kts`
-- Create: `app/android/i2p-build/src/main/kotlin/I2PBuildTask.kt`
-- Modify: `app/android/settings.gradle.kts` (Modul hinzufügen)
+- Modify: `app/android/app/build.gradle` (Dependency einbinden)
+- Modify: `app/android/variables.gradle` (Pin-Version + SHA-1 als Variable)
+- Create: `app/android/libs-sha1.txt` (Out-of-Band-SHA-1-Hashes)
 
 **Interfaces:**
-- Consumes: `vendor/i2p.i2p/` (Submodul-Checkout)
-- Produces: `app/libs/i2p/{core,router,ministreaming}-2.10.0.jar` + `SHA256SUMS.txt`
+- Erzeugt: Maven-Resolution-Pin auf `net.i2p:router:2.7.0`.
 
-- [ ] **Step 1: Modul-Verzeichnis anlegen**
+- [ ] **Step 1: Aktuelle stabile Version verifizieren**
 
 ```bash
-mkdir -p app/android/i2p-build/src/main/kotlin
+curl -sL https://repo1.maven.org/maven2/net/i2p/router/maven-metadata.xml | grep -E '<latest>|<release>|<version>'
 ```
 
-- [ ] **Step 2: Modul-Konfiguration schreiben**
+Erwartet: aktuelle Versionsnummer. Stand 2026-08-06 = `2.7.0`.
 
-`app/android/i2p-build/build.gradle.kts`:
+- [ ] **Step 2: SHA-1-Hash der JAR holen**
 
-```kotlin
-plugins {
-    base
-}
+```bash
+curl -sL https://repo1.maven.org/maven2/net/i2p/router/2.7.0/router-2.7.0.jar.sha1
+```
 
-val i2pRootDir = rootProject.file("vendor/i2p.i2p").canonicalFile
-val i2pJarsOut = rootProject.file("libs/i2p")
+Inhalt als `netI2pRouterSha1` eintragen.
 
-val i2pModules = listOf("core", "router/java", "apps/ministreaming")
-val i2pJarFiles = listOf(
-    "core/build/core.jar" to "core-2.10.0.jar",
-    "router/java/build/router.jar" to "router-2.10.0.jar",
-    "apps/ministreaming/build/mstreaming.jar" to "ministreaming-2.10.0.jar",
-)
+- [ ] **Step 3: Pin in `app/android/variables.gradle` eintragen**
 
-tasks.register<Exec>("buildI2PJars") {
-    workingDir = i2pRootDir
-    commandLine("./build.sh", "pkg")  // i2p.i2p's build.sh wrapper
-    // Falls build.sh nicht existiert: commandLine("ant", "pkg")
-}
+Am Ende der vorhandenen Versions-Properties anhängen:
 
-tasks.register("copyI2PJars") {
-    dependsOn("buildI2PJars")
-    doLast {
-        i2pJarsOut.mkdirs()
-        i2pJarFiles.forEach { (src, dstName) ->
-            val srcFile = file("$i2pRootDir/$src")
-            require(srcFile.exists()) { "Expected $src from i2p.i2p build" }
-            srcFile.copyTo(i2pJarsOut.resolve(dstName), overwrite = true)
-        }
-        // SHA-256-Sums
-        val sha = i2pJarsOut.listFiles { f -> f.extension == "jar" }!!.joinToString("") {
-            "${it.sha256()}  ${it.name}\n"
-        }
-        i2pJarsOut.resolve("SHA256SUMS.txt").writeText(sha)
-    }
-}
+```groovy
+ext {
+    // ... bestehende Werte ...
 
-fun File.sha256(): String {
-    val bytes = readBytes()
-    val md = java.security.MessageDigest.getInstance("SHA-256")
-    return md.digest(bytes).joinToString("") { "%02x".format(it) }
+    // Net.I2P Java-Router Embedding (Maven-Central-Pin, Revidiert 2026-08-06)
+    netI2pRouterVersion = '2.7.0'
+    netI2pRouterSha1 = '<aus Step 2>'
 }
 ```
 
-- [ ] **Step 3: Modul zu settings.gradle.kts hinzufügen**
+- [ ] **Step 4: Dependency einbinden in `app/android/app/build.gradle`**
 
-In `app/android/settings.gradle.kts` (oder analog, je nach Root-Konfiguration):
-```kotlin
-include(":i2p-build")
-```
+Im vorhandenen `dependencies { ... }`-Block:
 
-- [ ] **Step 4: Build-Hook im Haupt-Modul einklinken**
-
-In `app/android/app/build.gradle` (oder `.kts`):
-```kotlin
-// SECUCHAT:I2P — Build-Hook kopiert JARs in app/libs/i2p vor assembleDebug
-tasks.named("preBuild").configure { dependsOn(":i2p-build:copyI2PJars") }
-
-// Flat-Dir-Repo für die gepinnten JARs
-repositories {
-    flatDir { dirs("libs/i2p") }
-}
-
-// i2p.i2p-Module als Compile-Libs (Strict-Auswahl!)
+```groovy
 dependencies {
-    implementation(files("libs/i2p/core-2.10.0.jar"))
-    implementation(files("libs/i2p/router-2.10.0.jar"))
-    implementation(files("libs/i2p/ministreaming-2.10.0.jar"))
-}
+    // ... bestehende deps ...
+    implementation "net.i2p:router:${netI2pRouterVersion}@sha1"
 
-// Sanity: niemand zieht versehentlich apps/i2ptunnel rein
-configurations.all {
-    exclude(group = "i2p", module = "i2ptunnel")  // falls je Module-Patterns auftauchen
-}
-```
-
-- [ ] **Step 5: Build-Probe**
-
-```bash
-cd app/android
-./gradlew :i2p-build:buildI2PJars :i2p-build:copyI2PJars
-ls -la ../libs/i2p/
-```
-
-Erwartet: `core-2.10.0.jar`, `router-2.10.0.jar`, `ministreaming-2.10.0.jar`, `SHA256SUMS.txt` vorhanden.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add app/android/i2p-build app/android/settings.gradle.kts app/android/app/build.gradle
-git commit -m "feat(build): :i2p-build Gradle-Modul + flat-dir repo"
-```
-
----
-
-## Task 1.3: jbigi-Performance-Probe (Multi-Agent-Spike)
-
-**Files:**
-- Create: `app/android/i2p-build/src/main/probe/ElGamalThroughput.kt`
-- Create: `app/android/i2p-build/probe-results.md`
-
-**Decision-Ouput:**
-- Falls <5s/1k keypairs: jbigi weglassen.
-- Falls >30s/1k keypairs: jbigi ist Pflicht (PR 1.4 als Folge-Task).
-
-- [ ] **Step 1: Multi-Agent-Workflow aufsetzen**
-
-Dispatched per `superpowers:subagent-driven-development` mit Auftrag:
-- Lese i2p.i2p's `core/java/src/gnu/getopt/Getopt.java` und verwandte BigInt-Klassen.
-- Schreibe eine Java-only-Probe-`main`, die 1.000 ElGamal-Keypairs generiert.
-- Miss Zeit in ms, dokumentiere in `probe-results.md`.
-
-- [ ] **Step 2: Probe-Skeleton anlegen**
-
-`app/android/i2p-build/src/main/probe/ElGamalThroughput.kt`:
-
-```kotlin
-import net.i2p.data.PrivateKey
-import net.i2p.data.PublicKey
-
-fun main() {
-    val n = 1000
-    val t0 = System.currentTimeMillis()
-    repeat(n) {
-        val priv = PrivateKey()
-        priv.generate()
-        val pub = PublicKey()
+    // Lizenz-Scope-Hardening: niemand zieht Apps/i2ptunnel rein
+    configurations.all {
+        exclude group: 'net.i2p', module: 'i2ptunnel'
+        exclude group: 'net.i2p', module: 'sam'
+        exclude group: 'net.i2p', module: 'jetty'
+        exclude group: 'net.i2p', module: 'routerconsole'
     }
-    val elapsed = System.currentTimeMillis() - t0
-    println("ElGamal $n keypairs: ${elapsed} ms (${elapsed / n.toDouble()} ms/pair)")
-    // Decision-Schwelle: <5000ms total = jbigi weglassen OK
 }
 ```
 
-- [ ] **Step 3: Probe-Ergebnisse dokumentieren, Entscheidung treffen**
+`@sha1`-Suffix zwingt Gradle, den Hash-Wert aus `variables.gradle` zu verifizieren. Hard-Fail bei Drift.
 
-In `probe-results.md` festhalten und Commit-Hash der Entscheidung in PR-Description.
-
-- [ ] **Step 4: Wenn jbigi nötig: eyedeekay-Fork-Audit-Report erstellen**
-
-Audit-Checkliste als Markdown:
-- Letzter Commit-Datum
-- Letzte CVE-Response
-- Build-Pipeline-Reproducibility
-- Lizenz-Klarheit
-
-**Stop-Bedingung**: Wenn Audit-Risiko > medium, eigene NDK-Pipeline vorbereiten (statt eyedeekay-Fork).
-
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Build-Probe — Dependency-Resolution + Lizenz-Scope**
 
 ```bash
-git add app/android/i2p-build/src/main/probe probe-results.md
-git commit -m "feat(probe): elgamal-throughput + jbigi-decision"
+cd app/android && ./gradlew :app:dependencies --configuration releaseRuntimeClasspath | grep -E 'net\.i2p'
 ```
+
+Erwartet: Auflösung zeigt nur `net.i2p:router` und transitive `net.i2p:i2p`. KEINE `i2ptunnel`/`sam`/`jetty`.
+
+- [ ] **Step 6: `app/android/libs-sha1.txt` schreiben**
+
+Datei-Inhalt:
+
+```
+# Out-of-Band-SHA-1-Hashes der Maven-Central-Artefakte (net.i2p:router + transitives)
+# Verifikation: sha1sum gegen die aus Maven-Central heruntergeladene JAR-Datei.
+router-2.7.0.jar=<aus Step 2>
+# transitive (zur Sicherheit):
+i2p-0.9.x.jar=<aus mvnrepository.com / repo1.maven.org>
+```
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add app/android/app/build.gradle app/android/variables.gradle app/android/libs-sha1.txt
+git commit -m "feat(deps): net.i2p:router:2.7 via Maven Central + sha1-pin"
+```
+
+**Reviewer-Schwerpunkt für PR 1**: Lizenz-Scope sauber (keine i2ptunnel/sam/jetty in deps), Hash-Pin funktioniert (Hard-Fail bei Drift), transitive deps wie erwartet, Build grün.
 
 ---
 
