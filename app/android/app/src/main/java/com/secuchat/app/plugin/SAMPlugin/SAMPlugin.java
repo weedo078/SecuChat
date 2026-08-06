@@ -736,14 +736,10 @@ public class SAMPlugin extends Plugin implements EventNotifier {
                 SAMStream acceptStream = null;
                 try {
                     String sessionId = currentSessionId != null ? currentSessionId : acceptNickname;
-                    // Centralized HELLO + SESSION CREATE via the pool (commits 1+2).
-                    // Same path as connectTo: skip inline sessionCreate() since
-                    // the pool already bound the session to this socket.
-                    SAMSessionSocketPool.BoundSocketResult bound =
-                            SAMSessionSocketPool.getInstance().obtainBoundSocket(
-                                    sessionId, lastSessionPrivateKey, samHost, samPort, 0);
-                    acceptStream = new SAMStream(sessionId, lastSessionPrivateKey,
-                            bound.socket, bound.reader, bound.writer);
+                    // Pass lastSessionPrivateKey so streamAccept() can re-attach
+                    // the session on the freshly-opened socket (i2pd INVALID_ID fix).
+                    acceptStream = new SAMStream(sessionId, lastSessionPrivateKey, samHost, samPort);
+                    acceptStream.connect();
                     String peerDest = acceptStream.streamAccept();
 
                     int streamId = generateStreamId();
