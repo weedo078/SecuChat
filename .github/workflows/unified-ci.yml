@@ -257,6 +257,8 @@ jobs:
       needs.detect-changes.outputs.shared == 'true'
     steps:
       - uses: actions/checkout@v7
+        with:
+          submodules: recursive
 
       - name: Check if Android directory exists
         id: check-android
