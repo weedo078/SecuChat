@@ -26,33 +26,44 @@
 
 ---
 
-## Task 1: Build-Update — `net.i2p:i2p:2.8.0` statt Vendoring
+## Task 1: Build-Update — `net.i2p:i2p:2.8.0` (Maven Central) + `streaming.jar` (Vendor)
+
+**Anlass (Plan-Update 2026-08-07, vom User bestätigt):** Plan-Annahme war, dass `net.i2p:i2p:2.8.0` die Streaming-API (`net.i2p.client.streaming.*`) enthält. **Verified:** Maven-Central-`i2p-2.8.0.jar` ist eine „core"-Variante **ohne** Streaming-API. **Workaround:** Vendor-Submodul `i2p.i2p` kommt zurück, baut `streaming.jar` (Public Domain) zusätzlich. `i2p-2.8.0.jar` bleibt aus Maven Central.
 
 **Files:**
-- Modify: `app/android/i2p-build/build.gradle` (komplett ersetzen)
+- Modify: `app/android/i2p-build/build.gradle` (erweitern um `streaming.jar`-Build)
 - Modify: `app/android/app/build.gradle` (Zeilen 48-70)
-- Delete: `vendor/i2p.i2p` (Submodul)
-- Delete: `app/android/libs/i2p/router-2.13.0.jar`
-- Delete: `app/android/libs/i2p/ministreaming-2.13.0.jar`
-- Create: `app/android/libs/i2p/i2p-2.8.0.jar` (per Build)
-- Create: `app/android/libs/i2p/THIRD_PARTY_NOTICES.txt` (per Build)
+- Restore: `vendor/i2p.i2p` (Submodul, Pin via gitlink)
+- Create: `app/android/libs/i2p/i2p-2.8.0.jar` (per Build, Maven Central)
+- Create: `app/android/libs/i2p/streaming.jar` (per Build, aus Vendor)
+- Create: `app/android/libs/i2p/THIRD_PARTY_NOTICES.txt` (per Build, manuell)
+- Delete: `app/android/libs/i2p/router-2.13.0.jar` (relikt aus altem Vendor-Build)
+- Delete: `app/android/libs/i2p/ministreaming-2.13.0.jar` (relikt)
 
 **Interfaces:**
-- Produces: `app/android/libs/i2p/i2p-2.8.0.jar` (für Implementation-Dependency)
-- Produces: `app/android/libs/i2p/SHA256SUMS.txt` (für Audit)
-- Produces: `app/android/libs/i2p/THIRD_PARTY_NOTICES.txt` (für „Über"-Sektion)
+- Produces: `app/android/libs/i2p/i2p-2.8.0.jar` (Maven Central core, I2CP-Protokoll)
+- Produces: `app/android/libs/i2p/streaming.jar` (Vendor, TCP-Stream-API)
+- Produces: `app/android/libs/i2p/SHA256SUMS.txt`
+- Produces: `app/android/libs/i2p/THIRD_PARTY_NOTICES.txt`
 
-- [ ] **Step 1: Lokales Maven-Cache für i2p-2.8.0 vorbereiten**
+- [ ] **Step 1: Vendor-Submodul wiederherstellen**
 
 ```bash
-cd app/android/i2p-build
-mkdir -p cache
-./gradlew cacheI2PJar
+cd /home/g/dev/SecuChat
+git mv .gitmodules.disabled .gitmodules 2>/dev/null || true
+# Falls .gitmodules existiert: submodule ist noch registriert, einfach init
+git submodule update --init vendor/i2p.i2p
+# Falls .gitmodules nicht existiert: neu hinzufügen
+if [ ! -f .gitmodules ]; then
+  git submodule add --force https://github.com/i2p/i2p.i2p.git vendor/i2p.i2p
+  cd vendor/i2p.i2p && git checkout --detach ee7878f  # exakt der Commit, der vorher da war
+  cd ../..
+fi
 ```
 
-Falls `cacheI2PJar` noch nicht existiert: in `build.gradle` neuen Task anlegen (siehe Step 2). Zuerst Cache-Dir und Stub-Task.
+Falls `ee7878f` nicht mehr existiert: verwende den neuesten i2p-2.13.0-Tag.
 
-- [ ] **Step 2: `i2p-build/build.gradle` komplett ersetzen**
+- [ ] **Step 2: `i2p-build/build.gradle` erweitern**
 
 ```groovy
 plugins {
@@ -61,6 +72,7 @@ plugins {
 
 ext {
     i2pArtifact = 'net.i2p:i2p:2.8.0'
+    i2pVendorDir = rootProject.file('vendor/i2p.i2p')
     i2pOutDir = rootProject.file('libs/i2p')
     i2pCacheDir = rootProject.file('i2p-build/cache')
 }
@@ -69,66 +81,116 @@ tasks.register('cacheI2PJar') {
     description 'Download net.i2p:i2p:2.8.0 to local cache'
     doLast {
         i2pCacheDir.mkdirs()
-        // Use a sub-Gradle project to resolve the artifact via mavenCentral()
         def resolverProject = rootProject
-        def dep = resolverProject.dependencies.create(i2pArtifact)
         def config = resolverProject.configurations.create('i2pDownload')
-        resolverProject.dependencies.add('i2pDownload', dep)
+        resolverProject.dependencies.add('i2pDownload', resolverProject.dependencies.create(i2pArtifact))
         def jarFile = resolverProject.configurations.i2pDownload.resolve().find { it.name.startsWith('i2p-') && it.name.endsWith('.jar') }
-        if (jarFile == null) {
-            throw new GradleException("Failed to resolve ${i2pArtifact}")
-        }
+        if (jarFile == null) throw new GradleException("Failed to resolve ${i2pArtifact}")
         def target = new File(i2pCacheDir, 'i2p-2.8.0.jar')
         target.bytes = jarFile.bytes
         println "Cached: ${target.absolutePath} (${target.length()} bytes)"
     }
 }
 
-tasks.register('copyI2PJar') {
-    description 'Copy i2p-2.8.0.jar to app/libs/i2p + Strict-Scope-Check + SHA256SUMS + THIRD_PARTY_NOTICES.txt'
-    dependsOn 'cacheI2PJar'
+tasks.register('buildStreamingJar') {
+    description 'Build i2p.i2p/apps/streaming/streaming.jar via vendor gradlew'
     doLast {
-        i2pOutDir.mkdirs()
-        def src = new File(i2pCacheDir, 'i2p-2.8.0.jar')
+        exec {
+            workingDir = i2pVendorDir
+            commandLine 'bash', './gradlew', ':streaming:jar'
+            standardOutput = new ByteArrayOutputStream()
+        }
+        def src = new File(i2pVendorDir, 'apps/streaming/build/libs/streaming.jar')
         if (!src.exists()) {
-            throw new GradleException("Expected cached JAR: ${src.absolutePath}. Run cacheI2PJar first.")
-        }
-        def dst = new File(i2pOutDir, 'i2p-2.8.0.jar')
-        dst.bytes = src.bytes
-
-        // Strict-Scope-Check: KEINE unerlaubten Packages
-        def entries = []
-        new java.util.jar.JarFile(dst).entries().each { e ->
-            if (!e.isDirectory()) entries << e.name
-        }
-        ['i2ptunnel', 'sam/', 'jetty', 'routerconsole', 'router/', 'apps/'].each { banned ->
-            def hit = entries.find { it.contains("${banned}/") }
-            if (hit != null) {
-                throw new GradleException("License-scope violation: i2p-2.8.0.jar contains ${hit}")
-            }
-        }
-
-        // SHA-256-Sums
-        def sha = java.security.MessageDigest.getInstance('SHA-256')
-        sha.update(dst.bytes)
-        def shaOut = new StringBuilder()
-        shaOut << sha.digest().collect { String.format('%02x', it) }.join('')
-        shaOut << '  i2p-2.8.0.jar\n'
-        new File(i2pOutDir, 'SHA256SUMS.txt').text = shaOut.toString()
-
-        // THIRD_PARTY_NOTICES.txt: extract from META-INF/LICENSE* of JAR
-        def notices = new StringBuilder()
-        notices << "This distribution of SecuChat bundles net.i2p:i2p:2.8.0.\n\n"
-        notices << "Primary license: Public Domain (https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt)\n\n"
-        notices << "Third-party license exceptions bundled in this JAR:\n\n"
-        new java.util.jar.JarFile(dst).entries().each { e ->
-            if (!e.isDirectory() && e.name.matches('META-INF/LICENSE.*\\.txt') ) {
-                notices << "===== ${e.name} =====\n"
-                new java.util.jar.JarFile(dst).getInputStream(e).withStream { is ->
-                    notices << is.text << '\n'
+            // Fallback: andere plausible Pfade
+            ['apps/streaming/build/streaming.jar', 'streaming/build/streaming.jar'].each { p ->
+                if (new File(i2pVendorDir, p).exists()) {
+                    src = new File(i2pVendorDir, p)
+                    return
                 }
             }
         }
+        if (!src.exists()) {
+            throw new GradleException("Expected streaming.jar in vendor/i2p.i2p. Build paths: ${src.absolutePath}")
+        }
+        def target = new File(i2pCacheDir, 'streaming.jar')
+        target.bytes = src.bytes
+        println "Cached: ${target.absolutePath} (${target.length()} bytes)"
+    }
+}
+
+tasks.register('copyI2PJars') {
+    description 'Copy i2p-2.8.0.jar + streaming.jar to app/libs/i2p + Strict-Scope-Check + SHA256SUMS + THIRD_PARTY_NOTICES.txt'
+    dependsOn 'cacheI2PJar', 'buildStreamingJar'
+    doLast {
+        i2pOutDir.mkdirs()
+
+        // Copy both JARs
+        def i2pSrc = new File(i2pCacheDir, 'i2p-2.8.0.jar')
+        def i2pDst = new File(i2pOutDir, 'i2p-2.8.0.jar')
+        i2pDst.bytes = i2pSrc.bytes
+
+        def streamingSrc = new File(i2pCacheDir, 'streaming.jar')
+        def streamingDst = new File(i2pOutDir, 'streaming.jar')
+        streamingDst.bytes = streamingSrc.bytes
+
+        // Strict-Scope-Check for BOTH JARs
+        def checkJar = { File jar, String name ->
+            def entries = []
+            new java.util.jar.JarFile(jar).entries().each { e ->
+                if (!e.isDirectory()) entries << e.name
+            }
+            ['i2ptunnel', 'sam/', 'jetty', 'routerconsole', 'router/'].each { banned ->
+                def hit = entries.find { it.contains("${banned}/") }
+                if (hit != null) {
+                    throw new GradleException("License-scope violation: ${name} contains ${hit}")
+                }
+            }
+            // streaming.jar is OK to contain 'apps/' in its metadata (e.g. META-INF/MANIFEST.MF->Implementation-Title),
+            // but we check it doesn't contain any actual class files from apps/.
+            def classHit = entries.find { it.startsWith('apps/') && it.endsWith('.class') }
+            if (classHit != null) {
+                throw new GradleException("License-scope violation: ${name} contains ${classHit}")
+            }
+        }
+        checkJar(i2pDst, 'i2p-2.8.0.jar')
+        checkJar(streamingDst, 'streaming.jar')
+
+        // SHA-256-Sums
+        def shaOut = new StringBuilder()
+        [i2pDst, streamingDst].each { f ->
+            def md = java.security.MessageDigest.getInstance('SHA-256')
+            md.update(f.bytes)
+            shaOut << md.digest().collect { String.format('%02x', it) }.join('') << '  ' << f.name << '\n'
+        }
+        new File(i2pOutDir, 'SHA256SUMS.txt').text = shaOut.toString()
+
+        // THIRD_PARTY_NOTICES.txt: manuell generiert (Maven Central JAR hat keine META-INF/LICENSE*)
+        def notices = new StringBuilder()
+        notices << "SecuChat I2P-Bundle - Third-Party License Notices\n"
+        notices << "==============================================\n\n"
+        notices << "This distribution of SecuChat bundles the following Java-I2P artifacts:\n\n"
+        notices << "1. net.i2p:i2p:2.8.0 (from Maven Central)\n\n"
+        notices << "   License: Public Domain\n"
+        notices << "   Source: https://github.com/i2p/i2p.i2p\n"
+        notices << "   Full license text: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt\n\n"
+        notices << "   Third-party license exceptions bundled in this JAR:\n\n"
+        notices << "   - EdDSA-Java: CC0 1.0 Universal\n"
+        notices << "   - json-simple 2.3.1: Apache 2.0\n"
+        notices << "   - gnu.gettext, gnu.getopt: LGPL v2.1\n"
+        notices << "   - SipHashInline, HostnameVerifier: Apache 2.0\n"
+        notices << "   - Crypto filters (xlattice): BSD\n"
+        notices << "   - ElGamal/DSA (Original): TheCrypto (Cryptix-style permissive)\n"
+        notices << "   - ElGamal/Bouncy Castle: Bouncy Castle License\n"
+        notices << "   - AES: Cryptix Foundation\n"
+        notices << "   - SNTP: Adam Buckley (permissive)\n"
+        notices << "   - HashCash: Gregory Rubin (permissive)\n"
+        notices << "   - SSLEepGet: Sun Microsystems (permissive)\n"
+        notices << "   - Noise library: Southern Storm (permissive)\n\n"
+        notices << "2. streaming.jar (built from vendor/i2p.i2p/apps/streaming/)\n\n"
+        notices << "   License: Public Domain\n"
+        notices << "   Source: https://github.com/i2p/i2p.i2p/tree/master/apps/streaming\n\n"
+        notices << "   Full upstream license: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt\n\n"
         new File(i2pOutDir, 'THIRD_PARTY_NOTICES.txt').text = notices.toString()
     }
 }
@@ -136,62 +198,63 @@ tasks.register('copyI2PJar') {
 
 - [ ] **Step 3: `app/android/app/build.gradle` anpassen**
 
-Suche den Block ab Zeile 48 (`// SECUCHAT:I2P`) und ersetze ihn:
+Suche den Block, der aktuell `implementation files('libs/i2p/i2p-2.8.0.jar')` enthält, und ändere ihn:
 
 ```groovy
-// SECUCHAT:I2P — copy i2p.i2p JAR to app/libs/i2p before any assemble
-preBuild.dependsOn ':i2p-build:copyI2PJar'
+// SECUCHAT:I2P — copy i2p.i2p JARs to app/libs/i2p before any assemble
+preBuild.dependsOn ':i2p-build:copyI2PJars'
 
 dependencies {
     implementation files('libs/i2p/i2p-2.8.0.jar')
+    implementation files('libs/i2p/streaming.jar')
 }
 
-// License-Notice-Asset: liegt in libs/i2p/THIRD_PARTY_NOTICES.txt (by :i2p-build:copyI2PJar)
+// License-Notice-Asset: liegt in libs/i2p/THIRD_PARTY_NOTICES.txt (by :i2p-build:copyI2PJars)
 // wird in der App-„Über"-Sektion verlinkt (PR 7)
 ```
 
-Lösche alle `exclude group: 'i2p' module: 'i2ptunnel'/'sam'/'jetty'/'routerconsole'`-Anweisungen, da wir nur noch eine Public-Domain-JAR haben.
-
-- [ ] **Step 4: Vendor-Submodul entfernen**
-
-```bash
-git submodule deinit -f vendor/i2p.i2p
-git rm -r vendor/i2p.i2p
-rm -rf .git/modules/vendor/i2p.i2p
-```
-
-- [ ] **Step 5: Alte JARs aufräumen**
+- [ ] **Step 4: Alte Relikt-JARs aufräumen**
 
 ```bash
 rm -f app/android/libs/i2p/router-2.13.0.jar
 rm -f app/android/libs/i2p/ministreaming-2.13.0.jar
-rm -f app/android/libs/i2p/SHA256SUMS.txt
-rmdir app/android/libs/i2p 2>/dev/null || true
 ```
 
-- [ ] **Step 6: Build-Smoke-Test**
+- [ ] **Step 5: Build-Smoke-Test**
 
 ```bash
 cd app/android
 ./gradlew :app:assembleDebug --no-daemon
 ```
 
-Erwartet: BUILD SUCCESSFUL. `app/android/libs/i2p/i2p-2.8.0.jar` ist da (~3-5 MB), `SHA256SUMS.txt` + `THIRD_PARTY_NOTICES.txt` ebenfalls.
+Erwartet: BUILD SUCCESSFUL. Beide JARs sind in `app/android/libs/i2p/`, Strict-Scope-Check passiert, `SHA256SUMS.txt` + `THIRD_PARTY_NOTICES.txt` da.
 
-Falls Strict-Scope-Check fehlschlägt: gefundene Package-Pfade in `build.gradle` Whitelist ergänzen NUR, wenn Spec das erlaubt. Für eine Standard-Java-I2P-2.8.0-Distribution sollten keine `router/`, `apps/`, `i2ptunnel/`, `sam/`, `jetty/`, `routerconsole/` drin sein.
+Falls Strict-Scope-Check fehlschlägt: gefundene Package-Pfade genau prüfen. `i2p-2.8.0.jar` darf KEINE `i2ptunnel/sam/jetty/routerconsole/router/` und keine `apps/*.class` enthalten. `streaming.jar` darf `apps/` nur als String in der MANIFEST-MF `Implementation-Title` enthalten, NICHT als `apps/*.class`-Files.
+
+- [ ] **Step 6: Streaming-API-Verifikation**
+
+Verifiziere, dass `I2PSocketManagerFactory` in `streaming.jar` ist:
+
+```bash
+unzip -l app/android/libs/i2p/streaming.jar | grep "I2PSocketManagerFactory" | head -5
+```
+
+Erwartet: mindestens 1 Treffer. Wenn 0: build failed oder andere Pfade.
 
 - [ ] **Step 7: Commit**
 
 ```bash
+git add .gitmodules vendor/i2p.i2p
 git add app/android/i2p-build/build.gradle app/android/app/build.gradle
 git add app/android/libs/i2p/
-git rm vendor/i2p.i2p
-git commit -m "feat(build): net.i2p:i2p:2.8.0 von Maven Central statt Vendoring
+git commit -m "feat(build): i2p-2.8.0 (Maven Central) + streaming.jar (Public Domain, Vendor)
 
-- eine Public-Domain-JAR statt 3 separater Module
-- Strict-Scope-Check gegen router/apps/i2ptunnel/sam/jetty/routerconsole
-- auto-generierte THIRD_PARTY_NOTICES.txt
-- Vendor-Submodul entfernt
+- i2p-2.8.0.jar: I2CP-Protokoll-Client-Klassen (net.i2p.client.I2PClient/I2PSession)
+- streaming.jar: TCP-über-I2P-Streaming-API (net.i2p.client.streaming.I2PSocketManagerFactory)
+- beide Public Domain (kein GPL, kein BSD)
+- Strict-Scope-Check gegen i2ptunnel/sam/jetty/routerconsole/router/
+- THIRD_PARTY_NOTICES.txt: alle Drittlizenz-Ausnahmen aus i2p/LICENSE.txt aufgelistet
+- Vendor-Submodul wiederhergestellt (für streaming.jar-Source)
 
 Co-Authored-By: Claude <noreply@anthropic.com>"
 ```
