@@ -10,6 +10,7 @@ import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32
 import { samService, type SAMConfig } from './i2pSam';
 import { samNativeService } from './samNative';
 import { logger } from '@/utils/logger';
+import { i2pPlugin } from './i2pPlugin';
 import { platformService } from './platform';
 export { samService, type SAMConfig };
 
@@ -61,11 +62,64 @@ class I2PService {
    * Initialize I2P service — connects to SAM via proxy
    */
   async initialize(config?: SAMConfig): Promise<I2PStatus> {
+    if (platformService.isAndroidNative()) {
+      return this.initializeViaI2PPlugin(config);
+    }
+    return this.initializeViaSAMBridge(config);
+  }
+
+  private async initializeViaI2PPlugin(config?: SAMConfig): Promise<I2PStatus> {
+    void config;
+    const hostOverride = (typeof localStorage !== 'undefined'
+      ? localStorage.getItem('secuchat_sam_host')
+      : null) || '';
+    try {
+      const result = await i2pPlugin.initialize({
+        host: hostOverride || '127.0.0.1',
+        port: 7654,
+        enabled: true,
+      });
+      this.currentStatus = {
+        samConnected: true,
+        samAvailable: true,
+        address: result.b32Address,
+        leasesetPublished: true,
+      };
+      i2pPlugin.onMessage((from, data) => {
+        try {
+          const message = JSON.parse(data);
+          this.messageHandlers.forEach(handler => handler(from, message));
+        } catch {
+          this.messageHandlers.forEach(handler => handler(from, data));
+        }
+      });
+      i2pPlugin.onStreamConnected((streamId, peerDestination) => {
+        logger.log('[I2P] stream connected:', streamId, peerDestination);
+      });
+      i2pPlugin.onStreamClosed((streamId, reason) => {
+        logger.log('[I2P] stream closed:', streamId, reason);
+      });
+      await i2pPlugin.startAccepting();
+      this.notifyStatusChange();
+      return this.currentStatus;
+    } catch (e) {
+      this.currentStatus = {
+        samConnected: false,
+        samAvailable: false,
+        address: null,
+        error: e instanceof Error ? e.message : 'I2P-Plugin init failed',
+      };
+      this.notifyStatusChange();
+      return this.currentStatus;
+    }
+  }
+
+  private async initializeViaSAMBridge(config?: SAMConfig): Promise<I2PStatus> {
     // DEV/TEST: optionaler SAM-Bridge-Host via localStorage (z.B. Emulator→10.0.2.2, Telefon→Host-LAN-IP)
     const hostOverride = (typeof localStorage !== 'undefined'
       ? localStorage.getItem('secuchat_sam_host')
       : null) || '';
-    const defaultPort = platformService.isAndroidNative() ? 7656 : 7657;
+    const defaultPort = 7657;
     const samConfig: SAMConfig = config || {
       host: hostOverride || '127.0.0.1',
       port: defaultPort,
@@ -99,17 +153,13 @@ class I2PService {
         return this.currentStatus;
       }
 
-      // Generate or use existing destination
-      // CRITICAL: We MUST have a persistent SAM destination - TRANSIENT doesn't publish LeaseSets
       let newDestinationGenerated = false;
       if (!this.identity?.samDestination) {
         logger.log('[I2P] Generating new SAM destination (none exists in identity)');
         const session = await samService.generateDestination();
         if (this.identity) {
-          // SESSION CREATE needs the PRIVATE key (PRIV= from DEST GENERATE)
           this.identity.samDestination = session.privateKey;
           newDestinationGenerated = true;
-          // Notify that a new destination was generated - caller must persist it
           this.currentStatus.newDestinationGenerated = true;
           logger.log('[I2P] New SAM destination generated, caller must persist it');
         }
@@ -117,51 +167,17 @@ class I2PService {
         logger.log('[I2P] Using existing SAM destination from identity');
       }
 
-      // Verify we have a valid destination before creating session
       const sessionPrivKey = this.identity?.samDestination;
       if (!sessionPrivKey) {
         throw new Error('SAM destination not available. Identity must be restored with samDestination before initializing I2P.');
       }
 
-      // Create session — use timestamp-based nickname so i2pd never rejects
-      // with DUPLICATED_ID (old sessions stay alive ~5 min after TCP drop)
       const sessionNick = `sc-${Date.now()}`;
       await samService.createSession(sessionNick, sessionPrivKey);
 
-      // Publish lease set so peers can find us via the DHT.
-      // i2pd publishes lazily on first outgoing STREAM CONNECT, which listener-only
-      // peers (no outgoing connects of their own) never trigger. Explicit publish
-      // makes the destination reachable from the moment SAM is up.
-      if (platformService.isAndroidNative()) {
-        try {
-          const published = await samNativeService.publishLeaseSet();
-          if (published) {
-            logger.log('[I2P] LeaseSet published to DHT');
-            this.currentStatus.leasesetPublished = true;
-          } else {
-            logger.warn('[I2P] LeaseSet publish returned false');
-          }
-        } catch (e) {
-          logger.error('[I2P] LeaseSet publish failed:', e);
-        }
-        // Re-publish every 5 minutes (i2pd lease set lifetime is ~10 min).
-        // Listener-only peers never trigger an outgoing STREAM CONNECT, so
-        // i2pd would let the lease set expire silently. Explicit republish
-        // keeps us reachable.
-        this.startLeaseSetRepublishLoop();
-      }
-
-      // Start accepting incoming streams on a dedicated socket (SAM v3.1 spec).
-      // Each accepted connection gets its own WebSocket so the session socket
-      // is never corrupted by mixing ACCEPT responses with CONNECT handshakes.
       samService.startAcceptLoop();
-
-      // Get our address and sync it into the identity object so that
-      // exportIdentity() and contact exports always carry the real SAM b32.
       const b32 = await samService.getB32Address();
-      if (b32 && this.identity) {
-        this.identity.b32Address = b32;
-      }
+      if (b32 && this.identity) this.identity.b32Address = b32;
       logger.log(`[I2P] Session created. Our b32 address: ${b32?.slice(0, 30)}...`);
 
       this.currentStatus = {
@@ -174,12 +190,8 @@ class I2PService {
 
       this.setupSAMListeners();
       this.notifyStatusChange();
-      
-      // Start checking for tunnel readiness (LeaseSet publication)
       this.startTunnelCheck();
-      
       return this.currentStatus;
-
     } catch (error) {
       this.currentStatus = {
         samConnected: false,
@@ -379,7 +391,7 @@ class I2PService {
     if (
       existing?.status === 'connected' &&
       existing.samStreamId != null &&
-      samService.isStreamOpen(existing.samStreamId)
+      (platformService.isAndroidNative() || samService.isStreamOpen(existing.samStreamId))
     ) {
       logger.log('[I2P] Peer already connected:', b32Address.slice(0, 20));
       return existing;
@@ -396,12 +408,14 @@ class I2PService {
     this.peers.set(b32Address, peer);
 
     try {
-      logger.log('[I2P] Calling samService.connectTo for:', b32Address.slice(0, 20));
-      const stream = await samService.connectTo(b32Address, maxRetries);
-      peer.samStreamId = stream.id;
+      logger.log(`[I2P] Calling ${platformService.isAndroidNative() ? 'i2pPlugin' : 'samService'}.connectTo for:`, b32Address.slice(0, 20));
+      const streamId = platformService.isAndroidNative()
+        ? await i2pPlugin.connectTo(b32Address, 60000, maxRetries)
+        : (await samService.connectTo(b32Address, maxRetries)).id;
+      peer.samStreamId = streamId;
       peer.status = 'connected';
       peer.lastSeen = Date.now();
-      logger.log('[I2P] Peer connected successfully:', b32Address.slice(0, 20), 'stream:', stream.id);
+      logger.log('[I2P] Peer connected successfully:', b32Address.slice(0, 20), 'stream:', streamId);
     } catch (error) {
       logger.error('[I2P] Failed to connect to peer:', error);
       peer.status = 'disconnected';
@@ -443,7 +457,7 @@ class I2PService {
     const payload = JSON.stringify(message);
     const peer = this.peers.get(to);
 
-    const streamStillOpen = peer?.samStreamId != null && samService.isStreamOpen(peer.samStreamId);
+    const streamStillOpen = peer?.samStreamId != null && (platformService.isAndroidNative() || samService.isStreamOpen(peer.samStreamId));
     if (!peer || peer.status !== 'connected' || !peer.samStreamId || !streamStillOpen) {
       if (peer) {
         peer.status = 'disconnected';
@@ -453,12 +467,22 @@ class I2PService {
       if (!updatedPeer?.samStreamId || !samService.isStreamOpen(updatedPeer.samStreamId)) {
         throw new Error('Peer nicht verbunden oder Stream nach Connect nicht offen');
       }
-      await samService.send(updatedPeer.samStreamId, payload);
+      if (platformService.isAndroidNative()) {
+        const sent = await i2pPlugin.send(updatedPeer.samStreamId, payload);
+        if (!sent) throw new Error('I2P-Plugin konnte Nachricht nicht senden');
+      } else {
+        await samService.send(updatedPeer.samStreamId, payload);
+      }
       return;
     }
 
     try {
-      await samService.send(peer.samStreamId, payload);
+      if (platformService.isAndroidNative()) {
+        const sent = await i2pPlugin.send(peer.samStreamId, payload);
+        if (!sent) throw new Error('I2P-Plugin konnte Nachricht nicht senden');
+      } else {
+        await samService.send(peer.samStreamId, payload);
+      }
     } catch (error) {
       logger.warn('[I2P] Send failed, attempting reconnect:', error);
       peer.status = 'disconnected';
@@ -466,10 +490,15 @@ class I2PService {
       try {
         await this.connectToPeer(to);
         const reconnectedPeer = this.peers.get(to);
-        if (!reconnectedPeer?.samStreamId || !samService.isStreamOpen(reconnectedPeer.samStreamId)) {
+        if (!reconnectedPeer?.samStreamId || (platformService.isAndroidNative() ? false : !samService.isStreamOpen(reconnectedPeer.samStreamId))) {
           throw new Error('Peer nicht verbunden nach Reconnect', { cause: error });
         }
-        await samService.send(reconnectedPeer.samStreamId, payload);
+        if (platformService.isAndroidNative()) {
+          const sent = await i2pPlugin.send(reconnectedPeer.samStreamId, payload);
+          if (!sent) throw new Error('I2P-Plugin konnte Nachricht nicht senden', { cause: error });
+        } else {
+          await samService.send(reconnectedPeer.samStreamId, payload);
+        }
       } catch (retryError) {
         console.error('[I2P] Failed to send message after reconnect:', retryError);
       }
@@ -625,7 +654,14 @@ class I2PService {
    * lifetime is ~10 min; the 5-min interval gives a 2x safety margin and
    * keeps listener-only peers (no outgoing STREAM CONNECT of their own)
    * reachable across reconnects.
+   *
+   * Note: Android path (initializeViaI2PPlugin) does not need this — the
+   * embedded Java-I2P router publishes LeaseSets automatically. The SAM
+   * bridge path no longer calls publishLeaseSet() either, so this method
+   * is currently dormant. Kept for any future SAM-bridge reintroduction.
    */
+  /* c8 ignore start */
+  // @ts-expect-error - retained dormant for future SAM-bridge reintroduction
   private startLeaseSetRepublishLoop(): void {
     this.stopLeaseSetRepublishLoop();
     this.leaseSetRepublishInterval = setInterval(() => {
@@ -637,6 +673,7 @@ class I2PService {
         .catch((e) => logger.warn('[I2P] Republish threw:', e));
     }, 5 * 60 * 1000);
   }
+  /* c8 ignore stop */
 
   private stopLeaseSetRepublishLoop(): void {
     if (this.leaseSetRepublishInterval) {
@@ -717,6 +754,9 @@ class I2PService {
     this.peers.clear();
     this.stopLeaseSetRepublishLoop();
     samService.shutdown();
+    if (platformService.isAndroidNative()) {
+      void i2pPlugin.disconnect().catch(error => logger.warn('[I2P] Plugin disconnect failed:', error));
+    }
     this.currentStatus = {
       samConnected: false,
       samAvailable: false,
