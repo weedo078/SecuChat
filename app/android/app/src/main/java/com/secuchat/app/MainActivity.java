@@ -9,7 +9,6 @@ import android.view.Window;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
-import com.secuchat.app.plugin.SAMPlugin.SAMPlugin;
 import com.secuchat.app.power.PowerManagementPlugin;
 
 import java.io.BufferedReader;
@@ -23,7 +22,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         // Register custom plugins before super.onCreate
-        registerPlugin(SAMPlugin.class);
         registerPlugin(PowerManagementPlugin.class);
 
         super.onCreate(savedInstanceState);
