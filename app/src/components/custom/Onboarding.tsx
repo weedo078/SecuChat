@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,10 +11,13 @@ import { cryptoService } from '@/services/crypto';
 import { storageService } from '@/services/storage';
 import { backupService } from '@/services/backup';
 import { i2pService, samService } from '@/services/i2p';
+import { i2pPlugin } from '@/services/i2pPlugin';
 import { platformService, type PlatformInfo } from '@/services/platform';
 import { uint8ArrayToBase64 } from '@/utils/base32';
+import { logger } from '@/utils/logger';
 import { TEST_PASSPHRASE } from '@/utils/testMode';
 import { DeviceQRCode } from './DeviceQRCode';
+import { I2PAppInstallModal } from './I2PAppInstallModal';
 import type { AppSettings } from '@/types';
 
 interface OnboardingProps {
@@ -47,6 +50,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [showPairing, setShowPairing] = useState(false);
   const [platformInfo] = useState<PlatformInfo | null>(() => platformService.getPlatformInfo());
   const [i2pTestStatus, setI2pTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  // null = noch nicht geprüft (kein Modal zeigen), false = fehlt (Modal blockt).
+  const [i2pAppInstalled, setI2pAppInstalled] = useState<boolean | null>(null);
   const [showRestoreFlow, setShowRestoreFlow] = useState(false);
   const [restoreBackupFile, setRestoreBackupFile] = useState<File | null>(null);
   const [restoreKeyFile, setRestoreKeyFile] = useState<File | null>(null);
@@ -226,6 +231,36 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  // Android: die I2P-Router-App (net.i2p.android) ist Pflicht — ohne sie gibt es
+  // keinen I2CP-Router. Bei fehlender App blockt I2PAppInstallModal Schritt 4.
+  const checkI2pAppPresence = useCallback(async () => {
+    if (!platformService.isAndroidNative()) return;
+    try {
+      const installed = await i2pPlugin.isI2pAppInstalled();
+      if (isMountedRef.current) setI2pAppInstalled(installed);
+    } catch (e) {
+      // Plugin-Aufruf fehlgeschlagen (z.B. alte Native-Version): als "fehlt"
+      // behandeln, damit der Nutzer die Install-Anleitung sieht statt später
+      // an einem unklaren start()-Fehler zu scheitern.
+      logger.warn('[Onboarding] isI2pAppInstalled failed:', e);
+      if (isMountedRef.current) setI2pAppInstalled(false);
+    }
+  }, []);
+
+  // Ref-Indirection wie bei testI2PConnectionRef: die Zuweisung passiert in
+  // einem Effect (nicht während des Renders), und der Mount-Effect ruft nur
+  // ref.current() — so löst der Effect-Body keine direkte setState-Kette aus.
+  // Deklarationsreihenfolge ist wichtig: der Sync-Effect muss vor dem
+  // Mount-Effect stehen, damit die Ref beim ersten Lauf schon gesetzt ist.
+  const checkI2pAppPresenceRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => {
+    checkI2pAppPresenceRef.current = checkI2pAppPresence;
+  });
+
+  useEffect(() => {
+    checkI2pAppPresenceRef.current();
+  }, []);
 
   const generateKeys = async () => {
     if (passphrase !== confirmPassphrase) {
@@ -996,6 +1031,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                       : t('onboarding.i2pdSamRequiredDesc')}
                 </p>
               </div>
+
+              {platformService.isAndroidNative() && i2pAppInstalled === false && (
+                <I2PAppInstallModal onRetry={checkI2pAppPresence} />
+              )}
             </div>
           )}
 

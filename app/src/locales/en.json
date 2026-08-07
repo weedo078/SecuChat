@@ -509,5 +509,13 @@
     "scanError": "Error scanning. Make sure it is a valid device QR code.",
     "importBackupNote": "Please import your backup file to connect this device. The QR code only contains identification.",
     "deviceConnected": "Device successfully connected!"
+  },
+
+  "i2pAppInstall": {
+    "title": "I2P Router App required",
+    "description": "SecuChat needs the I2P router app for anonymous communication. Please install it and enable I2CP tunnel sharing in the I2P app settings.",
+    "installButton": "Open I2P app in Play Store",
+    "retryButton": "Retry",
+    "steps": "Step 1: Install the I2P app\nStep 2: Open it and wait until the router is ready\nStep 3: Go to Settings → I2CP user interface → enable tunnel sharing\nStep 4: Return to SecuChat and tap 'Retry'"
   }
 }

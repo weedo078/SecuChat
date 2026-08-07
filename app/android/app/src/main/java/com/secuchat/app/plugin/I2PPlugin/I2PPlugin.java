@@ -161,6 +161,18 @@ public class I2PPlugin extends Plugin {
         });
     }
 
+    /**
+     * Reports whether the I2P router app (net.i2p.android) is installed, so the
+     * web layer can block onboarding with an install prompt instead of failing
+     * later in start().
+     */
+    @PluginMethod
+    public void isI2pAppInstalled(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("installed", PackagePresence.isI2pAppInstalled(getContext()));
+        call.resolve(result);
+    }
+
     private void startAcceptLoop() {
         if (socketManager == null) return;
         ExecutorService ex = socketManager.getExecutor();

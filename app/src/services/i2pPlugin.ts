@@ -14,6 +14,7 @@ interface I2PNativePlugin {
   send(options: { streamId: number; data: string }): Promise<{ success: boolean }>;
   close(options: { streamId: number; reason?: string }): Promise<{ success: boolean }>;
   disconnect(options?: Record<string, never>): Promise<void>;
+  isI2pAppInstalled(options?: Record<string, never>): Promise<{ installed: boolean }>;
   addListener(eventName: string, listener: (event: unknown) => void): Promise<PluginListenerHandle>;
   removeAllListeners(): Promise<void>;
 }
@@ -86,6 +87,12 @@ export class I2PPlugin {
   async disconnect(): Promise<void> {
     await I2PNative.disconnect({});
     await this.removeAllListeners();
+  }
+
+  /** Checks whether the I2P router app (net.i2p.android) is installed. */
+  async isI2pAppInstalled(): Promise<boolean> {
+    const result = await I2PNative.isI2pAppInstalled({});
+    return result.installed;
   }
 
   onMessage(handler: (from: string, data: string, streamId: number) => void): void {
