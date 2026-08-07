@@ -46,6 +46,18 @@ public class I2PPlugin extends Plugin {
                     client.createDestination(keys, net.i2p.crypto.SigType.EdDSA_SHA512_Ed25519);
                     privKey = keys.toByteArray();
                     identityStore.save(privKey);
+                    // Validate the save: IdentityStore.save() swallows IOException, so a
+                    // disk-full or permissions failure leaves an in-memory-only destination;
+                    // on next start loadOrNull() returns null and a NEW b32 is generated,
+                    // silently losing the previous address and breaking peer routing.
+                    // The on-disk format is [16-byte salt][12-byte IV][privKey]; loadOrNull
+                    // returns the bytes after the header, so a successful save round-trips
+                    // to saved.length == privKey.length.
+                    byte[] saved = identityStore.loadOrNull();
+                    if (saved == null || saved.length != privKey.length) {
+                        call.reject("Failed to persist I2P identity (disk full or permission denied)");
+                        return;
+                    }
                 }
                 socketManager = I2CPSocketManager.getOrCreate(host, port, privKey, nickname);
                 startAcceptLoop();
@@ -135,12 +147,18 @@ public class I2PPlugin extends Plugin {
 
     @PluginMethod
     public void disconnect(PluginCall call) {
-        if (socketManager != null) {
-            socketManager.disconnect();
-            socketManager = null;
-        }
-        notifyListeners("i2pStatus", new JSObject().put("connected", false));
-        call.resolve();
+        // I2CPSocketManager.disconnect() is synchronized; connectTo() holds that lock
+        // during session.lookupDest(..., 15_000), so a synchronous disconnect could
+        // block the calling (plugin/UI) thread for up to ~15s. Dispatch the body to
+        // ioExecutor and resolve after completion.
+        ioExecutor.execute(() -> {
+            if (socketManager != null) {
+                socketManager.disconnect();
+                socketManager = null;
+            }
+            notifyListeners("i2pStatus", new JSObject().put("connected", false));
+            call.resolve();
+        });
     }
 
     private void startAcceptLoop() {
