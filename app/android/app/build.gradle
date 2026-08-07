@@ -45,29 +45,15 @@ dependencies {
     implementation project(':capacitor-cordova-android-plugins')
 }
 
-// SECUCHAT:I2P — copy i2p.i2p JARs to app/libs/i2p before any assemble
-tasks.named('preBuild').configure {
-    dependsOn ':i2p-build:copyI2PJars'
-}
-
-// Flat-dir-Repo
-repositories {
-    flatDir { dirs 'libs/i2p' }
-}
+// SECUCHAT:I2P — copy i2p.i2p JAR to app/libs/i2p before any assemble
+preBuild.dependsOn ':i2p-build:copyI2PJar'
 
 dependencies {
-    implementation files('libs/i2p/core-2.13.0.jar')
-    implementation files('libs/i2p/router-2.13.0.jar')
-    implementation files('libs/i2p/ministreaming-2.13.0.jar')
+    implementation files('../libs/i2p/i2p-2.8.0.jar')
 }
 
-// Compile-Protection: keine GPL/jetty/routerconsole/i2ptunnel-Module in implementation
-configurations.all {
-    exclude group: 'i2p', module: 'i2ptunnel'
-    exclude group: 'i2p', module: 'sam'
-    exclude group: 'i2p', module: 'jetty'
-    exclude group: 'i2p', module: 'routerconsole'
-}
+// License-Notice-Asset: liegt in libs/i2p/THIRD_PARTY_NOTICES.txt (by :i2p-build:copyI2PJar)
+// wird in der App-„Über"-Sektion verlinkt (PR 7)
 
 apply from: 'capacitor.build.gradle'
 

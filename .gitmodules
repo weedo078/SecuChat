@@ -1,6 +1,0 @@
-[submodule "vendor/i2p.i2p"]
-	path = vendor/i2p.i2p
-	url = https://github.com/i2p/i2p.i2p.git
-	# No `branch =` on purpose: the gitlink SHA in the index is the pin.
-	# `update = none` makes `git submodule update --remote` a no-op.
-	update = none
