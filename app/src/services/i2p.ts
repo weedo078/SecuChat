@@ -83,6 +83,9 @@ class I2PService {
         address: result.b32Address,
         leasesetPublished: true,
       };
+      if (result.b32Address && this.identity) {
+        this.identity.b32Address = result.b32Address;
+      }
       i2pPlugin.onMessage((from, data) => {
         try {
           const message = JSON.parse(data);
@@ -462,7 +465,7 @@ class I2PService {
       }
       await this.connectToPeer(to);
       const updatedPeer = this.peers.get(to);
-      if (!updatedPeer?.samStreamId || !samService.isStreamOpen(updatedPeer.samStreamId)) {
+      if (!updatedPeer?.samStreamId || !(platformService.isAndroidNative() || samService.isStreamOpen(updatedPeer.samStreamId))) {
         throw new Error('Peer nicht verbunden oder Stream nach Connect nicht offen');
       }
       if (platformService.isAndroidNative()) {
@@ -523,14 +526,26 @@ class I2PService {
     const totalChunks = Math.ceil(file.size / chunkSize);
 
     // Send file metadata
-    await samService.send(peer.samStreamId, JSON.stringify({
-      type: 'file-offer',
-      id: fileId,
-      filename: file.name,
-      mimeType: file.type,
-      size: file.size,
-      totalChunks,
-    }));
+    if (platformService.isAndroidNative()) {
+      const sent = await i2pPlugin.send(peer.samStreamId, JSON.stringify({
+        type: 'file-offer',
+        id: fileId,
+        filename: file.name,
+        mimeType: file.type,
+        size: file.size,
+        totalChunks,
+      }));
+      if (!sent) throw new Error('I2P-Plugin konnte Datei-Offer nicht senden');
+    } else {
+      await samService.send(peer.samStreamId, JSON.stringify({
+        type: 'file-offer',
+        id: fileId,
+        filename: file.name,
+        mimeType: file.type,
+        size: file.size,
+        totalChunks,
+      }));
+    }
 
     // Send chunks
     for (let i = 0; i < totalChunks; i++) {
@@ -539,13 +554,24 @@ class I2PService {
       const chunk = file.slice(start, end);
       const arrayBuffer = await chunk.arrayBuffer();
 
-      await samService.send(peer.samStreamId, JSON.stringify({
-        type: 'file-chunk',
-        id: fileId,
-        chunkIndex: i,
-        totalChunks,
-        data: uint8ArrayToBase64(new Uint8Array(arrayBuffer)),
-      }));
+      if (platformService.isAndroidNative()) {
+        const sent = await i2pPlugin.send(peer.samStreamId, JSON.stringify({
+          type: 'file-chunk',
+          id: fileId,
+          chunkIndex: i,
+          totalChunks,
+          data: uint8ArrayToBase64(new Uint8Array(arrayBuffer)),
+        }));
+        if (!sent) throw new Error('I2P-Plugin konnte Datei-Chunk nicht senden');
+      } else {
+        await samService.send(peer.samStreamId, JSON.stringify({
+          type: 'file-chunk',
+          id: fileId,
+          chunkIndex: i,
+          totalChunks,
+          data: uint8ArrayToBase64(new Uint8Array(arrayBuffer)),
+        }));
+      }
 
       // Small delay to avoid overwhelming I2P tunnels
       if (i < totalChunks - 1) {
@@ -554,10 +580,18 @@ class I2PService {
     }
 
     // Send completion
-    await samService.send(peer.samStreamId, JSON.stringify({
-      type: 'file-complete',
-      id: fileId,
-    }));
+    if (platformService.isAndroidNative()) {
+      const sent = await i2pPlugin.send(peer.samStreamId, JSON.stringify({
+        type: 'file-complete',
+        id: fileId,
+      }));
+      if (!sent) throw new Error('I2P-Plugin konnte Datei-Completion nicht senden');
+    } else {
+      await samService.send(peer.samStreamId, JSON.stringify({
+        type: 'file-complete',
+        id: fileId,
+      }));
+    }
 
     return fileId;
   }

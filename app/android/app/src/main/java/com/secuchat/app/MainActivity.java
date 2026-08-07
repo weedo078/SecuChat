@@ -9,6 +9,7 @@ import android.view.Window;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.BridgeActivity;
+import com.secuchat.app.plugin.I2PPlugin.I2PPlugin;
 import com.secuchat.app.power.PowerManagementPlugin;
 
 import java.io.BufferedReader;
@@ -23,6 +24,7 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         // Register custom plugins before super.onCreate
         registerPlugin(PowerManagementPlugin.class);
+        registerPlugin(I2PPlugin.class);
 
         super.onCreate(savedInstanceState);
 
