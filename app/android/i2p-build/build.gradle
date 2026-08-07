@@ -2,74 +2,167 @@ plugins {
     id 'base'
 }
 
-ext {
-    i2pVendorDir = rootProject.file('vendor/i2p.i2p')
-    i2pOutDir = rootProject.file('libs/i2p')
+repositories {
+    mavenCentral()
 }
 
-tasks.register('buildI2PJars') {
-    description 'Run i2p.i2p pkg via vendor gradlew'
+configurations {
+    i2pDownload
+}
+
+dependencies {
+    i2pDownload 'net.i2p:i2p:2.8.0'
+}
+
+ext {
+    i2pVendorDir = rootProject.file('../../vendor/i2p.i2p')
+    i2pOutDir = rootProject.file('libs/i2p')
+    i2pCacheDir = rootProject.file('i2p-build/cache')
+}
+
+tasks.register('cacheI2PJar') {
+    description 'Download net.i2p:i2p:2.8.0 to local cache'
     doLast {
-        exec {
-            workingDir = i2pVendorDir
-            commandLine 'bash', './gradlew', 'pkg'
-            standardOutput = new ByteArrayOutputStream()
-            errorOutput = standardOutput
+        i2pCacheDir.mkdirs()
+        def jarFile = configurations.i2pDownload.resolve()
+            .find { it.name.startsWith('i2p-') && it.name.endsWith('.jar') }
+        if (jarFile == null) throw new GradleException("Failed to resolve net.i2p:i2p:2.8.0")
+        def target = new File(i2pCacheDir, 'i2p-2.8.0.jar')
+        target.bytes = jarFile.bytes
+        println "Cached: ${target.absolutePath} (${target.length()} bytes)"
+    }
+}
+
+tasks.register('buildStreamingJar') {
+    description 'Build i2p.i2p streaming + ministreaming and merge into one streaming.jar'
+    doLast {
+        if (!new File(i2pVendorDir, 'settings.gradle').exists()) {
+            throw new GradleException(
+                "vendor/i2p.i2p not checked out. Run: git submodule update --init vendor/i2p.i2p")
         }
+        // :apps:streaming:jar -> streaming impl; :apps:ministreaming:jar -> public API
+        // (I2PSocketManagerFactory lives in ministreaming). Both are Public Domain.
+        ['bash', './gradlew', ':apps:streaming:jar', ':apps:ministreaming:jar', '--no-daemon', '-q'].with { cmd ->
+            def out = new ByteArrayOutputStream()
+            def res = exec {
+                workingDir = i2pVendorDir
+                commandLine cmd
+                standardOutput = out
+                errorOutput = out
+                ignoreExitValue = true
+            }
+            if (res.exitValue != 0) {
+                throw new GradleException("vendor i2p.i2p build failed:\n${out.toString()}")
+            }
+        }
+
+        def streamingSrc = new File(i2pVendorDir, 'apps/streaming/build/libs/streaming.jar')
+        def ministreamingSrc = new File(i2pVendorDir, 'apps/ministreaming/build/libs/mstreaming.jar')
+        [streamingSrc, ministreamingSrc].each {
+            if (!it.exists()) throw new GradleException("Expected vendor artifact missing: ${it.absolutePath}")
+        }
+
+        // Merge both JARs into a single streaming.jar (dedupe, drop signatures)
+        i2pCacheDir.mkdirs()
+        def merged = new File(i2pCacheDir, 'streaming.jar')
+        def seen = new HashSet<String>()
+        merged.withOutputStream { fos ->
+            def zos = new java.util.zip.ZipOutputStream(fos)
+            [ministreamingSrc, streamingSrc].each { srcJar ->
+                def zf = new java.util.zip.ZipFile(srcJar)
+                try {
+                    zf.entries().each { e ->
+                        if (e.isDirectory()) return
+                        if (e.name.startsWith('META-INF/') &&
+                            (e.name.endsWith('.SF') || e.name.endsWith('.RSA') || e.name.endsWith('.DSA'))) return
+                        if (e.name == 'META-INF/MANIFEST.MF' && !seen.isEmpty()) return
+                        if (!seen.add(e.name)) return
+                        zos.putNextEntry(new java.util.zip.ZipEntry(e.name))
+                        zf.getInputStream(e).withStream { ins -> zos << ins }
+                        zos.closeEntry()
+                    }
+                } finally {
+                    zf.close()
+                }
+            }
+            zos.close()
+        }
+        println "Cached: ${merged.absolutePath} (${merged.length()} bytes)"
     }
 }
 
 tasks.register('copyI2PJars') {
-    description 'Copy i2p.i2p JARs to app/libs/i2p + write SHA256SUMS'
-    dependsOn 'buildI2PJars'
+    description 'Copy i2p-2.8.0.jar + streaming.jar to app/libs/i2p + Strict-Scope-Check + SHA256SUMS + THIRD_PARTY_NOTICES.txt'
+    dependsOn 'cacheI2PJar', 'buildStreamingJar'
     doLast {
         i2pOutDir.mkdirs()
 
-        // Exakte Pfade (Stand i2p.i2p HEAD; anpassbar via Property wenn sich Layout ändert)
-        def jars = [
-            'core/build/core.jar':              'core-2.13.0.jar',
-            'router/java/build/router.jar':    'router-2.13.0.jar',
-            'apps/ministreaming/build/mstreaming.jar': 'ministreaming-2.13.0.jar',
-        ]
+        def i2pDst = new File(i2pOutDir, 'i2p-2.8.0.jar')
+        i2pDst.bytes = new File(i2pCacheDir, 'i2p-2.8.0.jar').bytes
 
-        // Strikte Scope: GARANTIERT keine i2ptunnel/sam/jetty-Klassen im Output
-        jars.each { srcRel, dstName ->
-            def src = new File(i2pVendorDir, srcRel)
-            if (!src.exists()) {
-                throw new GradleException("Expected i2p.i2p build artifact: ${srcRel}. " +
-                    "Run ./build.sh pkg in vendor/i2p.i2p first.")
+        def streamingDst = new File(i2pOutDir, 'streaming.jar')
+        streamingDst.bytes = new File(i2pCacheDir, 'streaming.jar').bytes
+
+        // Strict-Scope-Check for BOTH JARs
+        def checkJar = { File jar, String name ->
+            def entries = []
+            def jf = new java.util.jar.JarFile(jar)
+            try {
+                jf.entries().each { e -> if (!e.isDirectory()) entries << e.name }
+            } finally {
+                jf.close()
             }
-            src.withInputStream { input ->
-                new File(i2pOutDir, dstName).withOutputStream { output ->
-                    output << input
+            ['i2ptunnel', 'sam/', 'jetty', 'routerconsole', 'router/'].each { banned ->
+                def needle = banned.endsWith('/') ? banned : "${banned}/"
+                def hit = entries.find { it.contains(needle) }
+                if (hit != null) {
+                    throw new GradleException("License-scope violation: ${name} contains ${hit}")
                 }
             }
+            def classHit = entries.find { it.startsWith('apps/') && it.endsWith('.class') }
+            if (classHit != null) {
+                throw new GradleException("License-scope violation: ${name} contains ${classHit}")
+            }
         }
+        checkJar(i2pDst, 'i2p-2.8.0.jar')
+        checkJar(streamingDst, 'streaming.jar')
 
         // SHA-256-Sums
         def shaOut = new StringBuilder()
-        i2pOutDir.listFiles({ f -> f.name.endsWith('.jar') } as FileFilter)
-            .sort { it.name }
-            .each { f ->
-                def md = java.security.MessageDigest.getInstance('SHA-256')
-                md.update(f.bytes)
-                shaOut << md.digest().collect { String.format('%02x', it) }.join('') << '  ' << f.name << '\n'
-            }
+        [i2pDst, streamingDst].each { f ->
+            def md = java.security.MessageDigest.getInstance('SHA-256')
+            md.update(f.bytes)
+            shaOut << md.digest().collect { String.format('%02x', it) }.join('') << '  ' << f.name << '\n'
+        }
         new File(i2pOutDir, 'SHA256SUMS.txt').text = shaOut.toString()
 
-        // Sanity: keine i2ptunnel/sam/jetty/routerconsole-Klassen in den 3 JARs
-        jars.each { srcRel, dstName ->
-            def jar = new File(i2pOutDir, dstName)
-            def entries = []
-            java.util.jar.JarFile.newInstance(jar).entries().each { e ->
-                if (!e.isDirectory()) entries << e.name
-            }
-            ['i2ptunnel', 'sam/', 'jetty', 'routerconsole'].each { banned ->
-                def hit = entries.find { it.contains("${banned}/") }
-                if (hit != null) {
-                    throw new GradleException("License-scope violation: ${dstName} contains ${hit}")
-                }
-            }
-        }
+        // THIRD_PARTY_NOTICES.txt: manuell generiert (Maven Central JAR hat keine META-INF/LICENSE*)
+        def notices = new StringBuilder()
+        notices << "SecuChat I2P-Bundle - Third-Party License Notices\n"
+        notices << "==============================================\n\n"
+        notices << "This distribution of SecuChat bundles the following Java-I2P artifacts:\n\n"
+        notices << "1. net.i2p:i2p:2.8.0 (from Maven Central)\n\n"
+        notices << "   License: Public Domain\n"
+        notices << "   Source: https://github.com/i2p/i2p.i2p\n"
+        notices << "   Full license text: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt\n\n"
+        notices << "   Third-party license exceptions bundled in this JAR:\n\n"
+        notices << "   - EdDSA-Java: CC0 1.0 Universal\n"
+        notices << "   - json-simple 2.3.1: Apache 2.0\n"
+        notices << "   - gnu.gettext, gnu.getopt: LGPL v2.1\n"
+        notices << "   - SipHashInline, HostnameVerifier: Apache 2.0\n"
+        notices << "   - Crypto filters (xlattice): BSD\n"
+        notices << "   - ElGamal/DSA (Original): TheCrypto (Cryptix-style permissive)\n"
+        notices << "   - ElGamal/Bouncy Castle: Bouncy Castle License\n"
+        notices << "   - AES: Cryptix Foundation\n"
+        notices << "   - SNTP: Adam Buckley (permissive)\n"
+        notices << "   - HashCash: Gregory Rubin (permissive)\n"
+        notices << "   - SSLEepGet: Sun Microsystems (permissive)\n"
+        notices << "   - Noise library: Southern Storm (permissive)\n\n"
+        notices << "2. streaming.jar (built from vendor/i2p.i2p/apps/ministreaming/ + apps/streaming/)\n\n"
+        notices << "   License: Public Domain\n"
+        notices << "   Source: https://github.com/i2p/i2p.i2p/tree/master/apps/streaming\n"
+        notices << "           https://github.com/i2p/i2p.i2p/tree/master/apps/ministreaming\n\n"
+        notices << "   Full upstream license: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt\n\n"
+        new File(i2pOutDir, 'THIRD_PARTY_NOTICES.txt').text = notices.toString()
     }
 }

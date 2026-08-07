@@ -1,0 +1,34 @@
+SecuChat I2P-Bundle - Third-Party License Notices
+==============================================
+
+This distribution of SecuChat bundles the following Java-I2P artifacts:
+
+1. net.i2p:i2p:2.8.0 (from Maven Central)
+
+   License: Public Domain
+   Source: https://github.com/i2p/i2p.i2p
+   Full license text: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt
+
+   Third-party license exceptions bundled in this JAR:
+
+   - EdDSA-Java: CC0 1.0 Universal
+   - json-simple 2.3.1: Apache 2.0
+   - gnu.gettext, gnu.getopt: LGPL v2.1
+   - SipHashInline, HostnameVerifier: Apache 2.0
+   - Crypto filters (xlattice): BSD
+   - ElGamal/DSA (Original): TheCrypto (Cryptix-style permissive)
+   - ElGamal/Bouncy Castle: Bouncy Castle License
+   - AES: Cryptix Foundation
+   - SNTP: Adam Buckley (permissive)
+   - HashCash: Gregory Rubin (permissive)
+   - SSLEepGet: Sun Microsystems (permissive)
+   - Noise library: Southern Storm (permissive)
+
+2. streaming.jar (built from vendor/i2p.i2p/apps/ministreaming/ + apps/streaming/)
+
+   License: Public Domain
+   Source: https://github.com/i2p/i2p.i2p/tree/master/apps/streaming
+           https://github.com/i2p/i2p.i2p/tree/master/apps/ministreaming
+
+   Full upstream license: https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt
+
