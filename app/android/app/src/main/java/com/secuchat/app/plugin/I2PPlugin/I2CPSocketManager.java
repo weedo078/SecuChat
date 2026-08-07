@@ -154,6 +154,10 @@ public class I2CPSocketManager {
             acceptStreamId = -1;
         }
         try { socketManager.destroySocketManager(); } catch (Exception ignored) {}
+        // Stop the cached thread pool. Daemon read-threads finish naturally when
+        // their sockets close, but the ExecutorService itself must be shut down
+        // to allow JVM graceful exit.
+        executor.shutdownNow();
         instance = null;
     }
 
