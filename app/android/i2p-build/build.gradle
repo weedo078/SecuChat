@@ -3,75 +3,73 @@ plugins {
 }
 
 ext {
-    i2pArtifact = 'net.i2p:i2p:2.8.0'
+    i2pVendorDir = rootProject.file('vendor/i2p.i2p')
     i2pOutDir = rootProject.file('libs/i2p')
-    i2pCacheDir = rootProject.file('i2p-build/cache')
 }
 
-tasks.register('cacheI2PJar') {
-    description 'Download net.i2p:i2p:2.8.0 to local cache'
+tasks.register('buildI2PJars') {
+    description 'Run i2p.i2p pkg via vendor gradlew'
     doLast {
-        i2pCacheDir.mkdirs()
-        // Use a sub-Gradle project to resolve the artifact via mavenCentral()
-        def resolverProject = rootProject
-        def dep = resolverProject.dependencies.create(i2pArtifact)
-        def config = resolverProject.configurations.create('i2pDownload')
-        resolverProject.dependencies.add('i2pDownload', dep)
-        def jarFile = resolverProject.configurations.i2pDownload.resolve().find { it.name.startsWith('i2p-') && it.name.endsWith('.jar') }
-        if (jarFile == null) {
-            throw new GradleException("Failed to resolve ${i2pArtifact}")
+        exec {
+            workingDir = i2pVendorDir
+            commandLine 'bash', './gradlew', 'pkg'
+            standardOutput = new ByteArrayOutputStream()
+            errorOutput = standardOutput
         }
-        def target = new File(i2pCacheDir, 'i2p-2.8.0.jar')
-        target.bytes = jarFile.bytes
-        println "Cached: ${target.absolutePath} (${target.length()} bytes)"
     }
 }
 
-tasks.register('copyI2PJar') {
-    description 'Copy i2p-2.8.0.jar to app/libs/i2p + Strict-Scope-Check + SHA256SUMS + THIRD_PARTY_NOTICES.txt'
-    dependsOn 'cacheI2PJar'
+tasks.register('copyI2PJars') {
+    description 'Copy i2p.i2p JARs to app/libs/i2p + write SHA256SUMS'
+    dependsOn 'buildI2PJars'
     doLast {
         i2pOutDir.mkdirs()
-        def src = new File(i2pCacheDir, 'i2p-2.8.0.jar')
-        if (!src.exists()) {
-            throw new GradleException("Expected cached JAR: ${src.absolutePath}. Run cacheI2PJar first.")
-        }
-        def dst = new File(i2pOutDir, 'i2p-2.8.0.jar')
-        dst.bytes = src.bytes
 
-        // Strict-Scope-Check: KEINE unerlaubten Packages
-        def entries = []
-        new java.util.jar.JarFile(dst).entries().each { e ->
-            if (!e.isDirectory()) entries << e.name
-        }
-        ['i2ptunnel', 'sam/', 'jetty', 'routerconsole', 'router/', 'apps/'].each { banned ->
-            def hit = entries.find { it.contains("${banned}/") }
-            if (hit != null) {
-                throw new GradleException("License-scope violation: i2p-2.8.0.jar contains ${hit}")
+        // Exakte Pfade (Stand i2p.i2p HEAD; anpassbar via Property wenn sich Layout ändert)
+        def jars = [
+            'core/build/core.jar':              'core-2.13.0.jar',
+            'router/java/build/router.jar':    'router-2.13.0.jar',
+            'apps/ministreaming/build/mstreaming.jar': 'ministreaming-2.13.0.jar',
+        ]
+
+        // Strikte Scope: GARANTIERT keine i2ptunnel/sam/jetty-Klassen im Output
+        jars.each { srcRel, dstName ->
+            def src = new File(i2pVendorDir, srcRel)
+            if (!src.exists()) {
+                throw new GradleException("Expected i2p.i2p build artifact: ${srcRel}. " +
+                    "Run ./build.sh pkg in vendor/i2p.i2p first.")
+            }
+            src.withInputStream { input ->
+                new File(i2pOutDir, dstName).withOutputStream { output ->
+                    output << input
+                }
             }
         }
 
         // SHA-256-Sums
-        def sha = java.security.MessageDigest.getInstance('SHA-256')
-        sha.update(dst.bytes)
         def shaOut = new StringBuilder()
-        shaOut << sha.digest().collect { String.format('%02x', it) }.join('')
-        shaOut << '  i2p-2.8.0.jar\n'
+        i2pOutDir.listFiles({ f -> f.name.endsWith('.jar') } as FileFilter)
+            .sort { it.name }
+            .each { f ->
+                def md = java.security.MessageDigest.getInstance('SHA-256')
+                md.update(f.bytes)
+                shaOut << md.digest().collect { String.format('%02x', it) }.join('') << '  ' << f.name << '\n'
+            }
         new File(i2pOutDir, 'SHA256SUMS.txt').text = shaOut.toString()
 
-        // THIRD_PARTY_NOTICES.txt: extract from META-INF/LICENSE* of JAR
-        def notices = new StringBuilder()
-        notices << "This distribution of SecuChat bundles net.i2p:i2p:2.8.0.\n\n"
-        notices << "Primary license: Public Domain (https://github.com/i2p/i2p.i2p/blob/master/LICENSE.txt)\n\n"
-        notices << "Third-party license exceptions bundled in this JAR:\n\n"
-        new java.util.jar.JarFile(dst).entries().each { e ->
-            if (!e.isDirectory() && e.name.matches('META-INF/LICENSE.*\\.txt') ) {
-                notices << "===== ${e.name} =====\n"
-                new java.util.jar.JarFile(dst).getInputStream(e).withStream { is ->
-                    notices << is.text << '\n'
+        // Sanity: keine i2ptunnel/sam/jetty/routerconsole-Klassen in den 3 JARs
+        jars.each { srcRel, dstName ->
+            def jar = new File(i2pOutDir, dstName)
+            def entries = []
+            java.util.jar.JarFile.newInstance(jar).entries().each { e ->
+                if (!e.isDirectory()) entries << e.name
+            }
+            ['i2ptunnel', 'sam/', 'jetty', 'routerconsole'].each { banned ->
+                def hit = entries.find { it.contains("${banned}/") }
+                if (hit != null) {
+                    throw new GradleException("License-scope violation: ${dstName} contains ${hit}")
                 }
             }
         }
-        new File(i2pOutDir, 'THIRD_PARTY_NOTICES.txt').text = notices.toString()
     }
 }
