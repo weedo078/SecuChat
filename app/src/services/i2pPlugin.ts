@@ -47,6 +47,10 @@ export class I2PPlugin {
     if (!config.enabled) throw new Error('I2P disabled in config');
     const result = await I2PNative.start({ host: config.host, port: config.port, nickname: 'SecuChat' });
 
+    // Reverse-order safe: drop any previously registered native listeners
+    // before re-registering, so a repeated initialize() does not stack
+    // listeners and emit duplicate events.
+    await this.removeAllListeners();
     await this.setupListeners();
     logger.log('[I2PPlugin] initialized, b32=', result.b32Address.slice(0, 20));
     return result;
