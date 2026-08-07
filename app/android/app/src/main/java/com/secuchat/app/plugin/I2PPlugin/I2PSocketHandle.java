@@ -5,6 +5,7 @@ import net.i2p.client.streaming.I2PSocket;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -18,9 +19,14 @@ public class I2PSocketHandle {
     private final String peerDestination;
     private final ExecutorService executor;
     private final AtomicBoolean closed = new AtomicBoolean(false);
-    private Consumer<DataEvent> onData;
-    private Consumer<CloseEvent> onClose;
-    private Thread readThread;
+    private final AtomicBoolean readSubmitted = new AtomicBoolean(false);
+    // Volatile: setOnData/setOnClose may be invoked from another thread (e.g.
+    // the accept-loop calling thread) while the read-loop (running on the
+    // executor) is consuming them. Without volatile, the read-loop may never
+    // observe the assignment and silently drop events.
+    private volatile Consumer<DataEvent> onData;
+    private volatile Consumer<CloseEvent> onClose;
+    private volatile Future<?> readFuture;
 
     public I2PSocketHandle(int streamId, I2PSocket socket, String serverSocketTag, String peerDestination, ExecutorService executor) {
         this.streamId = streamId;
@@ -38,8 +44,13 @@ public class I2PSocketHandle {
     public void setOnClose(Consumer<CloseEvent> onClose) { this.onClose = onClose; }
 
     public void startReadThread() {
-        if (readThread != null) return;
-        readThread = new Thread(() -> {
+        // Idempotent: only the first caller submits the read loop. Subsequent
+        // calls are no-ops. Replaces the prior "new Thread(...)" path so the
+        // executor actually owns the read task — that way disconnect()'s
+        // executor.shutdownNow() interrupts the blocked read() instead of
+        // leaving orphan daemon threads behind.
+        if (!readSubmitted.compareAndSet(false, true)) return;
+        readFuture = executor.submit(() -> {
             try {
                 InputStream in = socket.getInputStream();
                 byte[] buf = new byte[8192];
@@ -47,17 +58,17 @@ public class I2PSocketHandle {
                 while (!closed.get() && (n = in.read(buf)) != -1) {
                     byte[] data = new byte[n];
                     System.arraycopy(buf, 0, data, 0, n);
-                    if (onData != null) onData.accept(new DataEvent(streamId, data));
+                    Consumer<DataEvent> cb = onData;
+                    if (cb != null) cb.accept(new DataEvent(streamId, data));
                 }
             } catch (IOException e) {
                 if (!closed.get()) Log.w(TAG, "read error on stream " + streamId + ": " + e.getMessage());
             } finally {
                 String reason = closed.get() ? "closed" : "peer disconnected";
-                if (onClose != null) onClose.accept(new CloseEvent(streamId, reason));
+                Consumer<CloseEvent> cb = onClose;
+                if (cb != null) cb.accept(new CloseEvent(streamId, reason));
             }
-        }, "I2CP-read-" + streamId);
-        readThread.setDaemon(true);
-        readThread.start();
+        });
     }
 
     public void close(String reason) {

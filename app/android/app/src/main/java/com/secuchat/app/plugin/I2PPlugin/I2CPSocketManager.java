@@ -32,7 +32,8 @@ public class I2CPSocketManager {
     private final Map<Integer, I2PSocketHandle> incomingStreams = new ConcurrentHashMap<>();
     private final AtomicInteger streamIdCounter = new AtomicInteger(1);
     private final ExecutorService executor = Executors.newCachedThreadPool();
-    private int acceptStreamId = -1;
+    private volatile int acceptStreamId = -1;
+    private volatile boolean disconnected = false;
 
     private I2CPSocketManager(String host, int port, byte[] privateKey, String nickname) throws IOException {
         // 1. Properties für I2CP-Verbindung
@@ -74,14 +75,24 @@ public class I2CPSocketManager {
         return instance;
     }
 
+    /**
+     * Package-private input validator extracted from connectTo() so it can be
+     * exercised by unit tests without a live I2P router. Throws IOException for
+     * null or empty input — connectTo() would otherwise need a constructed
+     * manager (and thus a router) just to assert this contract.
+     */
+    static void requireDestination(String destinationB32) throws IOException {
+        if (destinationB32 == null || destinationB32.isEmpty()) {
+            throw new IOException("destination B32 required");
+        }
+    }
+
     public static synchronized I2CPSocketManager getInstance() {
         return instance;
     }
 
     public synchronized int connectTo(String destinationB32) throws IOException {
-        if (destinationB32 == null || destinationB32.isEmpty()) {
-            throw new IOException("destination B32 required");
-        }
+        requireDestination(destinationB32);
         Destination peer;
         try {
             peer = session.lookupDest(destinationB32, 15_000);
@@ -103,7 +114,7 @@ public class I2CPSocketManager {
         return streamId;
     }
 
-    public synchronized int acceptIncoming() throws IOException {
+    public int acceptIncoming() throws IOException {
         if (acceptStreamId == -1) {
             // Accept-Loop noch nicht gestartet
             acceptStreamId = streamIdCounter.getAndIncrement();
@@ -145,6 +156,9 @@ public class I2CPSocketManager {
     }
 
     public synchronized void disconnect() {
+        // Mark disconnected first so acceptIncoming()'s post-accept path (and any
+        // caller polling isConnected()) sees the closed state immediately.
+        disconnected = true;
         outgoingStreams.forEach((id, h) -> h.close("disconnect"));
         outgoingStreams.clear();
         incomingStreams.forEach((id, h) -> h.close("disconnect"));
@@ -156,7 +170,8 @@ public class I2CPSocketManager {
         try { socketManager.destroySocketManager(); } catch (Exception ignored) {}
         // Stop the cached thread pool. Daemon read-threads finish naturally when
         // their sockets close, but the ExecutorService itself must be shut down
-        // to allow JVM graceful exit.
+        // to allow JVM graceful exit. shutdownNow() interrupts threads blocked in
+        // socket I/O (the executor owns read threads since I3).
         executor.shutdownNow();
         instance = null;
     }
@@ -166,7 +181,7 @@ public class I2CPSocketManager {
     }
 
     public boolean isConnected() {
-        return socketManager != null && session != null;
+        return !disconnected && socketManager != null && session != null;
     }
 
     public I2PSocketHandle getStream(int streamId) {
