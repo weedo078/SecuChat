@@ -8,7 +8,6 @@
 import nacl from 'tweetnacl';
 import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
-import { samNativeService } from './samNative';
 import { logger } from '@/utils/logger';
 import { i2pPlugin } from './i2pPlugin';
 import { platformService } from './platform';
@@ -56,7 +55,6 @@ class I2PService {
     leasesetPublished: false,
   };
   private tunnelCheckInterval: ReturnType<typeof setInterval> | null = null;
-  private leaseSetRepublishInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
    * Initialize I2P service — connects to SAM via proxy
@@ -650,39 +648,6 @@ class I2PService {
   }
 
   /**
-   * Re-publish our LeaseSet every 5 minutes. i2pd's default leaseSet
-   * lifetime is ~10 min; the 5-min interval gives a 2x safety margin and
-   * keeps listener-only peers (no outgoing STREAM CONNECT of their own)
-   * reachable across reconnects.
-   *
-   * Note: Android path (initializeViaI2PPlugin) does not need this — the
-   * embedded Java-I2P router publishes LeaseSets automatically. The SAM
-   * bridge path no longer calls publishLeaseSet() either, so this method
-   * is currently dormant. Kept for any future SAM-bridge reintroduction.
-   */
-  /* c8 ignore start */
-  // @ts-expect-error - retained dormant for future SAM-bridge reintroduction
-  private startLeaseSetRepublishLoop(): void {
-    this.stopLeaseSetRepublishLoop();
-    this.leaseSetRepublishInterval = setInterval(() => {
-      if (!this.currentStatus.samConnected) return;
-      void samNativeService.publishLeaseSet()
-        .then((ok) => {
-          if (!ok) logger.warn('[I2P] LeaseSet republish failed');
-        })
-        .catch((e) => logger.warn('[I2P] Republish threw:', e));
-    }, 5 * 60 * 1000);
-  }
-  /* c8 ignore stop */
-
-  private stopLeaseSetRepublishLoop(): void {
-    if (this.leaseSetRepublishInterval) {
-      clearInterval(this.leaseSetRepublishInterval);
-      this.leaseSetRepublishInterval = null;
-    }
-  }
-  
-  /**
    * Check i2pd web console API for tunnel status
    */
   private async checkTunnelsReady(): Promise<boolean> {
@@ -752,7 +717,6 @@ class I2PService {
     }
     this.identity = null;
     this.peers.clear();
-    this.stopLeaseSetRepublishLoop();
     samService.shutdown();
     if (platformService.isAndroidNative()) {
       void i2pPlugin.disconnect().catch(error => logger.warn('[I2P] Plugin disconnect failed:', error));
