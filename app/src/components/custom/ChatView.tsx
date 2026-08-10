@@ -290,7 +290,7 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
+    <div className="flex-1 flex flex-col bg-background h-full overflow-hidden">
       {/* Chat Header */}
       <div className="h-16 border-b border-border flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
@@ -396,7 +396,8 @@ export function ChatView() {
       </div>
 
       {/* Messages Area */}
-      <ScrollArea ref={scrollRef} className="flex-1 p-4" role="log" aria-label={t('chat.messageHistory')}>
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea ref={scrollRef} className="h-full overflow-y-auto p-4" role="log" aria-label={t('chat.messageHistory')}>
         <div className="space-y-4">
           {messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -472,6 +473,7 @@ export function ChatView() {
           )}
         </div>
       </ScrollArea>
+      </div>
 
       {/* Typing Indicator */}
       {isContactTyping && (
@@ -521,7 +523,7 @@ export function ChatView() {
       )}
 
       {/* Input Area */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border shrink-0">
         <div className="flex items-center gap-2">
           <input
             type="file"
