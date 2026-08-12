@@ -118,6 +118,19 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
             </span>
           </div>
 
+          {/* Quick Lock */}
+          {user && !isLocked && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={lockApp}
+              aria-label={t('header.lock') ?? 'Sperren'}
+              className="hidden sm:inline-flex"
+            >
+              <Lock className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          )}
+
           {/* User Menu */}
           {user && (
             <DropdownMenu>
@@ -143,19 +156,13 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
                   <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
                   {t('common.settings')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={isLocked ? () => setShowUnlockDialog(true) : lockApp}>
-                  {isLocked ? (
-                    <>
-                      <Unlock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      {t('header.unlock')}
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      {t('header.lock')}
-                    </>
-                  )}
-                </DropdownMenuItem>
+                {/* Lock/Unlock moved to dedicated QuickLockButton in header — no duplicate here */}
+                {isLocked && (
+                  <DropdownMenuItem onClick={() => setShowUnlockDialog(true)}>
+                    <Unlock className="h-4 w-4 mr-2" aria-hidden="true" />
+                    {t('header.unlock')}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive">
                   <LogOut className="h-4 w-4 mr-2" aria-hidden="true" />
