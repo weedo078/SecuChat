@@ -9,6 +9,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useApp } from '@/contexts/AppContext';
 import { toast } from 'sonner';
 import { statusMessenger } from '@/services/statusMessages';
+import { MessageSkeleton } from './MessageSkeleton';
 import { ContactVerificationDialog, VerificationBadge } from './ContactVerificationDialog';
 import { VoiceRecordButton } from './VoiceMessageUI';
 import { FileTransferDialog } from './FileTransferUI';
@@ -45,7 +46,7 @@ import {
 
 export function ChatView() {
   const { t } = useTranslation();
-  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat } = useApp();
+  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat, decrypting } = useApp();
   const [messageText, setMessageText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -400,7 +401,9 @@ export function ChatView() {
       <div className="flex-1 overflow-hidden">
         <ScrollArea ref={scrollRef} className="h-full overflow-y-auto p-4" role="log" aria-label={t('chat.messageHistory')}>
         <div className="space-y-4">
-          {messages.length === 0 ? (
+          {decrypting && messages.length === 0 ? (
+            <MessageSkeleton />
+          ) : messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <p>{t('chat.noMessages')}</p>
               <p className="text-sm">{t('chat.writeFirstMessage')}</p>
