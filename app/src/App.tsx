@@ -10,11 +10,12 @@ import { AddContactDialog } from '@/components/custom/AddContactDialog';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
 import { FullScreenLock } from '@/components/custom/FullScreenLock';
+import { QuickLockButton } from '@/components/custom/QuickLockButton';
 import { UpdateNotification } from '@/components/custom/UpdateNotification';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
-  const { user, initialize, isLoading, isLocked, unlockApp } = useApp();
+  const { user, initialize, isLoading, isLocked, lockApp, unlockApp } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showContactManager, setShowContactManager] = useState(false);
   const [showShareContact, setShowShareContact] = useState(false);
@@ -134,6 +135,13 @@ function App() {
 
       {showFullScreenLock && (
         <FullScreenLock onUnlock={handleUnlock} />
+      )}
+
+      {/* Quick-Lock FAB (mobile only) */}
+      {user && !isLocked && (
+        <div className="sm:hidden">
+          <QuickLockButton variant="fab" onLock={lockApp} />
+        </div>
       )}
 
       <Toaster />
