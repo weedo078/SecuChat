@@ -122,7 +122,7 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
               return true;
             }
             return false;
-          } catch (e) {
+          } catch {
             console.log('[QR-Scan] parse-error, prefix=', decoded.slice(0, 80));
             return false;
           }
