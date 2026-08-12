@@ -364,6 +364,15 @@
     "wrongPassphrase": "Wrong passphrase"
   },
 
+  "lock": {
+    "fullscreen": {
+      "title": "SecuChat locked",
+      "description": "Enter your passphrase to read your encrypted messages.",
+      "appName": "SecuChat"
+    },
+    "quickLock": "Lock app"
+  },
+
   "contacts": {
     "title": "Manage contacts",
     "description": "Manage your contacts and their encryption keys.",

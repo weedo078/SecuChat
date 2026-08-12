@@ -364,6 +364,15 @@
     "wrongPassphrase": "Falsche Passphrase"
   },
 
+  "lock": {
+    "fullscreen": {
+      "title": "SecuChat gesperrt",
+      "description": "Gib deine Passphrase ein, um deine verschlüsselten Nachrichten zu lesen.",
+      "appName": "SecuChat"
+    },
+    "quickLock": "App sperren"
+  },
+
   "contacts": {
     "title": "Kontakte verwalten",
     "description": "Verwalten Sie Ihre Kontakte und deren Verschlüsselungsschlüssel.",
