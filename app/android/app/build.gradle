@@ -45,25 +45,21 @@ dependencies {
     implementation project(':capacitor-cordova-android-plugins')
 }
 
-// SECUCHAT:I2P — copy i2p.i2p JARs to app/libs/i2p before any assemble
-tasks.named('preBuild').configure {
-    dependsOn ':i2p-build:copyI2PJars'
-}
-
-// Flat-dir-Repo
-repositories {
-    flatDir { dirs rootProject.file('libs/i2p') }
-}
+// SECUCHAT:I2P — I2P Core von Maven Central, Streaming-JAR als Binary-Asset
+// Quelle: net.i2p:i2p:2.8.0 (Maven Central, Public Domain)
+// streaming.jar: TCP-über-I2P Streaming-API (net.i2p.client.streaming.*) —
+// nicht auf Maven Central veröffentlicht, deshalb als statisches Binary-Asset
+// unter app/android/libs/streaming.jar eingecheckt. Regenerierung nur bei
+// I2P-Major-Version nötig (siehe docs/superpowers/specs/ für Merge-Prozedere).
 
 dependencies {
-    // i2p-2.8.0.jar: I2CP-Protokoll-Client (net.i2p.client.I2PClient/I2PSession), Maven Central
-    implementation files(rootProject.file('libs/i2p/i2p-2.8.0.jar'))
-    // streaming.jar: TCP-über-I2P-Streaming-API (net.i2p.client.streaming.I2PSocketManagerFactory)
-    implementation files(rootProject.file('libs/i2p/streaming.jar'))
+    // I2P Core / I2CP-Protokoll-Client (net.i2p.client.I2PClient/I2PSession)
+    implementation 'net.i2p:i2p:2.8.0'
+    // TCP-über-I2P Streaming-API (net.i2p.client.streaming.I2PSocketManagerFactory)
+    implementation files(rootProject.file('libs/streaming.jar'))
 }
 
-// License-Notice-Asset: liegt in libs/i2p/THIRD_PARTY_NOTICES.txt (by :i2p-build:copyI2PJars)
-// wird in der App-„Über"-Sektion verlinkt (PR 7)
+// License-Notice-Asset: libs/THIRD_PARTY_NOTICES.txt wird in der App-„Über"-Sektion verlinkt.
 
 // Compile-Protection: keine GPL/jetty/routerconsole/i2ptunnel-Module in implementation
 configurations.all {
@@ -71,6 +67,8 @@ configurations.all {
     exclude group: 'i2p', module: 'sam'
     exclude group: 'i2p', module: 'jetty'
     exclude group: 'i2p', module: 'routerconsole'
+    // net.i2p:i2p:2.8.0 zieht transitive Router-Konsole; nicht in App übernehmen
+    exclude group: 'net.i2p', module: 'routerconsole'
 }
 
 apply from: 'capacitor.build.gradle'

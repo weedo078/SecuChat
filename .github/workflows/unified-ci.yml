@@ -257,8 +257,6 @@ jobs:
       needs.detect-changes.outputs.shared == 'true'
     steps:
       - uses: actions/checkout@v7
-        with:
-          submodules: recursive
 
       - name: Check if Android directory exists
         id: check-android
@@ -344,20 +342,6 @@ jobs:
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app/android
         run: chmod +x gradlew
-
-      - name: Checkout vendor/i2p.i2p submodule
-        if: steps.check-android.outputs.exists == 'true'
-        # `.gitmodules` sets `update = none`, which causes `actions/checkout@v7`
-        # to skip the submodule. We force-init it explicitly from the pinned gitlink.
-        run: |
-          set -e
-          PIN=$(git ls-files --stage vendor/i2p.i2p | awk '{print $2}')
-          echo "vendor/i2p.i2p pinned to ${PIN}"
-          rm -rf vendor/i2p.i2p
-          git clone --depth=1 https://github.com/i2p/i2p.i2p.git vendor/i2p.i2p
-          cd vendor/i2p.i2p
-          git fetch --depth=1 origin ${PIN}
-          git checkout ${PIN}
 
       - name: Build Debug APK
         if: steps.check-android.outputs.exists == 'true'
