@@ -70,7 +70,10 @@ interface AppContextType {
   
   // Loading
   isLoading: boolean;
-  
+
+  // Decryption indicator (true while messages are being re-decrypted after unlock)
+  decrypting: boolean;
+
   // Initialization
   initialize: () => Promise<void>;
 }
@@ -189,6 +192,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
+  const [decrypting, setDecrypting] = useState(false);
   
   // Settings state
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
@@ -1014,7 +1018,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadMessages = useCallback(async (chatId: string) => {
     const chatMessages = await storageService.getMessagesByChatId(chatId);
-    
+
     // Try to decrypt messages if we have the key pair loaded
     if (cryptoService.hasKeyPair()) {
       const decryptedMessages = await Promise.all(
@@ -1036,6 +1040,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setMessages(chatMessages);
     }
   }, []);
+
+  // Re-decrypt active chat when unlock succeeds.
+  // Hinweis: Mit D4 (Chat-Liste nach Unlock) ist activeChatRef.current in der
+  // Regel null, weil lockApp activeChat clearet. Dieser useEffect deckt trotzdem
+  // den Fall ab, falls D4 je gelockert wird.
+  useEffect(() => {
+    if (!isLocked && user && activeChatRef.current && cryptoService.hasKeyPair()) {
+      const chatId = activeChatRef.current.id;
+      setDecrypting(true);
+      void loadMessages(chatId).finally(() => {
+        // Skeleton mindestens 500ms sichtbar für UX-Feedback
+        setTimeout(() => setDecrypting(false), 500);
+      });
+    }
+  }, [isLocked, user, loadMessages]);
 
   // File operations
   const sendFile = useCallback(async (to: string, file: File) => {
@@ -1073,6 +1092,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Auth operations
   const lockApp = useCallback(() => {
     setIsLocked(true);
+    setActiveChatState(null);   // NEU: clears active chat
+    setMessages([]);            // NEU: clears in-memory messages
     cryptoService.clearKeyPair();
     storageService.clearEncryptionPassphrase();
     setEncryptionState('unencrypted');
@@ -1281,6 +1302,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     unlockApp,
     isLoading,
     initialize,
+    decrypting,
   };
 
   return (
