@@ -370,7 +370,21 @@
     "searchContacts": "Kontakte suchen...",
     "noContacts": "Keine Kontakte gefunden",
     "deleteContact": "Kontakt löschen?",
-    "deleteContactDesc": "Dieser Kontakt wird dauerhaft gelöscht. Alle Nachrichten werden ebenfalls entfernt."
+    "deleteContactDesc": "Dieser Kontakt wird dauerhaft gelöscht. Alle Nachrichten werden ebenfalls entfernt.",
+    "detail": {
+      "openLabel": "Details zu {{name}} öffnen",
+      "fingerprint": "PGP-Fingerprint",
+      "i2pAddress": "I2P-Adresse",
+      "i2pAddressMissing": "Nicht hinterlegt",
+      "p2pIdentifier": "P2P-Identifier",
+      "addedOn": "Hinzugefügt am",
+      "lastSeen": "Zuletzt gesehen",
+      "lastSeenUnknown": "Unbekannt",
+      "copyLabel": "Kopieren",
+      "copied": "Kopiert!",
+      "copyFailed": "Kopieren fehlgeschlagen",
+      "deleteButton": "Kontakt löschen"
+    }
   },
 
   "addContact": {
