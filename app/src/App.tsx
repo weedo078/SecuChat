@@ -9,7 +9,7 @@ import { ContactManager } from '@/components/custom/ContactManager';
 import { AddContactDialog } from '@/components/custom/AddContactDialog';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
-import { UnlockDialog } from '@/components/custom/UnlockDialog';
+import { FullScreenLock } from '@/components/custom/FullScreenLock';
 import { UpdateNotification } from '@/components/custom/UpdateNotification';
 import { Toaster } from '@/components/ui/sonner';
 
@@ -19,10 +19,10 @@ function App() {
   const [showContactManager, setShowContactManager] = useState(false);
   const [showShareContact, setShowShareContact] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [unlockDismissed, setUnlockDismissed] = useState(false);
-
-  // Derive unlock dialog from isLocked state without useEffect
-  const showUnlockDialog = isLocked && !unlockDismissed;
+  // Bug 1 fix: kein unlockDismissed-Flag mehr. Der State wurde vergessen
+  // zurückzusetzen, sodass nach Auto-Lock der Unlock-Dialog nicht mehr öffnete.
+  // FullScreenLock mounted direkt aus isLocked.
+  const showFullScreenLock = isLocked;
 
   useEffect(() => {
     initialize();
@@ -46,17 +46,9 @@ function App() {
   }, []);
 
   const handleUnlock = async (passphrase: string): Promise<boolean> => {
-    const success = await unlockApp(passphrase);
-    if (success) {
-      setUnlockDismissed(true);
-    }
-    return success;
+    return await unlockApp(passphrase);
   };
-
-  const handleCloseUnlockDialog = () => {
-    // Dialog kann nicht geschlossen werden ohne Entsperrung
-    // (optional: könnte auch setUnlockDismissed(false) bleiben)
-  };
+  // Kein handleCloseUnlockDialog mehr nötig — FullScreenLock hat keinen Close-Button.
 
   if (isLoading) {
     return (
@@ -140,11 +132,9 @@ function App() {
         onClose={() => setShowSettings(false)} 
       />
 
-      <UnlockDialog
-        isOpen={showUnlockDialog}
-        onClose={handleCloseUnlockDialog}
-        onUnlock={handleUnlock}
-      />
+      {showFullScreenLock && (
+        <FullScreenLock onUnlock={handleUnlock} />
+      )}
 
       <Toaster />
       
