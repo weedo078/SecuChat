@@ -35,6 +35,7 @@ export interface SAMStream {
 import { logger } from '@/utils/logger';
 import { platformService } from './platform';
 import { samNativeService } from './samNative';
+import { i2pPlugin } from './i2pPlugin';
 type ResponseResolver = (response: string) => void;
 
 class SAMService {
@@ -71,31 +72,21 @@ class SAMService {
     logger.log('[SAM] isAvailable called, enabled:', c.enabled);
     if (!c.enabled) return false;
 
-    // Use native bridge for Android
-    const isNative = platformService.isAndroidNative();
-    logger.log('[SAM] isAndroidNative():', isNative);
-    if (isNative) {
+    // Android: kein SAM-Bridge mehr. i2p-App exponiert I2CP direkt via Capacitor-Plugin
+    // "I2P" (siehe services/i2pPlugin.ts). Das alte SAM-Plugin ist tot.
+    if (platformService.isAndroidNative()) {
       try {
-        logger.log('[SAM] Using native bridge for Android');
-        // First try to initialize/ connect if not already connected
-        const status = await samNativeService.getStatus();
-        logger.log('[SAM] Native status:', status);
-        if (!status.connected) {
-          logger.log('[SAM] Not connected, attempting to initialize...');
-          // Try to initialize the native connection
-          const initResult = await samNativeService.initialize(c);
-          logger.log('[SAM] Initialize result:', initResult);
-          if (initResult) {
-            // Check status again after initialization
-            const newStatus = await samNativeService.getStatus();
-            logger.log('[SAM] Status after init:', newStatus);
-            return newStatus.connected;
-          }
-          return false;
-        }
-        return true;
+        const hostOverride = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_sam_host')
+          : null) || '127.0.0.1';
+        const result = await i2pPlugin.initialize({
+          host: hostOverride,
+          port: 7654,
+          enabled: true,
+        });
+        return !!result?.b32Address;
       } catch (err) {
-        logger.error('[SAM] Native status error:', err);
+        logger.error('[SAM] Android I2CP init failed:', err);
         return false;
       }
     }

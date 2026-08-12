@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { AppProvider } from '@/contexts/AppContext'
 import { platformService } from '@/services/platform'
+import { installDevBridge } from '@/services/devBridge'
 import App from './App'
 import './index.css'
 import './i18n'
@@ -38,6 +39,13 @@ async function initApp() {
         .catch((err) => console.log('[PWA] Service Worker registration failed:', err));
     });
   }
+
+  // Dev-Bridge für automatisierte Tests (nur aktiv, wenn localStorage
+  // 'secuchat_test_mode' === '1'). CDP-Zugriff via window.__secuchatDevBridge.*
+  // sowie optional TCP auf 127.0.0.1:8787 via DevBridgePlugin.
+  installDevBridge().catch((e) =>
+    console.warn('[DevBridge] install failed:', e),
+  );
 }
 
 void initApp()

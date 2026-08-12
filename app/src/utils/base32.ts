@@ -16,11 +16,31 @@ export function uint8ArrayToBase64(data: Uint8Array): string {
 }
 
 /**
- * Base64 decode string to Uint8Array (browser-compatible)
+ * Strict base64 decode. Throws InvalidCharacterError on bad input. Use this
+ * when the caller is certain the input came from `uint8ArrayToBase64` and
+ * a failure indicates real corruption that should surface.
  */
 export function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64);
-  return new Uint8Array(binary.split('').map(c => c.charCodeAt(0)));
+  return new Uint8Array(binary.split('').map((c) => c.charCodeAt(0)));
+}
+
+/**
+ * Tolerant base64 decode. Returns null if the input is not valid base64.
+ * Use this when reading from storage where older builds may have written
+ * a non-base64 value (e.g. JSON-serialized Uint8Array) — the caller can
+ * then fall back to regenerating the resource instead of crashing the
+ * whole UI mount.
+ */
+export function tryBase64ToUint8Array(base64: string): Uint8Array | null {
+  if (typeof base64 !== 'string' || base64.length === 0) return null;
+  if (!/^[A-Za-z0-9+/\s]+=*$/.test(base64)) return null;
+  try {
+    const binary = atob(base64);
+    return new Uint8Array(binary.split('').map((c) => c.charCodeAt(0)));
+  } catch {
+    return null;
+  }
 }
 
 export function toBase32(data: Uint8Array): string {

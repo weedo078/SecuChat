@@ -6,7 +6,7 @@
  */
 
 import nacl from 'tweetnacl';
-import { toBase32, uint8ArrayToBase64, base64ToUint8Array } from '@/utils/base32';
+import { toBase32, uint8ArrayToBase64, tryBase64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
 import { logger } from '@/utils/logger';
 import { i2pPlugin } from './i2pPlugin';
@@ -101,6 +101,17 @@ class I2PService {
         logger.log('[I2P] stream closed:', streamId, reason);
       });
       await i2pPlugin.startAccepting();
+
+      // Sync the live SAM b32 into the persisted user record. The native
+      // plugin derives the b32 from whatever private key it currently has
+      // loaded (which can change after `pm clear` + re-onboarding, or
+      // after the IdentityStore generated a new destination because the
+      // previous one failed to persist). Without this back-sync, the User
+      // object in storage keeps a stale b32 and every STREAM CONNECT to
+      // a peer fails with "LeaseSet not found" because no LeaseSet is
+      // published under that address.
+      await this.syncB32ToUser();
+
       this.notifyStatusChange();
       return this.currentStatus;
     } catch (e) {
@@ -112,6 +123,26 @@ class I2PService {
       };
       this.notifyStatusChange();
       return this.currentStatus;
+    }
+  }
+
+  private async syncB32ToUser(): Promise<void> {
+    const liveB32 = await i2pPlugin.getB32Address();
+    if (!liveB32) return;
+    try {
+      const { storageService } = await import('./storage');
+      const user = await storageService.getUser();
+      if (!user) return;
+      if (user.i2pAddress === liveB32) return;
+      await storageService.saveUser({ ...user, i2pAddress: liveB32 });
+      logger.log(
+        '[I2P] synced stale user.i2pAddress to live SAM b32:',
+        user.i2pAddress?.slice(0, 12),
+        '→',
+        liveB32.slice(0, 12),
+      );
+    } catch (e) {
+      logger.warn('[I2P] failed to persist live b32 to user record:', e);
     }
   }
 
@@ -271,8 +302,18 @@ class I2PService {
    */
   async restoreIdentity(publicKeyB64: string, privateKeyB64: string, samDestination?: string, i2pAddress?: string): Promise<I2PIdentity> {
     logger.log('[I2P] restoreIdentity called, samDestination present:', !!samDestination, 'i2pAddress present:', !!i2pAddress);
-    const publicKey = base64ToUint8Array(publicKeyB64);
-    const privateKey = base64ToUint8Array(privateKeyB64);
+    const publicKey = tryBase64ToUint8Array(publicKeyB64);
+    const privateKey = tryBase64ToUint8Array(privateKeyB64);
+
+    // Defensive: a corrupted storage entry (e.g. an older build that
+    // JSON-serialized a Uint8Array as {"0":1,"1":2,...}) breaks base64
+    // decoding and would otherwise crash AppContext init. Fall back to a
+    // freshly generated identity so the UI recovers — the peer must
+    // re-import the new b32.
+    if (!publicKey || !privateKey) {
+      logger.warn('[I2P] restoreIdentity: stored keys are not valid base64 — regenerating identity');
+      return this.generateIdentity();
+    }
 
     // Use the stored I2P address (which should be the SAM b32) if available
     // Otherwise fall back to Ed25519-derived address for backwards compatibility

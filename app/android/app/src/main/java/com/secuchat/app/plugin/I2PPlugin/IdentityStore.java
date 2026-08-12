@@ -4,6 +4,7 @@ package com.secuchat.app.plugin.I2PPlugin;
 import android.content.Context;
 import android.util.Log;
 
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -50,7 +51,10 @@ public class IdentityStore {
             byte[] iv = new byte[IV_LENGTH];
             if (fis.read(salt) != SALT_LENGTH) throw new IOException("salt read failed");
             if (fis.read(iv) != IV_LENGTH) throw new IOException("iv read failed");
-            byte[] cipherText = fis.readAllBytes();
+            // FileInputStream.readAllBytes() ist erst ab API 33 / Java 9 verfügbar.
+            // Wir lesen den Rest manuell, damit die Methode auch auf älteren
+            // Android-Versionen (z. B. A50) zuverlässig funktioniert.
+            byte[] cipherText = readAllBytesCompat(fis);
             // No passphrase yet = unencrypted mode (first line == plaintext flag)
             // To keep simple for now: file always contains exactly: salt + iv + ciphertext
             // Caller will pass raw bytes; passphrase wrapping is layered in Task 6.
@@ -73,5 +77,19 @@ public class IdentityStore {
         } catch (IOException e) {
             Log.e(TAG, "IdentityStore.save failed", e);
         }
+    }
+
+    /**
+     * Liest den Rest eines Streams vollständig in ein Byte-Array. Kompatibel mit
+     * Java-Versionen vor 9 (FileInputStream.readAllBytes() fehlt auf älterem ART).
+     */
+    private static byte[] readAllBytesCompat(FileInputStream fis) throws IOException {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        byte[] chunk = new byte[4096];
+        int n;
+        while ((n = fis.read(chunk)) != -1) {
+            buf.write(chunk, 0, n);
+        }
+        return buf.toByteArray();
     }
 }

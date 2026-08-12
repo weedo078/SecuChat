@@ -124,9 +124,16 @@ function effectiveSamConfig(sam: AppSettings['i2p']['sam']): AppSettings['i2p'][
     config.enabled = true;
   }
 
-  // Android native: use direct TCP to i2pd SAM on port 7656, not WebSocket proxy on 7657.
+  // Android native: i2p-App exponiert I2CP auf 7654 (nicht SAM auf 7656).
+  // Der Default `sam.enabled=false` ist ein Relikt aus der SAM-Bridge-Welt
+  // ("kein Proxy → keine Init"). Mit dem nativen I2CP-Plugin ist die
+  // Initialisierung immer gewollt — i2pService.initializeViaI2PPlugin
+  // ignoriert `enabled` ohnehin und hardcoded `true`. Ohne diese Korrektur
+  // läuft der 30s-Auto-Retry in AppContext nie an und ein 8s-Cold-Start-Lag
+  // lässt den "I2P nicht verbunden"-Banner dauerhaft sichtbar.
   if (platformService.isAndroidNative()) {
-    config.port = 7656;
+    config.port = 7654;
+    config.enabled = true;
   }
 
   // DEV/TEST: optionaler SAM-Bridge-Host via localStorage (Emulator→10.0.2.2, Telefon→Host-LAN-IP).
@@ -240,12 +247,22 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // (früher aus localStorage gelesen, was nach Wipe/App-Neustart fehlte).
         const testModeEnabled = isTestMode();
         const testPassphrase = testModeEnabled ? TEST_PASSPHRASE : null;
+        console.log('[AppContext] Auto-unlock diagnostics:', JSON.stringify({
+          keysEncrypted,
+          testModeEnabled,
+          testPassphrase: testPassphrase ? '***' : null,
+          pkPrefix: savedUser.pgpPrivateKey?.slice(0, 20),
+          pkLen: savedUser.pgpPrivateKey?.length,
+        }));
 
         if (keysEncrypted && testPassphrase) {
+          console.log('[AppContext] Auto-unlock: entering try-block');
           // Auto-Onboarding hat einen Test-Modus-Pass hinterlegt — direkt entsperren
           try {
             storageService.setEncryptionPassphrase(testPassphrase);
+            console.log('[AppContext] Auto-unlock: passphrase set');
             const decryptedUser = await storageService.getUser();
+            console.log('[AppContext] Auto-unlock: getUser returned, decrypted prefix:', decryptedUser?.pgpPrivateKey?.slice(0, 20));
             if (decryptedUser?.pgpPrivateKey?.startsWith('-----BEGIN PGP')) {
               await cryptoService.importKeyPair(
                 decryptedUser.pgpPrivateKey,
@@ -257,6 +274,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
               setIsAuthenticated(true);
               setEncryptionState('encrypted');
               console.log('[AppContext] Test-mode auto-unlock successful');
+              // Register I2P listeners in the test-mode auto-unlock path too —
+              // the general path below (line ~367) only runs when `keysEncrypted`
+              // is false. Without this, incoming messages are silently dropped
+              // because i2pPlugin fires i2pMessage but no JS handler exists.
+              // Deregister first to prevent double-registration on re-init.
+              if (listenersRegisteredRef.current) {
+                i2pService.offMessage(stableMessageHandler);
+                i2pService.offStatusChange(setI2pStatus);
+              }
+              i2pService.onMessage(stableMessageHandler);
+              i2pService.onStatusChange(setI2pStatus);
+              listenersRegisteredRef.current = true;
               // Auch i2pService.restoreIdentity + initialize triggern — sonst
               // bleibt der i2pService.identity leer und SAM kann nicht starten.
               if (decryptedUser.i2pAddress && decryptedUser.i2pPublicKey
@@ -299,10 +328,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
         } else if (savedUser.pgpPrivateKey) {
           // Keys are plaintext (freshly created with passphrase still in memory)
           try {
+            // Test-Mode: PGP-Key ist IMMER mit TEST_PASSPHRASE verschlüsselt.
+            // Wir koennen nicht zwischen "frisch generiert, Passphrase in Memory"
+            // und "aus dem Storage geladen, noch entschluesselt" unterscheiden —
+            // der armored PGP-Block enthaelt den PGP-Passwort-Schutz immer. Wenn
+            // wir die leere Passphrase uebergeben, scheitert `decryptKey` und der
+            // User bleibt locked. Im Test-Mode ist die korrekte Passphrase
+            // immer TEST_PASSPHRASE; ausserhalb des Test-Modes werden Keys
+            // ueber den `keysEncrypted`-Pfad entsperrt (UnlockDialog).
+            const pgpPassphrase = isTestMode() ? TEST_PASSPHRASE : '';
             await cryptoService.importKeyPair(
               savedUser.pgpPrivateKey,
               savedUser.pgpPublicKey,
-              '' // PGP key passphrase not needed when key is already decrypted by OpenPGP.js
+              pgpPassphrase
             );
             setEncryptionState('encrypted');
             setIsAuthenticated(true);
@@ -1043,19 +1081,51 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Auto-lock after inactivity
   useEffect(() => {
     if (isLocked || !isAuthenticated) return;
-    
+
     const lockTimeout = settings.autoLock ? (settings.lockTimeout ?? 5) : 0;
     if (lockTimeout <= 0) return;
-    
+
     const interval = setInterval(() => {
       const inactiveMs = Date.now() - lastActivity;
       if (inactiveMs > lockTimeout * 60 * 1000) {
         lockApp();
       }
     }, 30000);
-    
+
     return () => clearInterval(interval);
   }, [lastActivity, isLocked, isAuthenticated, settings.autoLock, settings.lockTimeout, lockApp]);
+
+  // Test-only: expose AppContext state to window so the DevBridge can read it
+  // for diagnostics. Only active when secuchat_test_mode is enabled.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isTestMode()) return;
+    interface DebugSnapshot {
+      chatsCount: number;
+      contactsCount: number;
+      chatsFirst: { id: string; contactId: string; hasContactField: boolean; contactName?: string } | null;
+      contactsFirst: { id: string; name: string } | null;
+      isLocked: boolean;
+      isAuthenticated: boolean;
+    }
+    const w = window as unknown as { __secuchatAppDebug?: () => DebugSnapshot };
+    w.__secuchatAppDebug = () => ({
+      chatsCount: chats.length,
+      contactsCount: contacts.length,
+      chatsFirst: chats[0] ? {
+        id: chats[0].id,
+        contactId: chats[0].contactId,
+        hasContactField: !!chats[0].contact,
+        contactName: chats[0].contact?.name,
+      } : null,
+      contactsFirst: contacts[0] ? { id: contacts[0].id, name: contacts[0].name } : null,
+      isLocked,
+      isAuthenticated,
+    });
+    return () => {
+      delete (window as unknown as { __secuchatAppDebug?: () => DebugSnapshot }).__secuchatAppDebug;
+    };
+  }, [chats, contacts, isLocked, isAuthenticated]);
 
   const unlockApp = useCallback(async (passphrase: string): Promise<boolean> => {
     try {

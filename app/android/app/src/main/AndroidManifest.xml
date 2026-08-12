@@ -6,6 +6,11 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- Camera (QR-Scan via html5-qrcode / getUserMedia in WebView) -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
     <!-- Foreground Service for I2P connection -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
@@ -16,6 +21,17 @@
 
     <!-- Notifications -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Package visibility: i2p-Router-Apps müssen ab Android 11 (API 30)
+         explizit angefragt werden, sonst wirft PackageManager.getPackageInfo()
+         für fremde Packages NameNotFoundException, obwohl sie installiert sind.
+         Wir prüfen net.i2p.android (Play Store), net.i2p.android.router (F-Droid)
+         und org.purplei2p.i2pd (Purple I2P). -->
+    <queries>
+        <package android:name="net.i2p.android" />
+        <package android:name="net.i2p.android.router" />
+        <package android:name="org.purplei2p.i2pd" />
+    </queries>
 
     <!-- Storage -->
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />

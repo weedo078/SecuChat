@@ -81,48 +81,58 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       autoOnboardInFlight = true;
       try {
         console.log('[AUTO-ONBOARD] start');
-        const u = 'Android', p = TEST_PASSPHRASE, dev = 'Pixel Phone';
+        // Username + DeviceName: erlauben Override via localStorage für Test-Mode
+        // Onboarding pro Gerät (Standardwerte bleiben für Backwards-Compat).
+        const u = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_username')
+          : null) || 'Android';
+        const dev = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_device')
+          : null) || 'Pixel Phone';
+        const p = TEST_PASSPHRASE;
         const keys = await cryptoService.generateKeyPair(u, p);
         if (cancelled) return;
         // SAM-Destination ZUERST erzeugen (bevor generateIdentity läuft und die
         // Identity überschreibt). Sonst droht der Race, bei dem setSamDestination
         // die Destination verwirft, weil this.identity zwischenzeitlich null ist.
         let samDestination: string | undefined;
-        const samPlugin: {
-          connect: (cfg: { host: string; port: number; enabled: boolean }) => Promise<{ connected: boolean }>;
-          generateDestination: (opts: { signatureType: string }) => Promise<{ success: boolean; privateKey?: string }>;
-        } | null = ((window as { Capacitor?: { Plugins?: { SAM?: unknown } } })?.Capacitor?.Plugins?.SAM as {
-          connect: (cfg: { host: string; port: number; enabled: boolean }) => Promise<{ connected: boolean }>;
-          generateDestination: (opts: { signatureType: string }) => Promise<{ success: boolean; privateKey?: string }>;
-        } | undefined) ?? null;
-        if (samPlugin) {
+        // Android seit dem Wechsel auf i2p-App (Java I2P via I2CP): das alte
+        // Capacitor-Plugin "SAM" ist nicht mehr implementiert. Wir gehen direkt
+        // über i2pPlugin (Capacitor-Plugin "I2P") und erzeugen die Destination
+        // über das native I2CP-Socket. Auf dem Browser bleibt der SAM-Pfad
+        // unverändert (kein i2pPlugin verfügbar).
+        const isAndroid = platformService.isAndroidNative();
+        if (isAndroid) {
           try {
-            // Android-i2pd 2.59/2.61 crashes in DEST GENERATE for RSA types 4-6.
-            // Ed25519 type 7 succeeds and was verified with a raw SAM echo test.
-            // Bridge-Host aus localStorage lesen (Emulator → 10.0.2.2, Telefon → LAN-IP),
-            // sonst Default 127.0.0.1. So vermeiden wir die Symmetric-NAT-Falle.
-            const samHost = (typeof localStorage !== 'undefined'
+            const i2cpHost = (typeof localStorage !== 'undefined'
               ? (localStorage.getItem('secuchat_auto_onboard_host')
                   || localStorage.getItem('secuchat_sam_host'))
               : null) || '127.0.0.1';
-            const connectResult = await samPlugin.connect({ host: samHost, port: 7656, enabled: true });
-            console.log('[AUTO-ONBOARD] samPlugin.connect', { host: samHost, result: connectResult });
-            const d = await samPlugin.generateDestination({ signatureType: '7' });
-            console.log('[AUTO-ONBOARD] samPlugin.generateDestination result', { success: d?.success, hasPrivateKey: !!d?.privateKey });
-            if (d?.success && d.privateKey) {
-              samDestination = d.privateKey;
-              // setSamDestination vor generateIdentity — i2pService legt sonst
-              // eine frische identity ohne samDestination an und unsere Destination
-              // wäre weg.
-              i2pService.setSamDestination(d.privateKey);
-              console.log('[AUTO-ONBOARD] SAM destination generated directly, set on service', {
-                sdLen: d.privateKey.length,
+            const initResult = await i2pPlugin.initialize({
+              host: i2cpHost,
+              port: 7654,
+              enabled: true,
+            });
+            console.log('[AUTO-ONBOARD] i2pPlugin.initialize', { host: i2cpHost, b32: initResult?.b32Address?.slice(0, 20) });
+            // The native I2CP layer persists the private key itself (IdentityStore
+            // in I2PPlugin.java). We only need the public SAM destination (Base64
+            // privateKey) for sharing with peers. The b32 address is the same as
+            // dest.toBase32() computed by the Java side.
+            const b32 = initResult?.b32Address;
+            if (b32) {
+              // Cache as samDestination so setSamDestination semantics keep
+              // working downstream. The native side already owns the canonical
+              // private key — we keep the b32 here purely for the user record.
+              samDestination = b32;
+              i2pService.setSamDestination(b32);
+              console.log('[AUTO-ONBOARD] i2p destination set on service', {
+                b32Len: b32.length,
                 identityHasDestination: !!i2pService.exportIdentity()?.samDestination,
               });
             } else {
-              console.warn('[AUTO-ONBOARD] generateDestination returned', d);
+              console.warn('[AUTO-ONBOARD] i2pPlugin.initialize returned no b32');
             }
-          } catch (e) { console.warn('[AUTO-ONBOARD] direct SAM dest gen failed:', e); }
+          } catch (e) { console.warn('[AUTO-ONBOARD] i2pPlugin init failed:', e); }
         }
         const i2p = await i2pService.generateIdentity();
         if (cancelled) return;
@@ -149,17 +159,19 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         // verlustbaren localStorage-Flag.
         await storageService.saveUser(userRec);
         const platform = platformService.getPlatformInfo();
-        // Host-i2pd-Bridge für Cross-Host-E2E-Test: Emulator → 10.0.2.2:7656, Telefon im LAN → 192.168.179.62:7656
+        // I2CP-Host für i2p-App: Emulator → 10.0.2.2:7654, Telefon im LAN → 192.168.x.x:7654
         const hostOverride = (typeof localStorage !== 'undefined'
           ? localStorage.getItem('secuchat_auto_onboard_host')
           : null) || '127.0.0.1';
+        // Android: i2p-App spricht I2CP (7654), Browser/Electron: SAM-Proxy (7657).
+        const portOverride = platform.i2pSupport === 'native' ? 7654 : 7657;
         await storageService.saveSettings({
           theme: 'dark', language: 'de', notifications: true,
           notificationSettings: { enabled: true, sound: true, vibration: true, showPreview: true, priority: 'high' },
           soundEnabled: true, autoLock: false, lockTimeout: 5, screenshotProtection: true,
           syncEnabled: true, deviceName: dev,
           i2p: { mode: platform.i2pSupport === 'native' ? 'auto' : 'sam',
-                 sam: { enabled: true, host: hostOverride, port: 7656, nickname: 'securechat' } },
+                 sam: { enabled: true, host: hostOverride, port: portOverride, nickname: 'securechat' } },
         } as AppSettings);
         localStorage.removeItem('secuchat_auto_onboard');
         console.log('[AUTO-ONBOARD] success, reloading');

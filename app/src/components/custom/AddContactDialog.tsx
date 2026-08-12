@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Upload, Shield, AlertTriangle, Check, Download, UserPlus, FileDown, QrCode, ScanLine } from 'lucide-react';
 import { toast } from 'sonner';
@@ -113,7 +113,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   // ── QR Scan Result ────────────────────────────────────────────────────────
 
-  const handleQRScanned = (raw: string) => {
+  // useCallback stabilisiert die Referenz. Sonst erzeugt der QRContactScanner-
+  // useEffect bei jedem Parent-Render einen neuen Cleanup+Start der Camera,
+  // weil onError als inline-arrow uebergeben wurde → Endlos-Loop, React
+  // rendert nichts mehr, Camera-Stream kommt nie als <video>-Frame an →
+  // schwarzer Preview (User-Bug "Kamera oeffnet nicht").
+  const handleQRScanned = useCallback((raw: string) => {
     const contact = parseContactData(raw);
     if (contact) {
       setImportedContact(contact);
@@ -121,7 +126,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     } else {
       setImportError(t('addContact.invalidFile'));
     }
-  };
+  }, [t]);
+
+  const handleQRError = useCallback((err: string) => {
+    setImportError(err);
+    setShowQRScan(false);
+  }, []);
 
   // ── Import ─────────────────────────────────────────────────────────────────
 
@@ -367,7 +377,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             {showQRScan ? (
               <QRContactScanner
                 onContactScanned={handleQRScanned}
-                onError={(err) => { setImportError(err); setShowQRScan(false); }}
+                onError={handleQRError}
               />
             ) : !importedContact ? (
               <>
