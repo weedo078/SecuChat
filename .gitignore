@@ -42,3 +42,6 @@ Thumbs.db
 
 # Vite
 .vite/
+
+# Git worktrees (created via `git worktree add .worktrees/<branch>`)
+.worktrees/
