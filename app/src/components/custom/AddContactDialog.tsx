@@ -55,6 +55,71 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   } | null>(null);
   const showQRShare = qrShareData !== null;
   const [showQRScan, setShowQRScan] = useState(false);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
+
+  /**
+   * Pre-flight check for camera permission. Solves the "Kamera öffnet sich
+   * nicht" UX bug on Android: if the user has previously denied camera
+   * access (or the prompt was auto-dismissed), navigator.permissions
+   * reports "denied" and getUserMedia() fails silently — leaving the
+   * scanner in a black state with no explanation.
+   *
+   * Strategy:
+   * 1. If Permissions API exposes 'camera' status → use it as the truth.
+   * 2. Otherwise (Desktop-WebView, older WebViews) → just attempt getUserMedia;
+   *    the scanner's own error handler still shows the message.
+   * 3. If denied → show inline Settings-Hinweis with "Open settings" CTA.
+   */
+  const handleStartQRScan = useCallback(async () => {
+    setImportError(null);
+    setCameraPermissionDenied(false);
+
+    try {
+      // navigator.permissions is available in modern WebViews (Android ≥ Chrome 88).
+      // Desktop-WebView / older Android-WebView returns undefined → skip pre-flight.
+      const permsApi = (navigator as Navigator & { permissions?: Permissions }).permissions;
+      if (permsApi && typeof permsApi.query === 'function') {
+        const status = await permsApi.query({ name: 'camera' as PermissionName });
+        if (status.state === 'denied' || status.state === 'prompt') {
+          // 'denied' = previously rejected (incl. "Don't ask again").
+          // 'prompt' = never asked yet, but on Android-WebView this often
+          //   means the OS-level prompt was already auto-dismissed; show
+          //   a hint so the user knows what to do if the prompt doesn't appear.
+          setCameraPermissionDenied(true);
+          return;
+        }
+      }
+    } catch (err) {
+      // Some WebViews throw on unknown permission names — fall through to
+      // the normal getUserMedia path; the scanner's own catch will handle errors.
+      console.warn('[QR-Scan] permission pre-flight failed:', err);
+    }
+
+    setShowQRScan(true);
+  }, []);
+
+  const handleOpenAppSettings = useCallback(() => {
+    // Capacitor exposes a way to open the native app-settings page.
+    // Dynamic import keeps the web build tree-shaken.
+    void (async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (Capacitor.isNativePlatform()) {
+          const { App } = await import('@capacitor/app');
+          // Some Capacitor versions don't have openSettings; gracefully fallback.
+          const open = (App as unknown as { openSettings?: (opts?: { settingsUI: string }) => void }).openSettings;
+          if (typeof open === 'function') {
+            open.call(App, { settingsUI: 'application' });
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[QR-Scan] openSettings failed:', err);
+      }
+      // Browser fallback (no-op / show hint) — we already show the manual path in the UI.
+      toast.info(t('qr.permissionDeniedAndroidHint'));
+    })();
+  }, [t]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -129,8 +194,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   }, [t]);
 
   const handleQRError = useCallback((err: string) => {
-    setImportError(err);
     setShowQRScan(false);
+    // Distinguish permission errors (user-fixable) from generic scan errors.
+    if (/permission|notallowed|not.*allowed|denied/i.test(err)) {
+      setCameraPermissionDenied(true);
+      return;
+    }
+    setImportError(err);
   }, []);
 
   // ── Import ─────────────────────────────────────────────────────────────────
@@ -379,6 +449,38 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 onContactScanned={handleQRScanned}
                 onError={handleQRError}
               />
+            ) : cameraPermissionDenied ? (
+              <div className="p-4 rounded-lg border border-destructive/30 bg-destructive/5 space-y-3" role="alert">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <p className="font-medium text-sm">{t('qr.permissionDeniedTitle')}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {t('qr.permissionDeniedDescription')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2 font-mono">
+                      {t('qr.permissionDeniedAndroidHint')}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleOpenAppSettings}
+                  >
+                    {t('qr.openSettings')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCameraPermissionDenied(false)}
+                  >
+                    {t('common.back')}
+                  </Button>
+                </div>
+              </div>
             ) : !importedContact ? (
               <>
                 <button
@@ -400,7 +502,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                 <Button
                   variant="outline"
                   className="w-full"
-                  onClick={() => setShowQRScan(true)}
+                  onClick={handleStartQRScan}
                 >
                   <ScanLine className="h-4 w-4 mr-2" />
                   {t('addContact.scanQR')}

@@ -437,7 +437,12 @@
     "scanProgress": "{{current}} von {{total}} Frames gescannt",
     "scanInstructions": "Halte die Kamera auf den QR-Code des anderen Geräts",
     "pointAtQR": "Halte die Kamera auf den animierten QR-Code",
-    "stopped": "QR-Code wurde gestoppt"
+    "stopped": "QR-Code wurde gestoppt",
+    "permissionDeniedTitle": "Kamera-Berechtigung fehlt",
+    "permissionDeniedDescription": "SecuChat braucht Zugriff auf die Kamera, um den QR-Code zu scannen. Du kannst die Berechtigung in den App-Einstellungen deines Geräts aktivieren.",
+    "permissionDeniedAndroidHint": "Einstellungen → Apps → SecuChat → Berechtigungen → Kamera → Erlauben",
+    "openSettings": "Einstellungen öffnen",
+    "permissionDeniedError": "Berechtigung verweigert: {{message}}"
   },
 
   "verification": {
