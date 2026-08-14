@@ -19,11 +19,11 @@ Android-User bekommen in Onboarding-Step 4 und im `I2PAppInstallModal` eine korr
 
 ### In Scope
 
-1. `app/src/services/platform.ts` — `getAndroidInstructions()`: Title, Description, Steps, Download-URL, configHelp auf Java I2P umschreiben.
-2. `app/src/components/custom/Onboarding.tsx` — Anzeige-Texte der Status-Box (`i2pdAndroidRequired`, `i2pdAndroidRequiredDesc`) und des Verbindungstest-Buttons (`i2pdConnected`, `i2pdNotFound`) umbenennen auf "Java I2P".
-3. `app/src/locales/de.json` und `app/src/locales/en.json` — Keys im Namespace `onboarding.*` und `i2pAppInstall.*` synchron anpassen.
-4. `CLAUDE.md` — Passage "Native SAM plugin connects directly to i2pd on port 7656" auf Java I2P (I2CP auf 7654, SAM via Java I2P auf 7656) präzisieren.
-5. `wiki/I2P-Setup.md` — Android-Abschnitt auf Java I2P umschreiben.
+1. `app/src/services/platform.ts` (Z. 199-215, `getAndroidInstructions()`) — Title, Description, Steps, Download-URL, configHelp auf Java I2P umschreiben.
+2. `app/src/components/custom/Onboarding.tsx` (Z. 1000-1005 Verbindungstest-Button, Z. 1031-1044 Status-Box) — die dort angezeigten i18n-Keys sind bereits in der Locale-Datei; Anpassung erfolgt via Locale. Die Texte selbst werden im Plan-Schritt 3 zentralisiert.
+3. `app/src/locales/de.json` (Z. 166-188 + Z. 542-549) und `app/src/locales/en.json` (Z. 542-549) — Keys im Namespace `onboarding.*` und `i2pAppInstall.*` synchron anpassen.
+4. `CLAUDE.md` (Z. 13-14) — Passage "Native SAM plugin connects directly to i2pd on port 7656" auf Java I2P (I2CP auf 7654, SAM via Java I2P auf 7656) präzisieren.
+5. `wiki/I2P-Setup.md` — Android-Abschnitt mit derselben 7-Schritt-Liste wie in `getAndroidInstructions()` synchronisieren.
 
 ### Out of Scope
 
