@@ -9,16 +9,16 @@ Browser (PWA)           Android               Desktop (Electron)
     │ WS :7657            │ TCP :7656           │ WS :7657 (bundled)
     ▼                     ▼                     ▼
 sam-proxy              samNative            bundled sam-proxy
-    │ TCP :7656           │                     │ TCP :7656
+    │ TCP :7656           │ I2CP :7654          │ TCP :7656
     ▼                     ▼                     ▼
-i2pd  ──────────────  i2pd  ──────────────  bundled i2pd
+i2pd                  Java I2P              bundled i2pd
     │                     │                     │
     ▼                     ▼                     ▼
                  I2P network
 ```
 
 ### Browser PWA — You need both i2pd and sam-proxy running manually
-### Android — Install i2pd, app connects natively (no proxy needed)
+### Android — Install Java I2P from the Play Store, app connects natively via I2CP (no proxy needed)
 ### Desktop — i2pd and SAM proxy are bundled, started automatically
 
 ---
@@ -55,7 +55,19 @@ Download the installer from the [i2pd releases page](https://github.com/PurpleI2
 
 ### Android
 
-Install **i2pd** from [F-Droid](https://f-droid.org/packages/org.purplei2p.i2pd/).
+Install **Java I2P** (`net.i2p.android`) from the [Google Play Store](https://play.google.com/store/apps/details?id=net.i2p.android).
+
+After installation:
+
+1. Open Java I2P — on first launch, set the language (e.g. English).
+2. Go to **Settings → Advanced** and enable the **I2CP** toggle.
+3. Go to **Settings → Bandwidth and Network**:
+   - Enable "Activate on boot".
+   - Set upload and download bandwidth to **Maximum**.
+   - Enable **UPnP**.
+4. Start Java I2P (long-press to start) and return to SecuChat.
+
+SecuChat will automatically connect via I2CP on port 7654; the SAM plugin then talks to port 7656.
 
 ---
 
@@ -68,7 +80,7 @@ Edit your i2pd configuration file:
 | Linux | `/etc/i2pd/i2pd.conf` |
 | macOS (Homebrew) | `/usr/local/etc/i2pd/i2pd.conf` |
 | Windows | `%APPDATA%\i2pd\i2pd.conf` |
-| Android | i2pd app → Settings → SAM |
+| Android | Java I2P app → Settings → Advanced → I2CP |
 
 Add or uncomment:
 
@@ -91,7 +103,7 @@ sudo systemctl enable --now i2pd
 i2pd --sam.enabled=true --sam.address=127.0.0.1 --sam.port=7656
 
 # Android
-Open the i2pd app and tap Start
+Open the Java I2P app and long-press to start
 ```
 
 **First start:** i2pd needs 5–10 minutes to integrate into the I2P network and build inbound tunnels. Subsequent starts are much faster.
@@ -125,23 +137,35 @@ A green indicator means the connection is working. A yellow indicator means SAM 
 
 ## Android Setup
 
-Android connects to i2pd natively via the SAM plugin — no WebSocket proxy needed.
+Android connects to Java I2P natively via the SAM plugin — no WebSocket proxy needed.
 
-### Step 1 — Install i2pd
+### Step 1 — Install Java I2P
 
-Install **i2pd** from [F-Droid](https://f-droid.org/packages/org.purplei2p.i2pd/).
+Install **Java I2P** (`net.i2p.android`) from the [Google Play Store](https://play.google.com/store/apps/details?id=net.i2p.android).
 
-### Step 2 — Enable SAM in i2pd
+### Step 2 — Set language (first launch)
 
-Open the i2pd app → **Settings → SAM** → enable it. Set address to `127.0.0.1`, port to `7656`.
+On first launch, Java I2P asks you to pick a language (e.g. English). Make your selection; this is a one-time step.
 
-### Step 3 — Start i2pd
+### Step 3 — Enable I2CP
 
-Open the i2pd app and tap **Start**. Wait 5–10 minutes for the first integration.
+In Java I2P, go to **Settings → Advanced** and enable the **I2CP** toggle. SecuChat uses I2CP on port `7654` to talk to the Java I2P router.
 
-### Step 4 — Use SecuChat
+### Step 4 — Configure bandwidth and network
 
-Open SecuChat. The app connects to i2pd directly on port 7656 via the native SAM plugin. No additional configuration needed.
+In **Settings → Bandwidth and Network**:
+
+- Enable **"Activate on boot"** so Java I2P starts automatically with the device.
+- Set **upload and download bandwidth** to **Maximum** (or the highest profile your plan supports).
+- Enable **UPnP** so inbound tunnels can be established without manual port forwarding.
+
+### Step 5 — Start Java I2P
+
+Start Java I2P by **long-pressing** the router entry in the app. Wait 5–10 minutes for the first integration into the I2P network.
+
+### Step 6 — Use SecuChat
+
+Open SecuChat. The app connects to Java I2P directly via the native SAM plugin (talking to I2CP on port 7654, then SAM on port 7656). No additional configuration needed.
 
 The background service (`backgroundService`) keeps the I2P connection alive when the app is backgrounded.
 
