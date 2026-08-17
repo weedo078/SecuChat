@@ -197,9 +197,57 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installer = "$env:TEMP\i2pinstall.exe"
-          Invoke-WebRequest -Uri "https://files.i2p.net/2.13.0/i2pinstall_2.13.0_windows.exe" -OutFile $installer -UseBasicParsing
-          Start-Process -FilePath $installer -ArgumentList "/S" -Wait -PassThru | Out-Null
-          Write-Host "Java I2P 2.13.0 installer exit OK"
+          # Bounded download: 2 min connection + read timeout. NSIS drop is
+          # ~120 MB; on a slow runner Invoke-WebRequest can spin forever
+          # without this — that was the cause of the 45-min hang in
+          # commits 5e05878 / 71bf77d.
+          try {
+            Invoke-WebRequest -Uri "https://files.i2p.net/2.13.0/i2pinstall_2.13.0_windows.exe" `
+              -OutFile $installer -UseBasicParsing `
+              -TimeoutSec 120 -ConnectionTimeoutSec 30
+          } catch {
+            Write-Host "::error::NSIS download failed: $($_.Exception.Message)"
+            Write-Host "---- failing URL: https://files.i2p.net/2.13.0/i2pinstall_2.13.0_windows.exe ----"
+            exit 1
+          }
+          Write-Host "Java I2P NSIS downloaded, $([math]::Round((Get-Item $installer).Length / 1MB, 1)) MB"
+
+          # Bounded install: NSIS registers a Windows service during /S
+          # install. The previous `Start-Process -Wait -PassThru | Out-Null`
+          # blocked on the service-handle staying open after `i2pinstall`
+          # returned 0 — observed as an indefinite hang. We start the
+          # process, capture PID, then poll for completion with a hard
+          # 5-min deadline. On timeout we kill the installer and any
+          # children, then fail-fast.
+          $proc = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
+          $pid = $proc.Id
+          Write-Host "i2pinstall.exe started PID=$pid"
+
+          $deadline = (Get-Date).AddMinutes(5)
+          $exited = $false
+          while ((Get-Date) -lt $deadline) {
+            if ($proc.HasExited) {
+              $exited = $true
+              break
+            }
+            Start-Sleep -Seconds 2
+          }
+
+          if (-not $exited) {
+            Write-Host "::error::NSIS installer did not exit within 5 minutes; killing PID=$pid"
+            try {
+              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+              Get-CimInstance Win32_Process -Filter "ParentProcessId=$pid" |
+                ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+            } catch {}
+            exit 1
+          }
+
+          if ($proc.ExitCode -ne 0) {
+            Write-Host "::error::i2pinstall.exe exit code $($proc.ExitCode)"
+            exit 1
+          }
+          Write-Host "Java I2P 2.13.0 installer exit OK (code 0)"
           # We do NOT start i2prouter here — the Windows runner is ephemeral
           # and booting the full router is out of scope for the packaging
           # gate. The Linux job above is the I2CP-reachability smoke point.
