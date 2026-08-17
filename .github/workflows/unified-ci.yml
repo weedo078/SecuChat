@@ -12,8 +12,10 @@ on:
         required: false
 
 env:
-  I2PD_VERSION: '2.59.0'
   # Kimi API configuration - can be overridden via repository variables
+  # I2PD_VERSION removed in commit <sha>: i2pd-bundled resources are obsolete
+  # post-I2CP migration (Java I2P replaces i2pd on Linux + Windows via the
+  # install scripts .github/scripts/setup-i2p.{sh,ps1}).
   KIMI_API_URL: ${{ vars.KIMI_API_URL || 'https://api.kimi.com/coding/' }}
   KIMI_MODEL: ${{ vars.KIMI_MODEL || 'kimi-for-coding' }}
   KIMI_MAX_TOKENS: ${{ vars.KIMI_MAX_TOKENS || '4000' }}
@@ -185,14 +187,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20.19'
-
-      - name: Download i2pd (Windows x64)
-        shell: pwsh
-        run: |
-          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
-          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
-          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
-          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
 
       - name: Update package.json version
         shell: pwsh
@@ -479,14 +473,6 @@ jobs:
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
 
-      - name: Download i2pd (Linux x64)
-        run: |
-          curl -L -o i2pd.deb "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1_amd64.deb"
-          dpkg-deb -x i2pd.deb /tmp/i2pd_extract
-          I2PD_BIN=$(find /tmp/i2pd_extract -name "i2pd" -type f | head -1)
-          cp "$I2PD_BIN" electron/resources/i2pd/linux/i2pd
-          chmod +x electron/resources/i2pd/linux/i2pd
-
       - name: Build
         working-directory: ./app
         run: npm ci && npm run build
@@ -521,15 +507,6 @@ jobs:
           V_PLAIN="${V#v}"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
-
-      - name: Download i2pd (Linux arm64)
-        run: |
-          curl -L -o i2pd.deb "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1_arm64.deb"
-          dpkg-deb -x i2pd.deb /tmp/i2pd_extract
-          I2PD_BIN=$(find /tmp/i2pd_extract -name "i2pd" -type f | head -1)
-          mkdir -p electron/resources/i2pd/linux
-          cp "$I2PD_BIN" electron/resources/i2pd/linux/i2pd
-          chmod +x electron/resources/i2pd/linux/i2pd
 
       - name: Build
         working-directory: ./app
@@ -568,14 +545,6 @@ jobs:
           $ap = Get-Content 'app/package.json' | ConvertFrom-Json
           $ap.version = $VPlain
           $ap | ConvertTo-Json -Depth 100 | Set-Content 'app/package.json'
-
-      - name: Download i2pd (Windows)
-        shell: pwsh
-        run: |
-          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
-          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
-          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
-          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
 
       - name: Build
         working-directory: ./app
