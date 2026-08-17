@@ -231,8 +231,14 @@ jobs:
           # 5-min deadline. On timeout we kill the installer and any
           # children, then fail-fast.
           $proc = Start-Process -FilePath $installer -ArgumentList "/S" -PassThru
-          $pid = $proc.Id
-          Write-Host "i2pinstall.exe started PID=$pid"
+          # Use $installerPid, NOT $pid — $pid is a built-in read-only
+          # PowerShell variable (= current process PID). Assigning to it
+          # fails with "Cannot overwrite variable PID because it is
+          # read-only or constant." This bug was introduced in commit
+          # 8a9dd05 and survived 8be4eaf because PowerShell on the
+          # ubuntu-test VM doesn't have the same built-in-collision.
+          $installerPid = $proc.Id
+          Write-Host "i2pinstall.exe started PID=$installerPid"
 
           $deadline = (Get-Date).AddMinutes(5)
           $exited = $false
@@ -245,10 +251,10 @@ jobs:
           }
 
           if (-not $exited) {
-            Write-Host "::error::NSIS installer did not exit within 5 minutes; killing PID=$pid"
+            Write-Host "::error::NSIS installer did not exit within 5 minutes; killing PID=$installerPid"
             try {
-              Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
-              Get-CimInstance Win32_Process -Filter "ParentProcessId=$pid" |
+              Stop-Process -Id $installerPid -Force -ErrorAction SilentlyContinue
+              Get-CimInstance Win32_Process -Filter "ParentProcessId=$installerPid" |
                 ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
             } catch {}
             exit 1
