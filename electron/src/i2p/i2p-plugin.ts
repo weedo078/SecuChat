@@ -3,6 +3,7 @@ import { app } from 'electron';
 import * as net from 'node:net';
 import { I2CPSocketManager } from './i2cp-socket-manager';
 import { IdentityStore } from './identity-store';
+import { generateEd25519Destination } from './destination-gen';
 
 /**
  * Bootstrap-Race-Ring-Buffer capacity. Matches Android `I2PPlugin.java:38` —
@@ -310,8 +311,10 @@ export class I2PPlugin {
   }
 
   private async generateNewPrivKey(): Promise<Uint8Array> {
-    // Stub for Task 7 (Ed25519 destination generation). Throws loudly so
-    // any caller hitting the un-implemented path sees a clear failure.
-    throw new Error('Not yet implemented (Task 7)');
+    // Task 7: real Ed25519 destination generation. The 384-byte privKey
+    // blob is IdentityStore-compatible and the b32Address derived from it
+    // is wire-compatible with the Android Java side's b32 for the same key.
+    const dest = await generateEd25519Destination();
+    return dest.privKey;
   }
 }

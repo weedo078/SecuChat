@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { promises as fs } from 'node:fs';
 import { I2PPlugin } from './i2p-plugin';
 
 // Mock the `electron` module so the constructor's `app.getPath('userData')`
@@ -279,5 +280,54 @@ describe('I2PPlugin lifecycle (defensive)', () => {
     const plugin = I2PPlugin.getInstance();
     const result = await plugin.isI2pAvailable();
     expect(typeof result.available).toBe('boolean');
+  });
+});
+
+describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
+  beforeEach(() => {
+    resetSingleton();
+  });
+
+  it('start() with no pre-existing identity generates and persists a 384-byte Ed25519 privKey', async () => {
+    const plugin = I2PPlugin.getInstance();
+    const store = plugin['identityStore'];
+
+    // Wipe the on-disk identity so we test the "no pre-existing identity"
+    // path. Other tests in this file share the same tmpdir-backed store
+    // and may have left a file behind.
+    try {
+      await fs.unlink(join(tmpdir(), 'i2p_identity.bin'));
+    } catch {
+      // file wasn't there — that's the precondition we want
+    }
+    expect(await store.loadOrNull()).toBeNull();
+
+    // After start(), the store must contain a freshly generated 384-byte
+    // privKey blob (Task 7 wiring — was previously a stub that threw).
+    await plugin.start({ host: '127.0.0.1', port: 7654 });
+    const persisted = await store.loadOrNull();
+    expect(persisted).not.toBeNull();
+    expect(persisted?.length).toBe(384);
+
+    // The persisted bytes must round-trip through computeB32FromPrivKey
+    // and produce a valid [.b32.i2p] address.
+    const { computeB32FromPrivKey } = await import('./destination-gen');
+    const b32 = await computeB32FromPrivKey(persisted!);
+    expect(b32).toMatch(/^[a-z2-7]{52}\.b32\.i2p$/);
+  });
+
+  it('start() with a pre-existing identity does NOT regenerate (existing path preserved)', async () => {
+    const plugin = I2PPlugin.getInstance();
+    const store = plugin['identityStore'];
+
+    // Plant a known 384-byte identity. Use a non-zero byte pattern so we
+    // can detect any accidental re-generation.
+    const fingerprint = new Uint8Array(384);
+    for (let i = 0; i < 384; i++) fingerprint[i] = (i * 7 + 1) & 0xff;
+    await store.save(fingerprint);
+
+    await plugin.start({ host: '127.0.0.1', port: 7654 });
+    const persisted = await store.loadOrNull();
+    expect(persisted).toEqual(fingerprint);
   });
 });
