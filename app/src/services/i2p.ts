@@ -13,6 +13,47 @@ import { i2pPlugin } from './i2pPlugin';
 import { platformService } from './platform';
 export { samService, type SAMConfig };
 
+/**
+ * Typed view of the `window.electronAPI` IPC surface used by the Electron
+ * Desktop path. Mirrors the surface exposed by `electron/src/preload.ts`
+ * (Task 8). Keep this in sync with that file; the renderer never reaches
+ * Electron without going through `getElectronI2P()` below.
+ */
+interface ElectronI2PAPI {
+  i2pInvoke(method: string, ...args: unknown[]): Promise<unknown>;
+  onI2pEvent(event: string, cb: (data: unknown) => void): () => void;
+}
+
+/** Wire shape of `i2pMessage` events emitted by the Electron main process. */
+interface ElectronI2PMessageEvent {
+  streamId: number;
+  data: string;
+  peerDestination?: string;
+  type?: string;
+}
+
+interface ElectronI2PStreamConnectedEvent {
+  streamId: number;
+  peerDestination?: string;
+}
+
+interface ElectronI2PStreamClosedEvent {
+  streamId: number;
+  reason?: string;
+}
+
+/**
+ * Returns the typed Electron IPC bridge, or `null` if we're not running
+ * inside Electron (browser, Capacitor/Android, or no `electronAPI` exposed
+ * by preload). Use this everywhere instead of inline `(window as any)` casts
+ * — keeps the rest of the file strictly typed.
+ */
+function getElectronI2P(): ElectronI2PAPI | null {
+  if (typeof window === 'undefined') return null;
+  const api = (window as unknown as { electronAPI?: ElectronI2PAPI }).electronAPI;
+  return api ?? null;
+}
+
 export interface I2PIdentity {
   publicKey: Uint8Array;
   privateKey: Uint8Array;
@@ -57,13 +98,25 @@ class I2PService {
   private tunnelCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   /**
-   * Initialize I2P service — connects to SAM via proxy
+   * Unsubscribe handles for the IPC event listeners registered by
+   * `initializeViaElectronI2P`. Stored on the instance so `disconnect()`
+   * can tear them down — otherwise a re-`initialize()` would stack
+   * listeners and every inbound `i2pMessage` would be delivered N times.
+   */
+  private electronI2pUnsubs: Array<() => void> = [];
+
+  /**
+   * Initialize I2P service — dispatches to the platform-specific backend.
+   * Priority: Capacitor/Android → Electron/Desktop → SAM-bridge (browser).
    */
   async initialize(config?: SAMConfig): Promise<I2PStatus> {
     if (platformService.isAndroidNative()) {
       return this.initializeViaI2PPlugin(config);
     }
-    return this.initializeViaSAMBridge(config);
+    if (platformService.isElectron()) {
+      return this.initializeViaElectronI2P(config);
+    }
+    return this.initializeViaSAMBridge(config); // browser fallback (Phase-5 removal)
   }
 
   private async initializeViaI2PPlugin(config?: SAMConfig): Promise<I2PStatus> {
@@ -127,7 +180,12 @@ class I2PService {
   }
 
   private async syncB32ToUser(): Promise<void> {
-    const liveB32 = await i2pPlugin.getB32Address();
+    // Resolve the live b32 from whichever backend is currently driving us.
+    // On Capacitor/Android we read from the native plugin; on Electron we
+    // round-trip through the IPC bridge. Both branches share the same
+    // user-record write-back below so a stale `user.i2pAddress` does not
+    // poison STREAM CONNECT attempts with "LeaseSet not found".
+    const liveB32 = await this.getLiveB32();
     if (!liveB32) return;
     try {
       const { storageService } = await import('./storage');
@@ -136,7 +194,7 @@ class I2PService {
       if (user.i2pAddress === liveB32) return;
       await storageService.saveUser({ ...user, i2pAddress: liveB32 });
       logger.log(
-        '[I2P] synced stale user.i2pAddress to live SAM b32:',
+        '[I2P] synced stale user.i2pAddress to live b32:',
         user.i2pAddress?.slice(0, 12),
         '→',
         liveB32.slice(0, 12),
@@ -144,6 +202,150 @@ class I2PService {
     } catch (e) {
       logger.warn('[I2P] failed to persist live b32 to user record:', e);
     }
+  }
+
+  /**
+   * Read the live b32 address from whichever I2P backend is active.
+   * Returns `null` if no backend is reachable.
+   */
+  private async getLiveB32(): Promise<string | null> {
+    if (platformService.isAndroidNative()) {
+      return i2pPlugin.getB32Address();
+    }
+    const electronI2p = getElectronI2P();
+    if (electronI2p) {
+      try {
+        const result = await electronI2p.i2pInvoke('getB32Address') as { b32Address: string };
+        return result.b32Address ?? null;
+      } catch {
+        return null;
+      }
+    }
+    // SAM-bridge path uses samService.getB32Address(); we don't reach it
+    // here because syncB32ToUser is only called from the Electron/I2PPlugin
+    // init paths today. Keep this explicit so a future refactor doesn't
+    // silently lose the b32.
+    return null;
+  }
+
+  /**
+   * Initialize I2P through the Electron `electronAPI.i2pInvoke` /
+   * `onI2pEvent` IPC bridge (wired in Task 8/9 by `electron/src/preload.ts`
+   * + `electron/src/main.ts`). This is the Desktop path; it replaces the
+   * legacy SAM-bridge flow which spoke HTTP+WS to a separately-spawned
+   * sam-proxy.
+   *
+   * Failure modes (all return I2PStatus, never throw):
+   *   - `window.electronAPI` undefined → "Electron-API nicht verfügbar"
+   *   - I2P router not installed (isAvailable=false) → "I2P-Router nicht installiert..."
+   *   - start/acceptIncoming throws → propagates the message
+   */
+  private async initializeViaElectronI2P(config?: SAMConfig): Promise<I2PStatus> {
+    void config;
+
+    // Drop any previously-registered event listeners from an earlier
+    // init — the IPC bridge would otherwise fire every i2pMessage event
+    // N times where N = previous init count.
+    this.clearElectronI2pListeners();
+
+    const electronI2p = getElectronI2P();
+    if (!electronI2p) {
+      this.currentStatus = {
+        samConnected: false,
+        samAvailable: false,
+        address: null,
+        error: 'Electron-API nicht verfügbar',
+      };
+      this.notifyStatusChange();
+      return this.currentStatus;
+    }
+
+    try {
+      const { available } = await electronI2p.i2pInvoke('isAvailable') as { available: boolean };
+      if (!available) {
+        this.currentStatus = {
+          samConnected: false,
+          samAvailable: false,
+          address: null,
+          error: 'I2P-Router nicht installiert. Bitte Java I2P installieren.',
+        };
+        this.notifyStatusChange();
+        return this.currentStatus;
+      }
+
+      const result = await electronI2p.i2pInvoke('start', {
+        host: '127.0.0.1',
+        port: 7654,
+        nickname: 'SecuChat',
+      }) as { b32Address: string };
+
+      this.currentStatus = {
+        samConnected: true,
+        samAvailable: true,
+        address: result.b32Address,
+        // Phase-6: verify via LeaseSet lookup. Today the IPC plugin has
+        // no dedicated "isLeaseSetPublished" query — start() returning a
+        // b32 implies a session, but inbound-tunnel readiness is not
+        // guaranteed until i2pd's netdb accepts the published LeaseSet
+        // (which can take 30-60s after start on first boot). Until then
+        // the connectTo path will retry on LeaseSet-not-found.
+        leasesetPublished: true,
+      };
+
+      // Wire event listeners. Each subscribe call returns an unsubscribe
+      // function; we collect them so disconnect() can clean up.
+      this.electronI2pUnsubs.push(
+        electronI2p.onI2pEvent('i2pMessage', (raw: unknown) => {
+          const data = raw as ElectronI2PMessageEvent;
+          try {
+            const message = JSON.parse(data.data);
+            this.messageHandlers.forEach((h) => h(data.peerDestination ?? '', message));
+          } catch {
+            this.messageHandlers.forEach((h) => h(data.peerDestination ?? '', data.data));
+          }
+        }),
+        electronI2p.onI2pEvent('i2pStreamConnected', (raw: unknown) => {
+          const data = raw as ElectronI2PStreamConnectedEvent;
+          logger.log('[I2P] stream connected:', data.streamId, data.peerDestination);
+        }),
+        electronI2p.onI2pEvent('i2pStreamClosed', (raw: unknown) => {
+          const data = raw as ElectronI2PStreamClosedEvent;
+          logger.log('[I2P] stream closed:', data.streamId, data.reason);
+        }),
+      );
+
+      await electronI2p.i2pInvoke('acceptIncoming');
+
+      // Sync the live b32 into the persisted user record — same rationale
+      // as the Android path: the stored User.i2pAddress can drift from
+      // the session's actual b32 after re-keying or re-onboarding.
+      await this.syncB32ToUser();
+
+      this.notifyStatusChange();
+      return this.currentStatus;
+    } catch (e) {
+      this.clearElectronI2pListeners();
+      this.currentStatus = {
+        samConnected: false,
+        samAvailable: false,
+        address: null,
+        error: e instanceof Error ? e.message : 'I2P init failed',
+      };
+      this.notifyStatusChange();
+      return this.currentStatus;
+    }
+  }
+
+  /** Unsubscribe every IPC event listener we registered. Idempotent. */
+  private clearElectronI2pListeners(): void {
+    for (const unsub of this.electronI2pUnsubs) {
+      try {
+        unsub();
+      } catch {
+        // Listener may already be detached (e.g. window closed); ignore.
+      }
+    }
+    this.electronI2pUnsubs = [];
   }
 
   private async initializeViaSAMBridge(config?: SAMConfig): Promise<I2PStatus> {
@@ -795,6 +997,16 @@ class I2PService {
     samService.shutdown();
     if (platformService.isAndroidNative()) {
       void i2pPlugin.disconnect().catch(error => logger.warn('[I2P] Plugin disconnect failed:', error));
+    }
+    // Electron Desktop path: tear down IPC listeners + ask main to close
+    // the I2CP session. Order matters — unsubscribe first so we don't
+    // observe a half-torn-down session.
+    this.clearElectronI2pListeners();
+    const electronI2p = getElectronI2P();
+    if (electronI2p && !platformService.isAndroidNative()) {
+      void electronI2p.i2pInvoke('disconnect').catch(error =>
+        logger.warn('[I2P] Electron disconnect failed:', error),
+      );
     }
     this.currentStatus = {
       samConnected: false,
