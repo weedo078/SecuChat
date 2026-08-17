@@ -98,7 +98,7 @@
   
   export interface I2CPMessage {
     type: I2CPMessageType;
-    sessionId: number;
+    sessionId: number | null;  // null = kein sessionId (z.B. DestLookup, GetDate)
     payload: Buffer;
   }
   
@@ -106,6 +106,14 @@
   export function decodeMessage(buf: Buffer): I2CPMessage;
   export function readMessageFromSocket(socket: net.Socket, onMessage: (msg: I2CPMessage) => void): void;
   ```
+
+**Wichtige Wire-Format-Korrektur (2026-08-17):** Per https://i2p.net/en/docs/specs/i2cp ist das I2CP-Wire-Format
+`[4-byte length BE][1-byte type][body]` — der Header hat **kein** sessionId-Feld. Wenn die Message ein
+sessionId führt (alle Messages mit session-Bezug: SendMessage, MessagePayload, MessageStatus, CreateLeaseSet,
+LeaseSet, Disconnect), steht es als **2-Byte big-endian** am Anfang des Body. Manche Messages haben gar
+kein sessionId (GetDate, RequestLeaseSet, LeaseSetFound, Bandwidth-Limits). Die ursprüngliche Plan-Version
+(4-Byte sessionId im Header) war Spec-fehlerhaft und wurde vom User mit "Spec-getreu (2-Byte im Body)"
+korrigiert.
 
 - [ ] **Step 1: Write failing test for `encodeMessage`**
 
@@ -115,21 +123,30 @@ import { describe, it, expect } from 'vitest';
 import { encodeMessage, I2CP_MSG } from './i2cp-protocol';
 
 describe('encodeMessage', () => {
-  it('writes 4-byte big-endian length + 1-byte type + payload', () => {
+  it('writes 4-byte big-endian length + 1-byte type + 2-byte sessionId + payload', () => {
     const msg = { type: I2CP_MSG.SEND_MESSAGE, sessionId: 42, payload: Buffer.from([1, 2, 3]) };
     const encoded = encodeMessage(msg);
-    expect(encoded.length).toBe(4 + 1 + 1 + 3);  // length + type + sessionId-byte + payload
-    expect(encoded.readUInt32BE(0)).toBe(5);  // 1 type + 1 sessionId + 3 payload
+    expect(encoded.length).toBe(4 + 1 + 2 + 3);  // length + type + 2-byte sessionId + payload
+    expect(encoded.readUInt32BE(0)).toBe(6);  // 1 type + 2 sessionId + 3 payload
     expect(encoded[4]).toBe(I2CP_MSG.SEND_MESSAGE);
-    expect(encoded[5]).toBe(42);
-    expect(encoded.subarray(6).equals(Buffer.from([1, 2, 3]))).toBe(true);
+    expect(encoded.readUInt16BE(5)).toBe(42);
+    expect(encoded.subarray(7).equals(Buffer.from([1, 2, 3]))).toBe(true);
   });
 
   it('handles empty payload', () => {
-    const msg = { type: I2CP_MSG.GET_DATE, sessionId: 0, payload: Buffer.alloc(0) };
+    const msg = { type: I2CP_MSG.GET_DATE, sessionId: null, payload: Buffer.alloc(0) };
+    const encoded = encodeMessage(msg);
+    expect(encoded.length).toBe(4 + 1);  // length + type only, no sessionId
+    expect(encoded.readUInt32BE(0)).toBe(1);  // 1 type
+  });
+
+  it('omits sessionId when null (GetDate-style messages)', () => {
+    const msg = { type: I2CP_MSG.GET_DATE, sessionId: null, payload: Buffer.from([0xAA]) };
     const encoded = encodeMessage(msg);
     expect(encoded.length).toBe(4 + 1 + 1);
-    expect(encoded.readUInt32BE(0)).toBe(2);
+    expect(encoded.readUInt32BE(0)).toBe(2);  // 1 type + 1 payload
+    expect(encoded[4]).toBe(I2CP_MSG.GET_DATE);
+    expect(encoded[5]).toBe(0xAA);
   });
 });
 ```
@@ -162,18 +179,27 @@ export const I2CP_MSG = {
 
 export interface I2CPMessage {
   type: I2CPMessageType;
-  sessionId: number;
+  sessionId: number | null;  // null = keine sessionId im Body (z.B. GetDate, DestLookup)
   payload: Buffer;
 }
 
 export function encodeMessage(msg: I2CPMessage): Buffer {
-  // I2CP frame: [4-byte length BE][1-byte type][4-byte sessionId BE][payload]
-  const innerLen = 1 + 4 + msg.payload.length;
+  // Wire-Format (Spec https://i2p.net/en/docs/specs/i2cp):
+  //   [4-byte length BE][1-byte type][2-byte sessionId BE (optional)][payload]
+  // Messages ohne Session-Bezug (z.B. GetDate, RequestLeaseSet) lassen sessionId=null
+  // weg; die Message besteht dann nur aus [length][type][payload].
+  const hasSessionId = msg.sessionId !== null && msg.sessionId !== undefined;
+  const sessionIdLen = hasSessionId ? 2 : 0;
+  const innerLen = 1 + sessionIdLen + msg.payload.length;
   const buf = Buffer.alloc(4 + innerLen);
   buf.writeUInt32BE(innerLen, 0);
   buf.writeUInt8(msg.type, 4);
-  buf.writeUInt32BE(msg.sessionId, 5);
-  msg.payload.copy(buf, 9);
+  let cursor = 5;
+  if (hasSessionId) {
+    buf.writeUInt16BE(msg.sessionId!, cursor);
+    cursor += 2;
+  }
+  msg.payload.copy(buf, cursor);
   return buf;
 }
 ```
@@ -181,23 +207,36 @@ export function encodeMessage(msg: I2CPMessage): Buffer {
 - [ ] **Step 4: Run test to verify pass**
 
 Run: `cd electron && npx vitest run src/i2p/i2cp-protocol.test.ts`
-Expected: PASS (2 tests)
+Expected: PASS (3 tests — encodeMessage + empty payload + null sessionId)
 
 - [ ] **Step 5: Write failing test for `decodeMessage`**
 
 ```typescript
 // add to electron/src/i2p/i2cp-protocol.test.ts
 describe('decodeMessage', () => {
-  it('parses a complete message', () => {
-    const frame = Buffer.alloc(4 + 1 + 4 + 3);
-    frame.writeUInt32BE(8, 0);
+  it('parses a complete message with sessionId', () => {
+    // Frame mit sessionId: [length=6][type=MESSAGE_PAYLOAD][sessionId=99 BE][payload=3B]
+    const frame = Buffer.alloc(4 + 1 + 2 + 3);
+    frame.writeUInt32BE(6, 0);
     frame.writeUInt8(I2CP_MSG.MESSAGE_PAYLOAD, 4);
-    frame.writeUInt32BE(99, 5);
-    Buffer.from([0xAA, 0xBB, 0xCC]).copy(frame, 9);
+    frame.writeUInt16BE(99, 5);
+    Buffer.from([0xAA, 0xBB, 0xCC]).copy(frame, 7);
     const msg = decodeMessage(frame);
     expect(msg.type).toBe(I2CP_MSG.MESSAGE_PAYLOAD);
     expect(msg.sessionId).toBe(99);
     expect(msg.payload.equals(Buffer.from([0xAA, 0xBB, 0xCC]))).toBe(true);
+  });
+
+  it('parses a message without sessionId (GetDate-style)', () => {
+    // Frame ohne sessionId: [length=2][type=GET_DATE][payload=1B]
+    const frame = Buffer.alloc(4 + 1 + 1);
+    frame.writeUInt32BE(2, 0);
+    frame.writeUInt8(I2CP_MSG.GET_DATE, 4);
+    frame.writeUInt8(0xAA, 5);
+    const msg = decodeMessage(frame);
+    expect(msg.type).toBe(I2CP_MSG.GET_DATE);
+    expect(msg.sessionId).toBeNull();
+    expect(msg.payload.equals(Buffer.from([0xAA]))).toBe(true);
   });
 });
 ```
@@ -207,12 +246,22 @@ describe('decodeMessage', () => {
 ```typescript
 // add to electron/src/i2p/i2cp-protocol.ts
 export function decodeMessage(buf: Buffer): I2CPMessage {
-  if (buf.length < 9) throw new Error('I2CP frame too short');
+  if (buf.length < 5) throw new Error('I2CP frame too short');
   const length = buf.readUInt32BE(0);
   if (buf.length < 4 + length) throw new Error('I2CP frame incomplete');
   const type = buf.readUInt8(4);
-  const sessionId = buf.readUInt32BE(5);
-  const payload = buf.subarray(9, 4 + length);
+  // Body beginnt nach dem 1-Byte-Type.
+  // Wenn die Body-Länge >= 2 ist, sind die ersten 2 Bytes die sessionId (BE).
+  // Bei kürzeren Bodies (GetDate etc.) ist sessionId = null.
+  const bodyStart = 5;
+  const bodyLength = length - 1;  // minus type-byte
+  let sessionId: number | null = null;
+  let payloadStart = bodyStart;
+  if (bodyLength >= 2) {
+    sessionId = buf.readUInt16BE(bodyStart);
+    payloadStart = bodyStart + 2;
+  }
+  const payload = buf.subarray(payloadStart, 4 + length);
   return { type, sessionId, payload: Buffer.from(payload) };
 }
 ```
@@ -220,34 +269,42 @@ export function decodeMessage(buf: Buffer): I2CPMessage {
 - [ ] **Step 7: Run test to verify pass**
 
 Run: `cd electron && npx vitest run src/i2p/i2cp-protocol.test.ts`
-Expected: PASS (3 tests)
+Expected: PASS (5 tests)
 
 - [ ] **Step 8: Write failing test for streaming `readMessageFromSocket`**
 
 ```typescript
 // add to electron/src/i2p/i2cp-protocol.test.ts
-import { createReadStream, Readable } from 'node:stream';
-import { Socket } from 'node:net';
 import { Duplex } from 'node:stream';
+import type { Socket } from 'node:net';
+import { I2CPMessage } from './i2cp-protocol';
 
 describe('readMessageFromSocket', () => {
-  it('buffers partial frames until complete', () => {
+  it('buffers partial frames until complete', async () => {
     const messages: I2CPMessage[] = [];
     const fakeSocket = new Duplex({
       read() {},
       write(_chunk, _enc, cb) { cb(); },
     });
     readMessageFromSocket(fakeSocket as unknown as Socket, (msg) => messages.push(msg));
-    
-    // Send first message split across 2 writes
-    fakeSocket.push(Buffer.from([0, 0, 0, 5, 30]));
-    fakeSocket.push(Buffer.from([0, 0, 0, 1, 0xAA]));
-    expect(messages).toHaveLength(0);  // not complete yet
-    
-    // Complete the message
-    fakeSocket.push(Buffer.from([0xBB]));
+
+    // Frame mit sessionId=1, payload=[0xAA,0xBB,0xCC], type=SEND_MESSAGE:
+    //   [0,0,0,6] [30] [0,1] [0xAA,0xBB,0xCC]  =  10 bytes
+    // Sende aufgeteilt: 5 + 3 + 2 bytes
+    fakeSocket.push(Buffer.from([0, 0, 0, 6, 30]));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(messages).toHaveLength(0);
+
+    fakeSocket.push(Buffer.from([0, 1, 0xAA, 0xBB]));
+    await new Promise(resolve => setImmediate(resolve));
+    expect(messages).toHaveLength(0);
+
+    fakeSocket.push(Buffer.from([0xCC]));
+    await new Promise(resolve => setImmediate(resolve));
     expect(messages).toHaveLength(1);
-    expect(messages[0].type).toBe(30);
+    expect(messages[0].type).toBe(I2CP_MSG.SEND_MESSAGE);
+    expect(messages[0].sessionId).toBe(1);
+    expect(messages[0].payload.equals(Buffer.from([0xAA, 0xBB, 0xCC]))).toBe(true);
   });
 });
 ```
