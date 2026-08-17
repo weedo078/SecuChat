@@ -27,7 +27,14 @@
     
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:7657 wss://127.0.0.1:7657 http://127.0.0.1:7070 https://127.0.0.1:7070; font-src 'self'; media-src 'self' blob:; worker-src 'self' blob:;" />
     <title>SecureChat</title>
-    
+
+    <!-- QR-Scanner nutzt window.BarcodeDetector (nativ in Chromium-WebViews
+         ab Chrome 83+, auf A54 mit Chrome 150 / Android 16 verifiziert).
+         Decoder-Libraries wie jsQR/html5-qrcode (ZXing) lieferten im
+         WebView fuer denselben Frame null, obwohl zbarimg den Frame am
+         PNG ohne weiteres dekodiert — Bug steht in der jeweiligen JS-Library.
+         Native BarcodeDetector-API geht direkt auf den Plattform-Decoder
+         (Google ML Kit auf Android) und ist um Groessenordnungen schneller. -->
 
     <!-- Prevent text selection for app-like feel -->
     <style>

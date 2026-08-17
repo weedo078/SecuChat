@@ -59,32 +59,39 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   /**
    * Pre-flight check for camera permission. Solves the "Kamera öffnet sich
-   * nicht" UX bug on Android: if the user has previously denied camera
-   * access (or the prompt was auto-dismissed), navigator.permissions
-   * reports "denied" and getUserMedia() fails silently — leaving the
-   * scanner in a black state with no explanation.
+   * nicht" UX bug on Android.
    *
-   * Strategy:
-   * 1. If Permissions API exposes 'camera' status → use it as the truth.
-   * 2. Otherwise (Desktop-WebView, older WebViews) → just attempt getUserMedia;
-   *    the scanner's own error handler still shows the message.
-   * 3. If denied → show inline Settings-Hinweis with "Open settings" CTA.
+   * Wichtige Android-WebView-Eigenheit (Chromium-Implementierung):
+   *   navigator.permissions.query({ name: 'camera' }) gibt auf Android
+   *   WebView *immer* 'prompt' zurück, unabhängig davon, ob die
+   *   Android-MANIFEST-Permission `android.permission.CAMERA` granted
+   *   ist. 'granted' ist in der WebView-Permission-API auf Android
+   *   praktisch unerreichbar. Quelle: empirisch verifiziert auf A54
+   *   mit `granted=true` per `dumpsys package`. Folgerung: 'prompt'
+   *   darf NICHT als "Permission fehlt" interpretiert werden.
+   *
+   * Strategie:
+   * 1. Prüfe Permissions-API nur auf 'denied' (= hart verweigert)
+   * 2. Sonst: einfach QR-Scanner öffnen. Wenn `getUserMedia` real
+   *    fehlschlägt (NotAllowedError / NotFoundError), greift der
+   *    Scanner-eigene Error-Handler (handleQRError) und blendet die
+   *    "Berechtigung fehlt"-Box korrekt ein.
    */
   const handleStartQRScan = useCallback(async () => {
     setImportError(null);
     setCameraPermissionDenied(false);
 
     try {
-      // navigator.permissions is available in modern WebViews (Android ≥ Chrome 88).
-      // Desktop-WebView / older Android-WebView returns undefined → skip pre-flight.
       const permsApi = (navigator as Navigator & { permissions?: Permissions }).permissions;
       if (permsApi && typeof permsApi.query === 'function') {
         const status = await permsApi.query({ name: 'camera' as PermissionName });
-        if (status.state === 'denied' || status.state === 'prompt') {
-          // 'denied' = previously rejected (incl. "Don't ask again").
-          // 'prompt' = never asked yet, but on Android-WebView this often
-          //   means the OS-level prompt was already auto-dismissed; show
-          //   a hint so the user knows what to do if the prompt doesn't appear.
+        console.log('[QR-Scan] permission pre-flight state:', status.state);
+        // 'denied' = User hat vorher hart verweigert ("Don't ask again" oder
+        //   manuell in App-Info deaktiviert). Nur dann vorab den Hinweis
+        //   zeigen, weil getUserMedia sonst sofort mit NotAllowedError stirbt.
+        // 'prompt' auf Android-WebView = fast immer "eigentlich granted" —
+        //   nicht拦门.
+        if (status.state === 'denied') {
           setCameraPermissionDenied(true);
           return;
         }
@@ -98,25 +105,63 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     setShowQRScan(true);
   }, []);
 
+  /**
+   * Open native app-settings page so the user can re-enable camera.
+   *
+   * Wichtige Befunde:
+   *   - `Capacitor.Plugins.App.openSettings()` ist im Android-Plugin
+   *     *nicht implementiert* (empirisch verifiziert via CDP-Eval auf
+   *     A54: throws "App.openSettings() is not implemented on android").
+   *   - Auf Android öffnen wir daher per `settings` URL-Intent die
+   *     App-Detail-Settings-Seite. Das ist der Standard-Weg und
+   *     funktioniert auf jedem Android.
+   *   - iOS fällt auf `App.openSettings()` zurück (dort implementiert).
+   *   - Web (Browser) → Toast-Hinweis.
+   */
   const handleOpenAppSettings = useCallback(() => {
-    // Capacitor exposes a way to open the native app-settings page.
-    // Dynamic import keeps the web build tree-shaken.
     void (async () => {
       try {
         const { Capacitor } = await import('@capacitor/core');
-        if (Capacitor.isNativePlatform()) {
+        if (!Capacitor.isNativePlatform()) {
+          toast.info(t('qr.permissionDeniedAndroidHint'));
+          return;
+        }
+
+        const platform = Capacitor.getPlatform();
+
+        if (platform === 'android') {
+          // Android: open app-detail settings via Intent. Two compatible shapes:
+          // 1. Package name via cordova-plugin-buildinfo / fallback on Android-Info.
+          // 2. Falls das nicht klappt: ACTION_APPLICATION_DETAILS_SETTINGS mit package-URI.
           const { App } = await import('@capacitor/app');
-          // Some Capacitor versions don't have openSettings; gracefully fallback.
-          const open = (App as unknown as { openSettings?: (opts?: { settingsUI: string }) => void }).openSettings;
+          const info = await App.getInfo();
+          const pkg = info?.id;
+          if (pkg) {
+            // Standard-Intent: openen der App-Info-Seite in den System-Settings.
+            // Auf modernen Androids (API 26+) ist dies der saubere Weg.
+            const intentUrl = `intent://details#Intent;scheme=package;package=${pkg};end`;
+            const fallbackUrl = `package://${pkg}`;
+            // Try primary intent
+            window.location.href = intentUrl;
+            // Fallback: altes "package:" Schema nach kurzer Zeit, falls intent: nicht greift.
+            setTimeout(() => { window.location.href = fallbackUrl; }, 250);
+            return;
+          }
+        }
+
+        if (platform === 'ios') {
+          const { App } = await import('@capacitor/app');
+          // App.openSettings is iOS-only; on Android the plugin doesn't implement it.
+          const open = (App as unknown as { openSettings?: () => Promise<void> }).openSettings;
           if (typeof open === 'function') {
-            open.call(App, { settingsUI: 'application' });
+            await open.call(App);
             return;
           }
         }
       } catch (err) {
         console.warn('[QR-Scan] openSettings failed:', err);
       }
-      // Browser fallback (no-op / show hint) — we already show the manual path in the UI.
+      // Fallback (Browser / unknown) — Toast-Hinweis mit manuellen Pfad.
       toast.info(t('qr.permissionDeniedAndroidHint'));
     })();
   }, [t]);
@@ -129,7 +174,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       setQRShareData(null);
       return;
     }
-    if (!user?.i2pSamDestination) return;
+    if (!user?.i2pAddress) return;
     setQRShareData({
       v: '2',
       t: 'sc',
@@ -573,7 +618,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             {user ? (
               <>
                 {/* I2P address guard */}
-                {!user.i2pSamDestination ? (
+                {!user.i2pAddress ? (
                   <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm space-y-1" role="alert">
                     <p className="font-medium text-destructive">{t('addContact.exportNotPossible')}</p>
                     <p className="text-destructive/80 text-xs">
@@ -595,12 +640,12 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                   <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{user.fingerprint?.slice(0, 16)}…</p>
                 </div>
 
-                <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pSamDestination}>
+                <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pAddress}>
                   <Download className="h-4 w-4 mr-2" aria-hidden="true" />
                   {t('addContact.saveFile', { name: user.username })}
                 </Button>
 
-                {user.i2pSamDestination && (
+                {user.i2pAddress && (
                   <Button
                     variant="outline"
                     className="w-full"
@@ -611,13 +656,13 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                   </Button>
                 )}
 
-                {showQRShare && user.i2pSamDestination && (
+                {showQRShare && user.i2pAddress && (
                   <AnimatedContactQR
                     contactData={qrShareData}
                   />
                 )}
 
-                {user.i2pSamDestination && !showQRShare && (
+                {user.i2pAddress && !showQRShare && (
                   <p className="text-xs text-muted-foreground text-center">
                     {t('addContact.sendFileToContact')}
                   </p>

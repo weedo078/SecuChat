@@ -222,6 +222,12 @@ public class DevBridgePlugin extends Plugin {
                         "window.__secuchatDevBridge.triggerAutoOnboard(" + jsString(body) + ")");
                 case "/debug-state":
                     return evalJsAsync("window.__secuchatDevBridge.debugState()");
+                case "/eval":
+                    if (!"POST".equalsIgnoreCase(method)) return jsonError("POST required");
+                    // Body ist roher JS-Ausdruck. Wird via Capacitor-Bridge
+                    // evaluiert; Ergebnis wird als JSON-String zurückgegeben.
+                    // ACHTUNG: nur in test_mode aktiv und nur localhost-gebunden.
+                    return evalJsAsync(body);
                 case "/list-all-users":
                     return evalJsAsync("window.__secuchatDevBridge.listAllUsers()");
                 case "/clear-all-users":

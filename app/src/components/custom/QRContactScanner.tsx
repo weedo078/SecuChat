@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import jsQR from 'jsqr';
 import { Button } from '@/components/ui/button';
 import { StopCircle } from 'lucide-react';
 
@@ -15,30 +14,74 @@ interface ParsedFrame {
   d: string;
 }
 
+// Single-Frame .secuchat v2 Format (z.B. fuer gedruckte QRs):
+// {v:2, t:"sc", n:username, i:b32, f:fingerprint, ts:timestamp}
+interface SingleContactPayload {
+  v: string;
+  t: string;
+  n?: string;
+  i: string;
+  f: string;
+  ts?: number;
+}
+
+function isSingleContactPayload(x: unknown): x is SingleContactPayload {
+  if (!x || typeof x !== 'object') return false;
+  const o = x as Record<string, unknown>;
+  return (
+    o.v === '2' &&
+    o.t === 'sc' &&
+    typeof o.i === 'string' &&
+    typeof o.f === 'string'
+  );
+}
+
+// BarcodeDetector ist eine W3C-Web-Plattform-API, die in Chromium-WebViews
+// (Chrome 150 / Android 16) nativ als window.BarcodeDetector verfuegbar ist.
+// Sie ist einer JS-Library (jsQR, html5-qrcode/ZXing) ueberlegen, weil sie
+// direkt auf den Plattform-Decoder (z.B. Google's ML Kit auf Android)
+// zugreift. jsQR hingegen scheiterte auf dem WebView konsequent — der
+// Locator lieferte fuer einen mit zbarimg ohne weiteres dekodierbaren
+// TestQR-Frame null. html5-qrcode hat das gleiche Problem, weil es ZXing
+// als JS-Bundle mitbringt.
+//
+// Per 2026-08-14 auf A54 verifiziert: BarcodeDetector liefert fuer den
+// gedruckten TestQR c.a. 5ms, jsQR lieferte null.
+declare global {
+  interface Window {
+    BarcodeDetector?: new (options?: { formats?: string[] }) => BarcodeDetectorInstance;
+  }
+  interface BarcodeDetectorInstance {
+    detect(source: CanvasImageSource | ImageBitmapSource): Promise<Array<{ rawValue: string }>>;
+  }
+}
+
 /**
  * Multi-Frame QR-Scanner fuer SecuChat.
  *
- * Capacitor-Android-WebView Camera-Workaround:
- *  - getUserMedia() liefert einen live MediaStreamTrack (readyState=live,
- *    settings.height=640).
- *  - Das <video>-Element, dem wir den Stream zuweisen, rendert ABER
- *    schwarze Frames (drawImage(video,…) liefert Pixel=0).
- *  - html5-qrcode liest genau aus diesem <video> → sieht nichts.
- *  - Loesung: ImageCapture.takePhoto() greift DIREKT auf den Track zu
- *    (umgeht den Video-Render), liefert ein echtes JPEG, das wir per
- *    createImageBitmap in einen OffscreenCanvas rendern und dann jsQR
- *    auf die Pixel-Data anwenden.
+ * Decoder: window.BarcodeDetector (native Chromium API). Wird mit
+ * `{formats: ["qr_code"]}` instanziert und bekommt einen per drawImage
+ * aus dem <video>-Element gewonnenen Canvas-Frame.
  *
- * Frame-Loop mit setTimeout (10 FPS ≈ 100ms): jeder Scanversuch kostet
- * 1 takePhoto() → reicht fuer 11 Frames bei 4 FPS Anzeige (2.75s Animation).
+ * Architektur:
+ *  - <video> rendert Live-Frames der environment-cam (480x640).
+ *  - requestVideoFrameCallback ruft fuer jeden neuen Frame die
+ *    BarcodeDetector.detect(canvasMethode) auf.
+ *  - Bei Decode-Erfolg wird der JSON-Frame geparst und in framesMap
+ *    akkumuliert. Sobald alle Sub-Frames (t Total) da sind, ruft
+ *    onContactScanned auf.
+ *  - Capacitor-Android-WebView: getUserMedia + <video>.render + drawImage
+ *    funktioniert zuverlaessig; ImageCapture.takePhoto() hingegen wirft
+ *    "UnknownError: platform error" (Workaround siehe memory).
  */
 export function QRContactScanner({ onContactScanned, onError }: QRContactScannerProps) {
   const { t } = useTranslation();
-  const imageCaptureRef = useRef<ImageCapture | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const detectorRef = useRef<BarcodeDetectorInstance | null>(null);
+  const rvfcHandleRef = useRef<number | null>(null);
   const stopFlagRef = useRef<boolean>(false);
   const framesRef = useRef<Map<number, string>>(new Map());
   const totalRef = useRef<number>(0);
@@ -49,6 +92,11 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
   useEffect(() => {
     stopFlagRef.current = false;
     framesRef.current = new Map();
+
+    if (typeof window.BarcodeDetector !== 'function') {
+      onError('WebView unterstuetzt window.BarcodeDetector nicht. Bitte App-Update oder alternativen Browser nutzen.');
+      return;
+    }
 
     let cancelled = false;
 
@@ -64,27 +112,47 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
         }
         streamRef.current = stream;
 
-        const track = stream.getVideoTracks()[0];
-        if (!track) throw new Error('No video track in MediaStream');
-
-        // ImageCapture braucht explizit Support; Capacitor-Android-WebView hat es.
-        if (typeof ImageCapture === 'undefined') {
-          throw new Error('ImageCapture API not supported in this WebView');
+        const v = videoRef.current;
+        if (!v) {
+          stream.getTracks().forEach((t) => t.stop());
+          throw new Error('Video-Element nicht gemounted');
         }
-        const imageCapture = new ImageCapture(track);
-        imageCaptureRef.current = imageCapture;
+        v.srcObject = stream;
+        v.muted = true;
+        v.playsInline = true;
+        v.autoplay = true;
+        try {
+          await v.play();
+        } catch (playErr) {
+          console.warn('[QR-Scan] video.play() rejected:', playErr);
+        }
 
-        // Offscreen canvas for jsQR input. Wird nicht ins DOM gehaengt.
+        // Native Decoder-Instanz.
+        detectorRef.current = new window.BarcodeDetector!({ formats: ['qr_code'] });
+
+        // Offscreen-Canvas.
         const canvas = document.createElement('canvas');
-        canvasRef.current = canvas;
         const ctx = canvas.getContext('2d', { willReadFrequently: true });
         if (!ctx) throw new Error('Canvas 2D context unavailable');
+        canvasRef.current = canvas;
         ctxRef.current = ctx;
 
-        const handleDecoded = (decoded: string) => {
+        const handleDecoded = (decoded: string): boolean => {
           console.log('[QR-Scan] decoded:', decoded.slice(0, 80), 'len=', decoded.length);
           try {
-            const frame: ParsedFrame = JSON.parse(decoded);
+            const parsed = JSON.parse(decoded) as unknown;
+
+            // Fall 1: Single-Frame .secuchat v2 Payload (statischer QR,
+            // z.B. gedruckt). Wird direkt an onContactScanned gereicht.
+            if (isSingleContactPayload(parsed)) {
+              console.log('[QR-Scan] single-frame contact payload', parsed.n, parsed.i);
+              stopFlagRef.current = true;
+              onContactScanned(decoded);
+              return true;
+            }
+
+            // Fall 2: Animierter Multi-Frame (i, t, d).
+            const frame = parsed as Partial<ParsedFrame>;
             if (
               typeof frame.i !== 'number' ||
               typeof frame.t !== 'number' ||
@@ -109,7 +177,6 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
                 const part = framesRef.current.get(i);
                 if (!part) {
                   missing = true;
-                  console.warn('[QR-Scan] missing frame', i);
                   break;
                 }
                 parts.push(part);
@@ -128,49 +195,50 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
           }
         };
 
-        const scanOnce = async (): Promise<void> => {
+        const scanFrame = async () => {
           if (stopFlagRef.current) return;
-          const ic = imageCaptureRef.current;
+          const v = videoRef.current;
           const c = canvasRef.current;
           const ctx = ctxRef.current;
-          if (!ic || !c || !ctx) return;
-
-          try {
-            const blob = await ic.takePhoto();
-            if (stopFlagRef.current) return;
-            const bitmap = await createImageBitmap(blob);
-            if (stopFlagRef.current) {
-              bitmap.close();
-              return;
-            }
-            if (c.width !== bitmap.width || c.height !== bitmap.height) {
-              c.width = bitmap.width;
-              c.height = bitmap.height;
-            }
-            ctx.drawImage(bitmap, 0, 0);
-            bitmap.close();
-
-            const imageData = ctx.getImageData(0, 0, c.width, c.height);
-            const result = jsQR(imageData.data, imageData.width, imageData.height, {
-              inversionAttempts: 'attemptBoth',
-            });
-            if (result && result.data) {
-              const done = handleDecoded(result.data);
-              if (done) return;
-            }
-          } catch (err) {
-            // takePhoto() kann transient fehlschlagen (z.B. noch kein Frame);
-            // einfach weiter versuchen.
-            console.log('[QR-Scan] takePhoto error:', err instanceof Error ? err.message : String(err));
+          const detector = detectorRef.current;
+          if (!v || !c || !ctx || !detector) {
+            schedule();
+            return;
+          }
+          if (v.readyState < 2 || v.videoWidth === 0 || v.videoHeight === 0) {
+            schedule();
+            return;
           }
 
-          if (!stopFlagRef.current) {
-            timeoutRef.current = setTimeout(scanOnce, 100); // 10 FPS
+          try {
+            if (c.width !== v.videoWidth || c.height !== v.videoHeight) {
+              c.width = v.videoWidth;
+              c.height = v.videoHeight;
+            }
+            ctx.drawImage(v, 0, 0, c.width, c.height);
+            const results = await detector.detect(c);
+            for (const r of results) {
+              if (r.rawValue && handleDecoded(r.rawValue)) return;
+            }
+          } catch (err) {
+            console.log('[QR-Scan] scan error:', err instanceof Error ? err.message : String(err));
+          }
+          schedule();
+        };
+
+        const schedule = () => {
+          if (stopFlagRef.current) return;
+          const v = videoRef.current;
+          if (v && typeof (v as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number }).requestVideoFrameCallback === 'function') {
+            rvfcHandleRef.current = (v as HTMLVideoElement & { requestVideoFrameCallback: (cb: () => void) => number })
+              .requestVideoFrameCallback(() => scanFrame());
+          } else {
+            requestAnimationFrame(() => scanFrame());
           }
         };
 
-        // Erste Aufnahme nach kurzem Delay (Track braucht einen Moment).
-        timeoutRef.current = setTimeout(scanOnce, 200);
+        // Erster Aufruf nach kurzem Delay (Video braucht ersten Frame).
+        setTimeout(schedule, 200);
       } catch (err) {
         if (cancelled) return;
         const msg = err instanceof Error ? err.message : (typeof err === 'string' ? err : 'Camera access denied');
@@ -183,10 +251,13 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
     return () => {
       cancelled = true;
       stopFlagRef.current = true;
-      if (timeoutRef.current !== null) {
-        clearTimeout(timeoutRef.current);
-        timeoutRef.current = null;
+      const v = videoRef.current;
+      if (v && rvfcHandleRef.current !== null && typeof (v as HTMLVideoElement & { cancelVideoFrameCallback?: (id: number) => void }).cancelVideoFrameCallback === 'function') {
+        try {
+          (v as HTMLVideoElement & { cancelVideoFrameCallback: (id: number) => void }).cancelVideoFrameCallback(rvfcHandleRef.current);
+        } catch { /* ignore */ }
       }
+      rvfcHandleRef.current = null;
       streamRef.current?.getTracks().forEach((t) => t.stop());
       framesRef.current.clear();
     };
@@ -194,10 +265,13 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
 
   const stop = () => {
     stopFlagRef.current = true;
-    if (timeoutRef.current !== null) {
-      clearTimeout(timeoutRef.current);
-      timeoutRef.current = null;
+    const v = videoRef.current;
+    if (v && rvfcHandleRef.current !== null && typeof (v as HTMLVideoElement & { cancelVideoFrameCallback?: (id: number) => void }).cancelVideoFrameCallback === 'function') {
+      try {
+        (v as HTMLVideoElement & { cancelVideoFrameCallback: (id: number) => void }).cancelVideoFrameCallback(rvfcHandleRef.current);
+      } catch { /* ignore */ }
     }
+    rvfcHandleRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     setIsRunning(false);
   };
@@ -212,18 +286,21 @@ export function QRContactScanner({ onContactScanned, onError }: QRContactScanner
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg overflow-hidden bg-black">
-        {/* Hidden preview area — wir zeigen kein Camera-Bild, weil der
-            Capacitor-WebView-Render schwarz ist. Die eigentliche Scan-
-            Logik laeuft ueber ImageCapture.takePhoto() + jsQR auf einem
-            Offscreen-Canvas (oben), nicht ueber dieses Element. */}
-        <div
+      <div className="rounded-lg overflow-hidden bg-black relative">
+        <video
+          ref={videoRef}
           id="qr-scanner-element"
-          className="w-full flex items-center justify-center text-muted-foreground text-sm"
-          style={{ aspectRatio: '4 / 3', minHeight: '300px' }}
-        >
-          <p>📷 Kamera aktiv — halte den animierten QR-Code in den Rahmen</p>
-        </div>
+          className="w-full h-auto block"
+          style={{ aspectRatio: '4 / 3', minHeight: '300px', objectFit: 'cover' }}
+          playsInline
+          muted
+          autoPlay
+        />
+        {progress.total === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none text-white text-sm bg-black/40">
+            <p>📷 Kamera aktiv — halte den animierten QR-Code in den Rahmen</p>
+          </div>
+        )}
       </div>
       <div className="text-center text-sm text-muted-foreground">
         {progress.total > 0 ? (

@@ -308,6 +308,53 @@ function createBridgeAPI(): DevBridgeAPI {
         const identityRes = await this.getIdentity();
         const contactsRes = await this.getContacts();
         const chatsRes = await this.getChats();
+        // Diagnose 2026-08-14: rohen IDB-User lesen, um zu sehen, ob
+        // i2pSamDestination fehlt (Share-Banner "Export nicht möglich").
+        let rawUser: Record<string, unknown> | null = null;
+        try {
+          const db = await openRawIdb();
+          const all = (await idbGetAll(db, 'user')) as Array<Record<string, unknown>>;
+          if (all.length > 0) {
+            const u = all[0];
+            const dest = (u.i2pSamDestination as string | undefined) ?? '';
+            rawUser = {
+              id: u.id,
+              username: u.username,
+              hasI2pSamDestination: !!u.i2pSamDestination,
+              i2pSamDestinationLen: dest.length,
+              i2pSamDestinationPrefix: dest.slice(0, 40),
+              i2pSamDestinationSuffix: dest.slice(-20),
+              hasI2pAddress: !!u.i2pAddress,
+              i2pAddress: u.i2pAddress ?? null,
+              hasI2pPublicKey: !!u.i2pPublicKey,
+              hasI2pPrivateKey: !!u.i2pPrivateKey,
+              hasPgpPublicKey: !!u.pgpPublicKey,
+              hasPgpPrivateKey: !!u.pgpPrivateKey,
+              createdAt: u.createdAt,
+            };
+          }
+        } catch { /* Diagnose-Feld ist optional */ }
+        // Diagnose 2026-08-14: i2pService.exportIdentity() zeigt, ob das
+        // Live-Objekt eine samDestination hat (auch wenn storageService sie
+        // nicht persistiert hat).
+        let i2pServiceIdentity: Record<string, unknown> | null = null;
+        try {
+           
+          const dbg = (window as unknown as { __i2pDebug?: { exportIdentity?: () => unknown } }).__i2pDebug;
+          if (dbg?.exportIdentity) {
+            const e = dbg.exportIdentity() as Record<string, unknown>;
+            i2pServiceIdentity = {
+              hasPublicKey: !!e.publicKey,
+              publicKeyLen: (e.publicKey as string | undefined)?.length ?? 0,
+              hasPrivateKey: !!e.privateKey,
+              privateKeyLen: (e.privateKey as string | undefined)?.length ?? 0,
+              b32Address: e.b32Address ?? null,
+              hasSamDestination: !!e.samDestination,
+              samDestinationLen: (e.samDestination as string | undefined)?.length ?? 0,
+              samDestinationPrefix: (e.samDestination as string | undefined)?.slice(0, 40) ?? '',
+            };
+          }
+        } catch { /* Diagnose-Feld ist optional */ }
         return {
           ok: true,
           result: {
@@ -315,6 +362,8 @@ function createBridgeAPI(): DevBridgeAPI {
             contacts: contactsRes.result ?? [],
             chats: chatsRes.result ?? [],
             identity: identityRes.result ?? null,
+            rawUser,
+            i2pServiceIdentity,
           },
         };
       } catch (e) {

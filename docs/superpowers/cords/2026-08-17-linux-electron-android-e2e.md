@@ -106,48 +106,32 @@ If the Electron window doesn't appear, check:
 
 ---
 
-## Step 2 — Linux → Android: contact swap
+## Step 2 — Linux ↔ Android: contact swap
 
-The Linux app starts as a brand-new identity (no contacts). Bring the
-Linux identity over to the device and the Android identity over to Linux
-via DevBridge:
+The Linux app starts as a brand-new identity (no contacts). The only
+working contact-swap path today is **UI-based on both sides** — Linux
+does not expose a DevBridge route for contact export/import (the
+DevBridge plugin is Android-only). The sequence is:
 
 ```bash
-SERIAL=$(adb devices | awk '/\tdevice$/{print $1; exit}')
-HOST_PORT=8887
-
-# 2a. Export the Linux identity via Linux's own DevBridge (if enabled) OR
-#     transfer via the Android bridge by swapping in the OPPOSITE direction:
-#     we use the Android-side DevBridge to call /eval on a Linux-side
-#     helper. The simpler path is to use the Linux Electron's own
-#     "Export Contact" UI button. Corded alternative below:
-
-# EASIEST: use the Android-side DevBridge to call /identity on the
-# Linux app via its own DevBridge if exposed. If not, fall back to
-# the UI: Linux → Settings → Export Identity → save .secuchat → push
-# to device via `adb push`.
-
-# 2b. Pull Android's identity via DevBridge:
-LINUX_B64=$(curl -fsS "http://127.0.0.1:${HOST_PORT}/export-contact" \
-  -X POST --data '{}' \
+# 2a. Get Android's identity via Android-side DevBridge (only the
+#     Android side has a DevBridge — Linux uses the UI).
+A50_B64=$(curl -fsS "http://127.0.0.1:${HOST_PORT}/identity" \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["content"])')
 
 # Sanity: it's a v2 .secuchat string.
-echo "$LINUX_B64" | head -c 80
+echo "$A50_B64" | head -c 80
 # Expected: v2:eJ...
 
-# 2c. Push the Android contact into Linux via the Linux app's
-#     IPC. Today Linux doesn't expose a contact-import bridge, so we
-#     use the Linux app's own UI: Settings → Import Contact → paste.
-echo "$LINUX_B64" | xclip -selection clipboard
-# Then click into the Linux app and Ctrl+V into the import dialog.
+# 2b. Push the Android contact into Linux via the Linux app's UI:
+echo "$A50_B64" | xclip -selection clipboard
+# Then in the Linux app: Settings → Import Contact → paste (Ctrl+V).
 
-# 2d. Reverse direction: export Linux identity, import into Android.
-# Repeat the same dance in reverse:
+# 2c. Reverse direction: export Linux identity via Linux UI, import
+#     into Android via Android UI. The Linux side has no DevBridge
+#     route for this — repeat the UI flow:
 #   - In Linux app: Settings → Export Identity → copy to clipboard
 #   - On Android: paste into Add Contact dialog
-# (Or use the Linux-side DevBridge if you've enabled it; the cord
-# assumes the UI flow for both sides for simplicity.)
 ```
 
 If both contacts appear in each side's Contact List (Linux shows "A50",
