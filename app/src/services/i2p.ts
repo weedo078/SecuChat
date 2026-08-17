@@ -19,10 +19,7 @@ export { samService, type SAMConfig };
  * (Task 8). Keep this in sync with that file; the renderer never reaches
  * Electron without going through `getElectronI2P()` below.
  */
-interface ElectronI2PAPI {
-  i2pInvoke(method: string, ...args: unknown[]): Promise<unknown>;
-  onI2pEvent(event: string, cb: (data: unknown) => void): () => void;
-}
+export type { ElectronI2PAPI } from './electronI2pTypes';
 
 /** Wire shape of `i2pMessage` events emitted by the Electron main process. */
 interface ElectronI2PMessageEvent {
