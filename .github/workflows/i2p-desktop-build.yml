@@ -194,6 +194,23 @@ jobs:
 
       - name: Install Java I2P (Windows NSIS silent)
         shell: pwsh
+        # The Java I2P NSIS installer registers a Windows service during
+        # /S-install on the windows-latest runner. The parent i2pinstall
+        # process keeps a handle to that service open even after the
+        # install completes, so $proc.HasExited never returns true and
+        # the 5-min deadline trips. We KILL the installer via
+        # Stop-Process, but by then exit code is non-zero.
+        #
+        # The actual Windows-package build (electron-builder --win) does
+        # NOT need Java I2P installed — that dependency only exists for
+        # the Linux smoke job. Java I2P is only here so an Android↔Desktop
+        # test rig can be wired up later without re-litigating the
+        # workflow. We tag this step continue-on-error so the green
+        # electron-builder pipeline is the gate, not the silent-installer
+        # quirk of the ephemeral runner. The bounded download + 5-min
+        # deadline + kill-on-timeout behavior is preserved; reviewers
+        # see the kill-on-timeout ::error:: annotation in the log.
+        continue-on-error: true
         run: |
           $ErrorActionPreference = 'Stop'
           $installer = "$env:TEMP\i2pinstall.exe"
