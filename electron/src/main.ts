@@ -53,7 +53,7 @@ protocol.registerSchemesAsPrivileged([
 
 const APP_DIST = app.isPackaged
   ? join(process.resourcesPath, 'app')
-  : join(__dirname, '../app/dist');
+  : join(__dirname, '../../app/dist');
 console.log('[Main] APP_DIST:', APP_DIST, '(isPackaged:', app.isPackaged, ')');
 
 // Verify index.html exists

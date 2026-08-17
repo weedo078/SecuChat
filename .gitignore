@@ -45,3 +45,9 @@ Thumbs.db
 
 # Git worktrees (created via `git worktree add .worktrees/<branch>`)
 .worktrees/
+
+# Playwright artifacts (electron/tests/e2e)
+playwright-report/
+test-results/
+/electron/test-results/
+/electron/playwright-report/
