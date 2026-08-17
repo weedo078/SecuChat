@@ -401,7 +401,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       setI2pTestStatus(available ? 'success' : 'error');
       if (!available) {
         setError(platformService.isAndroidNative()
-          ? t('onboarding.i2pdNotReachableAndroid')
+          ? t('onboarding.javaI2pNotReachableAndroid')
           : t('onboarding.i2pdNotReachable'));
       }
     } catch (err) {
@@ -410,12 +410,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         if (platformService.isElectron()) {
           setError(t('onboarding.i2pdElectronTimeout', { timeout: timeoutMs / 1000 }));
         } else if (platformService.isAndroidNative()) {
-          setError(t('onboarding.i2pdAndroidTimeout', { timeout: timeoutMs / 1000 }));
+          setError(t('onboarding.javaI2pAndroidTimeout', { timeout: timeoutMs / 1000 }));
         } else {
           setError(t('onboarding.i2pdBrowserTimeout', { timeout: timeoutMs / 1000 }));
         }
       } else {
-        setError(t('onboarding.i2pdTestError'));
+        setError(t('onboarding.javaI2pTestError'));
       }
     }
   };
@@ -997,12 +997,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                         ) : i2pTestStatus === 'success' ? (
                           <>
                             <Check className="h-4 w-4 mr-2" />
-                            {t('onboarding.i2pdConnected')}
+                            {t('onboarding.javaI2pConnected')}
                           </>
                         ) : i2pTestStatus === 'error' ? (
                           <>
                             <AlertCircle className="h-4 w-4 mr-2" />
-                            {t('onboarding.i2pdNotFound')}
+                            {t('onboarding.javaI2pNotFound')}
                           </>
                         ) : (
                           <>
@@ -1032,14 +1032,14 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                   {platformService.isElectron()
                     ? t('onboarding.i2pdIntegrated')
                     : platformService.isAndroidNative()
-                      ? t('onboarding.i2pdAndroidRequired')
+                      ? t('onboarding.javaI2pAndroidRequired')
                       : t('onboarding.i2pdSamRequired')}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {platformService.isElectron()
                     ? t('onboarding.i2pdIntegratedDesc')
                     : platformService.isAndroidNative()
-                      ? t('onboarding.i2pdAndroidRequiredDesc')
+                      ? t('onboarding.javaI2pAndroidRequiredDesc')
                       : t('onboarding.i2pdSamRequiredDesc')}
                 </p>
               </div>

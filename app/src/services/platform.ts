@@ -198,19 +198,21 @@ class PlatformService {
 
   private getAndroidInstructions(): I2PInstructions {
     return {
-      title: 'i2pd auf Android installieren',
-      description: 'Für maximale Anonymität installieren Sie i2pd aus F-Droid.',
+      title: 'Java I2P auf Android einrichten',
+      description:
+        'SecuChat nutzt auf Android den Java-I2P-Router aus dem Google Play Store. Nach der Installation konfigurieren Sie Sprache, I2CP und Bandbreite.',
       steps: [
-        'F-Droid App installieren (falls noch nicht vorhanden)',
-        'In F-Droid nach "i2pd" suchen',
-        'i2pd installieren und öffnen',
-        'In i2pd: Einstellungen → SAM → Aktivieren',
-        'Port auf 7656 belassen',
-        'Zurück und i2pd starten',
-        'Hier auf "Verbindung testen" klicken',
+        'Java I2P aus dem Google Play Store installieren und öffnen',
+        'Beim ersten Start: einmalig die Sprache festlegen (z. B. Deutsch)',
+        'In Java I2P: Einstellungen → Erweitert → Haken bei I2CP aktivieren',
+        'In Java I2P: Einstellungen → Bandbreite und Netzwerk → "Bei Booten aktivieren" einschalten',
+        'In Java I2P: Einstellungen → Bandbreite und Netzwerk → Up- und Download-Bandbreite auf Maximum stellen',
+        'In Java I2P: Einstellungen → Bandbreite und Netzwerk → UPnP aktivieren',
+        'Java I2P starten (lange drücken zum Starten) und hier auf "Verbindung testen" klicken',
       ],
-      downloadUrl: 'https://f-droid.org/packages/org.purplei2p.i2pd/',
-      configHelp: 'SAM muss auf Port 7656 aktiviert sein. i2pd läuft dann im Hintergrund.',
+      downloadUrl: 'https://play.google.com/store/apps/details?id=net.i2p.android',
+      configHelp:
+        'Java I2P muss laufen und I2CP auf Port 7654 bereitstellen. SecuChat verbindet sich direkt.',
     };
   }
 

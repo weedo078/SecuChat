@@ -24,7 +24,7 @@ cd sam-proxy && npm start   # WebSocket proxy on port 7657 → SAM TCP 7656
 
 ## Android (Capacitor)
 
-Native SAM plugin connects directly to i2pd on port 7656 (no WebSocket proxy).
+Native SAM plugin connects to Java I2P via I2CP. Java I2P must enable the I2CP toggle under Settings → Advanced; the SAM plugin then talks to port 7656 (no WebSocket proxy).
 Build: `cd app && npx cap sync android && cd android && ./gradlew assembleDebug`
 
 ## Platform Detection

@@ -163,27 +163,27 @@
     "generate": "Generate",
 
     "step4Title": "I2P Network",
-    "step4Subtitle": "i2pd is required",
+    "step4Subtitle": "Java I2P is required",
     "iosNotSupported": "iOS not supported",
     "iosWarning": "This app requires i2pd, which is not available on iOS. Please use Android or Desktop.",
     "downloadI2pd": "Download i2pd",
     "testingConnection": "Testing connection...",
-    "i2pdConnected": "i2pd connected!",
-    "i2pdNotFound": "i2pd not found - please install",
+    "javaI2pConnected": "Java I2P connected!",
+    "javaI2pNotFound": "Java I2P not reachable - please check",
     "testConnection": "Test connection",
     "platformNotSupported": "Platform not supported",
     "i2pdIntegrated": "i2pd integrated",
     "i2pdSamRequired": "i2pd + SAM proxy required",
     "i2pdIntegratedDesc": "i2pd is integrated directly into SecuChat Desktop and starts automatically. Please wait 5-10 minutes on first launch.",
     "i2pdSamRequiredDesc": "For anonymous communication you need i2pd (SAM on port 7656) and the SAM proxy (port 7657). You can configure this later in Settings.",
-    "i2pdAndroidRequired": "i2pd required (SAM TCP)",
-    "i2pdAndroidRequiredDesc": "On Android, SecuChat connects to i2pd directly over SAM TCP on port 7656 — no WebSocket proxy required. i2pd must run on the device or be reachable on the local network. You can configure this later in Settings.",
+    "javaI2pAndroidRequired": "Java I2P required (I2CP)",
+    "javaI2pAndroidRequiredDesc": "On Android, SecuChat uses Java I2P directly: enable the I2CP toggle under Settings → Advanced, and the SAM plugin talks to port 7656. Java I2P must be running on the device. You can configure this later in Settings.",
     "i2pdNotReachable": "i2pd not reachable. Please check that i2pd with SAM proxy is running (port 7657).",
-    "i2pdNotReachableAndroid": "i2pd not reachable. Please check that i2pd is serving SAM TCP on port 7656.",
+    "javaI2pNotReachableAndroid": "Java I2P not reachable. Please check that Java I2P is running and the I2CP toggle under Settings → Advanced is enabled (SAM via I2CP on port 7656).",
     "i2pdElectronTimeout": "i2pd is not ready yet ({{timeout}}s timeout). On first launch it takes 1-2 minutes. Click \"Next\" and test later in Settings → I2P, or try again now.",
     "i2pdBrowserTimeout": "Connection timeout after {{timeout}}s. Please check:\n1. Is i2pd running?\n2. Is the SAM proxy reachable on port 7657?\n3. Check firewall settings",
-    "i2pdAndroidTimeout": "Connection timeout after {{timeout}}s. Please check:\n1. Is i2pd running on the device or LAN?\n2. Is SAM TCP reachable on port 7656?\n3. Check firewall settings",
-    "i2pdTestError": "Error during connection test. Please check the i2pd configuration.",
+    "javaI2pAndroidTimeout": "Connection timeout after {{timeout}}s. Please check:\n1. Is Java I2P running on the device and is the I2CP toggle under Settings → Advanced enabled?\n2. Is SAM via I2CP reachable on port 7656?\n3. Check firewall settings",
+    "javaI2pTestError": "Connection test failed. Please check the Java I2P configuration (I2CP toggle under Settings → Advanced).",
 
     "step5Title": "Backup & Devices",
     "step5Subtitle": "Save your keys",
@@ -540,10 +540,10 @@
   },
 
   "i2pAppInstall": {
-    "title": "I2P Router App required",
-    "description": "SecuChat needs the I2P router app for anonymous communication. Please install it and enable I2CP tunnel sharing in the I2P app settings.",
-    "installButton": "Open I2P app in Play Store",
+    "title": "Java I2P router required",
+    "description": "SecuChat needs the Java I2P router for anonymous communication. Please install the app from the Google Play Store and configure it: enable the I2CP toggle under Settings → Advanced, set bandwidth to Maximum under Settings → Bandwidth and Network, enable UPnP and the boot activation.",
+    "installButton": "Open Java I2P in Play Store",
     "retryButton": "Retry",
-    "steps": "Step 1: Install the I2P app\nStep 2: Open it and wait until the router is ready\nStep 3: Go to Settings → I2CP user interface → enable tunnel sharing\nStep 4: Return to SecuChat and tap 'Retry'"
+    "steps": "Step 1: Install Java I2P from the Google Play Store and open the app\nStep 2: On first launch: set the language once (e.g. English)\nStep 3: Go to Settings → Advanced and enable the I2CP toggle\nStep 4: Go to Settings → Bandwidth and Network and enable 'Activate on boot'\nStep 5: Set upload and download bandwidth to Maximum\nStep 6: Enable UPnP\nStep 7: Start Java I2P (long-press to start) and return to SecuChat; tap 'Retry'"
   }
 }
