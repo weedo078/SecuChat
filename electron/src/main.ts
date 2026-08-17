@@ -129,8 +129,8 @@ const I2CP_NICKNAME = 'SecuChat';
  * Probe for a local I2P router and, if present, open the I2CP session.
  *
  * Unlike the previous i2pd-based flow, SecuChat no longer spawns or bundles a
- * router: it attaches to an externally-managed Java I2P / i2pd instance on
- * 127.0.0.1:7654 (installed via electron/scripts/setup-i2pd.{sh,ps1}). The
+ * router: it attaches to an externally-managed Java I2P instance on
+ * 127.0.0.1:7654 (installed via electron/scripts/setup-i2p.{sh,ps1}). The
  * cheap `isI2pAvailable()` TCP probe runs first so a missing router yields a
  * fast, actionable error instead of an I2CP handshake timeout.
  */
@@ -143,7 +143,7 @@ async function initializeI2P(): Promise<boolean> {
     console.warn('[Main] I2P router not available on 127.0.0.1:7654');
     i2pStatus.isRunning = false;
     i2pStatus.isReady = false;
-    i2pStatus.error = 'I2P-Router nicht erreichbar. Installiere Java I2P via setup-i2pd.sh/ps1';
+    i2pStatus.error = 'I2P-Router nicht erreichbar. Installiere Java I2P via setup-i2p.sh/ps1';
     broadcastI2pStatus();
     return false;
   }
@@ -197,7 +197,7 @@ app.whenReady().then(async () => {
 
   if (!i2pSuccess) {
     const isWindows = process.platform === 'win32';
-    const setupScript = isWindows ? 'electron\\scripts\\setup-i2pd.ps1' : 'electron/scripts/setup-i2pd.sh';
+    const setupScript = isWindows ? 'electron\\scripts\\setup-i2p.ps1' : 'electron/scripts/setup-i2p.sh';
     const detailMsg =
       'SecuChat will start, but I2P connectivity will not work until a router is reachable.\n\n' +
       `SecuChat connects to an I2P router's I2CP port on ${I2CP_HOST}:${I2CP_PORT}. ` +

@@ -13,19 +13,12 @@ if [ -d /home ]; then
         if [ -d "$userdir" ]; then
             username=$(basename "$userdir")
             config_dir="$userdir/.secuchat"
-            
+
             # Erstelle Config-Verzeichnis
-            mkdir -p "$config_dir/i2pd"
+            mkdir -p "$config_dir"
             chown -R "$username:$username" "$config_dir" 2>/dev/null || true
         fi
     done
-fi
-
-# Setze Berechtigungen für i2pd Binary
-I2PD_BINARY="/opt/SecuChat/resources/i2pd/linux/i2pd"
-if [ -f "$I2PD_BINARY" ]; then
-    chmod 755 "$I2PD_BINARY"
-    echo "Set executable permissions for i2pd"
 fi
 
 # Aktualisiere Desktop-Datenbank
