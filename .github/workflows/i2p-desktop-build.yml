@@ -197,14 +197,21 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installer = "$env:TEMP\i2pinstall.exe"
-          # Bounded download: 2 min connection + read timeout. NSIS drop is
-          # ~120 MB; on a slow runner Invoke-WebRequest can spin forever
-          # without this — that was the cause of the 45-min hang in
-          # commits 5e05878 / 71bf77d.
+          # Bounded download: 30s connection timeout, 120s read timeout.
+          # NSIS drop is ~120 MB; on a slow runner Invoke-WebRequest can
+          # spin forever without these — that was the cause of the
+          # 45-min hang in commits 5e05878 / 71bf77d.
+          # IMPORTANT: Use the LONG parameter names (-ConnectionTimeoutSeconds,
+          # -TimeoutSeconds). The short forms (-ConnectionTimeoutSec,
+          # -TimeoutSec) both end in "Sec..." and PowerShell expands
+          # them to the same parameter name, producing "parameter
+          # specified more than once" binding errors. Long names have
+          # unique prefixes and side-step the ambiguity.
           try {
             Invoke-WebRequest -Uri "https://files.i2p.net/2.13.0/i2pinstall_2.13.0_windows.exe" `
               -OutFile $installer -UseBasicParsing `
-              -TimeoutSec 120 -ConnectionTimeoutSec 30
+              -ConnectionTimeoutSeconds 30 `
+              -TimeoutSeconds 120
           } catch {
             Write-Host "::error::NSIS download failed: $($_.Exception.Message)"
             Write-Host "---- failing URL: https://files.i2p.net/2.13.0/i2pinstall_2.13.0_windows.exe ----"
