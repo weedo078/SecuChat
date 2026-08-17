@@ -1,0 +1,13 @@
+{
+  "name": "sam-proxy-test-scripts",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Linux headless test scripts for SAM/E2E (kept post-i2pd-removal for parity with prior Memory notes)",
+  "scripts": {
+    "start": "node headless-listen.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  }
+}

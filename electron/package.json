@@ -23,7 +23,6 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.9.0",
-    "@types/ws": "^8.5.0",
     "electron": "^42.1.0",
     "electron-builder": "^26.15.3",
     "typescript": "^6.0.3",
@@ -31,8 +30,7 @@
   },
   "dependencies": {
     "better-sqlite3": "^13.0.2",
-    "electron-updater": "^6.8.9",
-    "ws": "^8.21.0"
+    "electron-updater": "^6.8.9"
   },
   "overrides": {
     "lodash": "^4.17.21",
