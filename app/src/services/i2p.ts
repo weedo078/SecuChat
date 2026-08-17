@@ -11,7 +11,9 @@ import { samService, type SAMConfig } from './i2pSam';
 import { logger } from '@/utils/logger';
 import { i2pPlugin } from './i2pPlugin';
 import { platformService } from './platform';
+import { type ElectronI2PAPI } from './electronI2pTypes';
 export { samService, type SAMConfig };
+export type { ElectronI2PAPI };
 
 /**
  * Typed view of the `window.electronAPI` IPC surface used by the Electron
@@ -19,7 +21,6 @@ export { samService, type SAMConfig };
  * (Task 8). Keep this in sync with that file; the renderer never reaches
  * Electron without going through `getElectronI2P()` below.
  */
-export type { ElectronI2PAPI } from './electronI2pTypes';
 
 /** Wire shape of `i2pMessage` events emitted by the Electron main process. */
 interface ElectronI2PMessageEvent {
