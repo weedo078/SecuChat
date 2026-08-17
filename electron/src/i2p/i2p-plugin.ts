@@ -6,9 +6,11 @@ import { IdentityStore } from './identity-store';
 import { generateEd25519Destination } from './destination-gen';
 
 /**
- * Bootstrap-Race-Ring-Buffer capacity. Matches Android `I2PPlugin.java:38` —
- * FIFO eviction at 64 entries so memory stays bounded even when the IPC bridge
- * is set up long after the I2P session has already produced events.
+ * Bootstrap-Race-Ring-Buffer capacity. Deliberately IMPROVED over
+ * Android's single shared Deque (I2PPlugin.java:38-66): per-channel FIFOs
+ * prevent a chatty channel (e.g. i2pMessage) from starving others.
+ * Same eviction policy (FIFO at 64) and same drain-on-first-listener
+ * semantics.
  */
 const BUFFER_CAPACITY = 64;
 
@@ -47,10 +49,10 @@ export class I2PPlugin {
   private socketManager: I2CPSocketManager | null = null;
   private readonly identityStore: IdentityStore;
   /**
-   * Per-channel ring buffers. Mirrors Android `I2PPlugin.java:38-66` which
-   * keeps four separate deques (one per event type), each capped at
-   * `BUFFER_CAPACITY` entries with shift-on-overflow FIFO eviction. A
-   * single shared queue would let one chatty channel starve the others.
+   * Per-channel ring buffers. A deliberate improvement over Android's
+   * single shared deque (I2PPlugin.java:38-66) so a chatty channel
+   * cannot starve the others. Same eviction policy (FIFO at 64) and
+   * drain-on-first-listener semantics.
    */
   private readonly eventBuffers: Map<string, BufferedEvent[]> = new Map();
   private readonly activeListeners: Map<string, Set<(data: unknown) => void>> = new Map();

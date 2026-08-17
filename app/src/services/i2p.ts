@@ -5,6 +5,14 @@
  * Requires i2pd + sam-proxy running locally.
  */
 
+/**
+ * Sentinel b32 returned by the Electron I2CP stub until the real handshake
+ * lands. MUST NOT be persisted. Source of truth:
+ * `electron/tests/e2e/_helpers/probeI2CP.ts`. Duplicated locally to avoid a
+ * renderer→electron/ cross-package import.
+ */
+const B32_PLACEHOLDER = 'placeholder-b32-will-be-set-by-i2p-router';
+
 import nacl from 'tweetnacl';
 import { toBase32, uint8ArrayToBase64, tryBase64ToUint8Array } from '@/utils/base32';
 import { samService, type SAMConfig } from './i2pSam';
@@ -185,6 +193,13 @@ class I2PService {
     // poison STREAM CONNECT attempts with "LeaseSet not found".
     const liveB32 = await this.getLiveB32();
     if (!liveB32) return;
+
+    // Guard: Electron I2CP stub returns a sentinel until the real handshake lands.
+    // Refuse to persist — would poison STREAM CONNECT / QR / contacts.
+    if (liveB32 === B32_PLACEHOLDER) {
+      logger.warn('[I2P] syncB32ToUser: Phase-2 stub sentinel — refusing to persist');
+      return;
+    }
     try {
       const { storageService } = await import('./storage');
       const user = await storageService.getUser();
@@ -276,6 +291,21 @@ class I2PService {
         port: 7654,
         nickname: 'SecuChat',
       }) as { b32Address: string };
+
+      // Phase-2 stub guard: real SessionStatus handshake not yet landed → plugin returns
+      // a sentinel b32. Skip syncB32ToUser / acceptIncoming / leasesetPublished=true
+      // so we never persist or share a fake b32. A re-init will fill in the real value.
+      if (result.b32Address === B32_PLACEHOLDER) {
+        this.currentStatus = {
+          samConnected: false,
+          samAvailable: true,
+          address: null,
+          leasesetPublished: false,
+          error: 'I2CP Phase-2 stub — b32 not yet bound',
+        };
+        this.notifyStatusChange();
+        return this.currentStatus;
+      }
 
       this.currentStatus = {
         samConnected: true,
