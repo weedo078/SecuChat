@@ -17,28 +17,41 @@ export const I2CP_MSG = {
 
 export interface I2CPMessage {
   type: I2CPMessageType;
-  sessionId: number;
+  sessionId: number | null;
   payload: Buffer;
 }
 
 export function encodeMessage(msg: I2CPMessage): Buffer {
-  // I2CP frame: [4-byte length BE][1-byte type][1-byte sessionId][payload]
-  const innerLen = 1 + 1 + msg.payload.length;
+  // I2CP wire format (spec-correct):
+  //   [4-byte length BE][1-byte type][optional 2-byte sessionId BE][payload]
+  // The sessionId lives in the BODY, not the header.
+  // Some messages (e.g. DestLookup, GetBandwidthLimits) have no sessionId at all.
+  const hasSessionId = msg.sessionId !== null && msg.sessionId !== undefined;
+  const sessionIdBytes = hasSessionId ? 2 : 0;
+  const innerLen = 1 + sessionIdBytes + msg.payload.length;
   const buf = Buffer.alloc(4 + innerLen);
   buf.writeUInt32BE(innerLen, 0);
   buf.writeUInt8(msg.type, 4);
-  buf.writeUInt8(msg.sessionId, 5);
-  msg.payload.copy(buf, 6);
+  if (hasSessionId) {
+    buf.writeUInt16BE(msg.sessionId as number, 5);
+  }
+  msg.payload.copy(buf, 4 + 1 + sessionIdBytes);
   return buf;
 }
 
 export function decodeMessage(buf: Buffer): I2CPMessage {
-  if (buf.length < 6) throw new Error('I2CP frame too short');
+  if (buf.length < 5) throw new Error('I2CP frame too short');
   const length = buf.readUInt32BE(0);
   if (buf.length < 4 + length) throw new Error('I2CP frame incomplete');
   const type = buf.readUInt8(4);
-  const sessionId = buf.readUInt8(5);
-  const payload = buf.subarray(6, 4 + length);
+  const body = buf.subarray(5, 4 + length);
+  let sessionId: number | null = null;
+  let payloadStart = 5;
+  if (body.length >= 2) {
+    sessionId = body.readUInt16BE(0);
+    payloadStart = 7;
+  }
+  const payload = buf.subarray(payloadStart, 4 + length);
   return { type, sessionId, payload: Buffer.from(payload) };
 }
 
