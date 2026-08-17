@@ -2,10 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { Duplex } from 'node:stream';
 import { I2PSocketHandle } from './i2p-socket-handle';
 
-function makeFakeSocket(): Duplex {
+function makeFakeSocket(opts?: { onWrite?: (chunk: Buffer) => void }): Duplex {
   const s = new Duplex({
     read() {},
-    write(_chunk, _enc, cb) { cb(); },
+    write(chunk, _enc, cb) {
+      opts?.onWrite?.(chunk as Buffer);
+      cb();
+    },
   });
   return s;
 }
@@ -49,5 +52,48 @@ describe('I2PSocketHandle', () => {
     handle.close('first');
     handle.close('second');  // should not throw
     expect(handle.isClosed()).toBe(true);
+  });
+
+  it('fires onClose("error") when newlineBuffer exceeds MAX_BUFFER_BYTES', async () => {
+    const socket = makeFakeSocket();
+    const handle = new I2PSocketHandle(5, socket, 'peer-b32');
+    let closeReason = '';
+    handle.setOnClose((ev) => { closeReason = ev.reason; });
+    handle.startReadThread();
+
+    // Push a chunk with no newline larger than the cap (1 MiB).
+    const oversized = Buffer.alloc(I2PSocketHandle.MAX_BUFFER_BYTES + 1, 0x41); // 'A' * (cap + 1)
+    socket.push(oversized);
+    await new Promise(r => setImmediate(r));
+
+    expect(closeReason).toBe('error');
+    expect(handle.isClosed()).toBe(true);
+
+    // send() after buffer-overflow close must throw (socket is closed).
+    await expect(handle.send(Buffer.from('late'))).rejects.toThrow(/closed/);
+  });
+
+  it('send() appends \\n and receiver observes the line as a DataEvent', async () => {
+    // receiver side (separate handle on its own socket)
+    const receiverSocket = makeFakeSocket();
+    const receiver = new I2PSocketHandle(7, receiverSocket, 'peer-b32');
+    const lines: string[] = [];
+    receiver.setOnData((ev) => lines.push(Buffer.from(ev.data).toString('utf8')));
+    receiver.startReadThread();
+
+    // sender side: hook the writable side so every byte the sender writes
+    // gets pushed into the receiver socket's readable side.
+    const senderSocket = makeFakeSocket({
+      onWrite: (chunk) => receiverSocket.push(chunk),
+    });
+    const sender = new I2PSocketHandle(6, senderSocket, 'peer-b32');
+
+    await sender.send(Buffer.from('hello'));
+
+    // Give the receiver loop a couple of ticks to process the pushed chunk.
+    await new Promise(r => setImmediate(r));
+    await new Promise(r => setImmediate(r));
+
+    expect(lines).toEqual(['hello']);
   });
 });

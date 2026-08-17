@@ -17,6 +17,12 @@ export class I2PSocketHandle {
   private onCloseCb: ((ev: CloseEvent) => void) | null = null;
   private newlineBuffer: Buffer = Buffer.alloc(0);
 
+  /**
+   * Maximum bytes to buffer in `newlineBuffer` between newlines.
+   * Prevents OOM via a malicious/buggy peer that never sends `\n`.
+   */
+  public static readonly MAX_BUFFER_BYTES = 1 << 20; // 1 MiB
+
   constructor(
     public readonly streamId: number,
     private readonly socket: Duplex,
@@ -43,6 +49,14 @@ export class I2PSocketHandle {
     this.socket.on('data', (chunk: Buffer) => {
       if (this.closed) return;
       this.newlineBuffer = Buffer.concat([this.newlineBuffer, chunk]);
+      if (this.newlineBuffer.length > I2PSocketHandle.MAX_BUFFER_BYTES) {
+        this.fireClose('error');
+        // Stop the socket from delivering further data and tear it down so the
+        // peer cannot keep writing. Use 'error' so the listener gets a clear
+        // signal that this is not a normal close.
+        this.socket.destroy(new Error('newline buffer overflow'));
+        return;
+      }
       let nlIdx;
       while ((nlIdx = this.newlineBuffer.indexOf(0x0A)) !== -1) {
         const line = this.newlineBuffer.subarray(0, nlIdx);
@@ -65,8 +79,12 @@ export class I2PSocketHandle {
 
   async send(data: Uint8Array): Promise<void> {
     if (this.closed) throw new Error('socket closed');
+    // Append `\n` so the receiver's newline-splitting reader-loop sees a
+    // complete framed message. Matches the protocol contract: sender appends
+    // `\n`, receiver splits on `\n` and emits each line as a DataEvent.
+    const framed = Buffer.concat([Buffer.from(data), Buffer.from([0x0A])]);
     return new Promise((resolve, reject) => {
-      this.socket.write(data, (err) => err ? reject(err) : resolve());
+      this.socket.write(framed, (err) => err ? reject(err) : resolve());
     });
   }
 
