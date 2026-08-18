@@ -23,6 +23,15 @@ async function initApp() {
     // Ignore errors on web platform
   })
 
+  // Render the WebView BELOW the system status bar instead of edge-to-edge.
+  // Robust Android fix: Layout beginnt unterhalb der System-Statusbar, deshalb
+  // entfallen die fragilen per-Element paddingTop-Workarounds (hardcoded 28px /
+  // isAndroid()-Checks) in App.tsx. No-op auf Web/Electron (Capacitor plugin wird
+  // rejected → .catch).
+  StatusBar.setOverlaysWebView({ overlay: false }).catch(() => {
+    // Ignoriere auf Plattformen ohne native StatusBar
+  })
+
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <AppProvider>

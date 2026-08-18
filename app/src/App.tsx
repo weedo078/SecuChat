@@ -12,10 +12,23 @@ import { Onboarding } from '@/components/custom/Onboarding';
 import { FullScreenLock } from '@/components/custom/FullScreenLock';
 import { QuickLockButton } from '@/components/custom/QuickLockButton';
 import { UpdateNotification } from '@/components/custom/UpdateNotification';
+import { MobileNav } from '@/components/custom/MobileNav';
+import { MobileChatList } from '@/components/custom/MobileChatList';
+import type { Chat } from '@/types';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
-  const { user, initialize, isLoading, isLocked, lockApp, unlockApp } = useApp();
+  const {
+    user,
+    initialize,
+    isLoading,
+    isLocked,
+    lockApp,
+    unlockApp,
+    activeChat,
+    setActiveChat,
+    deleteChat,
+  } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showContactManager, setShowContactManager] = useState(false);
   const [showShareContact, setShowShareContact] = useState(false);
@@ -73,8 +86,10 @@ function App() {
 
   return (
     <div className="fixed inset-0 bg-background flex flex-col">
-      {/* Fixed Header - stays below notification bar on Android */}
-      <div className="fixed top-0 left-0 right-0 z-50" style={{ paddingTop: isAndroid() ? '28px' : undefined }} >
+      {/* Fixed Header — da in main.tsx StatusBar.setOverlaysWebView(false) gesetzt
+          ist, beginnt das Layout bereits unterhalb der System-Statusbar; ein
+          expliziter paddingTop-Workaround entfällt. */}
+      <div className="fixed top-0 left-0 right-0 z-50">
         <Header
           onMenuClick={() => setSidebarOpen(true)}
           onSettingsClick={() => setShowSettings(true)}
@@ -82,7 +97,7 @@ function App() {
       </div>
 
       {/* Main content with padding for fixed header */}
-      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : '4rem' }} >
+      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: '4rem' }}>
         {/* Desktop Sidebar */}
         <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
           <Sidebar
@@ -94,7 +109,7 @@ function App() {
 
         {/* Mobile Sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: isAndroid() ? '28px' : 'env(safe-area-inset-top, 0px)' }}>
+          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
             <Sidebar
               onAddContact={() => {
                 setSidebarOpen(false);
@@ -114,9 +129,39 @@ function App() {
 
         {/* Main Content */}
         <div className="flex-1 flex flex-col h-full overflow-hidden">
-          <ChatView />
+          {/* Mobile chat list — sichtbar auf Mobile wenn kein Chat aktiv ist. */}
+          {!activeChat && (
+            <div className="lg:hidden flex-1 flex flex-col overflow-hidden">
+              <MobileChatList
+                onChatSelect={(chat: Chat) => {
+                  void setActiveChat(chat);
+                }}
+                onDeleteChat={(chatId: string) => {
+                  void deleteChat(chatId);
+                }}
+                onMarkAsRead={() => {
+                  /* setActiveChat(chat) setzt unreadCount=0 intern; ein
+                     dedizierter markAsRead-API-Call folgt später. */
+                }}
+              />
+            </div>
+          )}
+          {/* ChatView — Desktop immer, Mobile nur bei aktivem Chat. */}
+          <div className={activeChat ? 'flex-1 flex flex-col h-full overflow-hidden' : 'hidden lg:flex flex-1 flex flex-col h-full overflow-hidden'}>
+            <ChatView />
+          </div>
         </div>
       </div>
+
+      {/* MobileBottom-Nav — nur auf Mobile und nur ohne aktiven Chat, damit das
+          Message-Input des offenen Chats nicht überlagert wird. */}
+      {!activeChat && (
+        <MobileNav
+          onAddContact={() => setShowContactManager(true)}
+          onSettingsClick={() => setShowSettings(true)}
+          activeTab="chats"
+        />
+      )}
 
       {/* Dialogs */}
       <ContactManager 
