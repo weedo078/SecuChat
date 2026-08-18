@@ -29,8 +29,8 @@
 # lint
 # lint/reports/
 # release/
-#*.jks
-#*.keystore
+*.jks
+*.keystore
 *.aab
 *.aar
 *.ap_
