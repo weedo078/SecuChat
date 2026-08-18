@@ -91,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19'
           cache: 'npm'
@@ -131,7 +131,7 @@ jobs:
         continue-on-error: true
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '20.19'
 
@@ -184,7 +184,7 @@ jobs:
           echo "pr_num=${PR_NUM}" >> $GITHUB_OUTPUT
           echo "beta_num=${BETA_NUM}" >> $GITHUB_OUTPUT
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19'
 
@@ -280,7 +280,7 @@ jobs:
           # Nutze run_number als versionCode (eindeutig steigend)
           sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" build.gradle
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: steps.check-android.outputs.exists == 'true'
         with:
           node-version: '22'
@@ -462,7 +462,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19'
 
@@ -497,7 +497,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19'
 
@@ -530,7 +530,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20.19'
 
@@ -570,7 +570,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
