@@ -660,15 +660,20 @@ jobs:
         run: |
           V="${{ needs.determine-version.outputs.version }}"
           V_PLAIN="${V#v}"
-          
+
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
-          
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add electron/package.json app/package.json
           git commit -m "chore: bump version to $V [skip ci]" || echo "No changes to commit"
-          git tag "$V" || echo "Tag already exists"
+          # Stale-tag-Schutz: wenn ein vorheriger fehlgeschlagener Run den Tag
+          # schon gepusht hatte, vorher löschen (lokal + remote), damit der
+          # Release nicht mit veralteten/falschen Assets überschrieben wird.
+          git tag -d "$V" 2>/dev/null || true
+          git push origin ":refs/tags/$V" 2>/dev/null || true
+          git tag "$V"
           git push
           git push --tags
 
@@ -686,6 +691,17 @@ jobs:
       - name: List release files
         run: find release-artifacts -type f | sort
 
+      - name: Verify release artifacts exist
+        run: |
+          FILE_COUNT=$(find release-artifacts -type f 2>/dev/null | wc -l)
+          echo "Found $FILE_COUNT release artifact files"
+          if [ "$FILE_COUNT" -eq 0 ]; then
+            echo "❌ No release artifacts found in release-artifacts/"
+            echo "Build jobs must have failed or produced no uploads."
+            exit 1
+          fi
+          find release-artifacts -type f | sort
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -693,6 +709,7 @@ jobs:
           files: release-artifacts/**
           draft: false
           generate_release_notes: true
+          fail_on_unmatched_files: true
 
   # ═══════════════════════════════════════════════════════════════
   # WIKI SYNC
