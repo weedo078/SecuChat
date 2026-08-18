@@ -262,7 +262,7 @@ export function Settings({ isOpen, onClose }: SettingsProps) {
                   </div>
                   <div className="flex items-center gap-2">
                     {settings.i2p.sam.enabled ? (
-                      <span className="flex items-center gap-1 text-xs text-green-500">
+                      <span className="flex items-center gap-1 text-xs text-teal-400">
                         <Check className="h-3 w-3" />
                         SAM
                       </span>
@@ -385,9 +385,9 @@ function BackupDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => voi
 
         {done ? (
           <div className="mt-4 text-center py-4 space-y-4">
-            <Check className="h-8 w-8 text-green-500 mx-auto" />
+            <Check className="h-8 w-8 text-teal-400 mx-auto" />
             <div>
-              <p className="font-medium text-green-500">{t('backup.created')}</p>
+              <p className="font-medium text-teal-400">{t('backup.created')}</p>
               <p className="text-sm text-muted-foreground mt-1">
                 {t('backup.twoFilesDownloaded')}
               </p>
@@ -534,8 +534,8 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
 
         {success ? (
           <div className="mt-4 text-center py-4">
-            <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
-            <p className="text-green-500 font-medium">{t('backup.restoreSuccess')}</p>
+            <Check className="h-8 w-8 text-teal-400 mx-auto mb-2" />
+            <p className="text-teal-400 font-medium">{t('backup.restoreSuccess')}</p>
             <p className="text-sm text-muted-foreground mt-2">
               {t('backup.restartApp')}
             </p>
@@ -578,8 +578,8 @@ function RestoreDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => vo
             </div>
 
             {validation?.valid && (
-              <div className="p-3 bg-green-500/10 rounded-lg text-sm space-y-1">
-                <p className="text-green-500 font-medium flex items-center gap-1">
+              <div className="p-3 bg-teal-400/10 rounded-lg text-sm space-y-1">
+                <p className="text-teal-400 font-medium flex items-center gap-1">
                   <Check className="h-3 w-3" /> {t('backup.validBackup')}
                 </p>
                 {validation.username && <p className="text-muted-foreground">{t('backup.user', { name: validation.username })}</p>}
@@ -640,7 +640,7 @@ function DeleteDataDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () =>
 
         {deleted ? (
           <div className="text-center py-4">
-            <p className="text-green-500 font-medium">{t('deleteData.allDataDeleted')}</p>
+            <p className="text-teal-400 font-medium">{t('deleteData.allDataDeleted')}</p>
           </div>
         ) : (
           <>
@@ -829,7 +829,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
           <div className="p-3 rounded-lg bg-muted">
             <p className="text-sm font-medium mb-1">{t('i2pConfig.currentStatus')}</p>
             <div className="flex items-center gap-2 text-sm">
-              <span className={`w-2 h-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`} />
+              <span className={`w-2 h-2 rounded-full ${i2pStatus?.samConnected ? 'bg-teal-400' : 'bg-red-500'}`} />
               <span className="text-muted-foreground">
                 {i2pStatus?.samConnected
                   ? t('i2pConfig.connectedSam')
@@ -887,7 +887,7 @@ function I2PConfigDialog({ isOpen, onClose }: { isOpen: boolean; onClose: () => 
               </Button>
 
               {testResult === 'success' && (
-                <p className="text-xs text-green-500 flex items-center gap-1">
+                <p className="text-xs text-teal-400 flex items-center gap-1">
                   <Check className="h-3 w-3" />
                   {t('i2pConfig.samSuccess')}
                 </p>

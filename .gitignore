@@ -24,7 +24,9 @@ npm-debug.log*
 
 # Claude Code local settings
 .claude/
-
+plan/
+# Local temp/scratch space (verify scripts, debug logs)
+.tmp/
 # Editor
 .vscode/
 .idea/
@@ -40,3 +42,12 @@ Thumbs.db
 
 # Vite
 .vite/
+
+# Git worktrees (created via `git worktree add .worktrees/<branch>`)
+.worktrees/
+
+# Playwright artifacts (electron/tests/e2e)
+playwright-report/
+test-results/
+/electron/test-results/
+/electron/playwright-report/

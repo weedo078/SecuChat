@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Shield, Key, Lock, Check, ChevronRight, ChevronLeft, Eye, EyeOff, Download, Copy, AlertCircle, Smartphone, QrCode, UserPlus, ExternalLink, RefreshCw, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -11,15 +11,23 @@ import { cryptoService } from '@/services/crypto';
 import { storageService } from '@/services/storage';
 import { backupService } from '@/services/backup';
 import { i2pService, samService } from '@/services/i2p';
+import { i2pPlugin } from '@/services/i2pPlugin';
 import { platformService, type PlatformInfo } from '@/services/platform';
 import { uint8ArrayToBase64 } from '@/utils/base32';
+import { logger } from '@/utils/logger';
+import { TEST_PASSPHRASE } from '@/utils/testMode';
 import { DeviceQRCode } from './DeviceQRCode';
+import { I2PAppInstallModal } from './I2PAppInstallModal';
 import type { AppSettings } from '@/types';
 
 interface OnboardingProps {
   onComplete: () => void;
   isNewDevice?: boolean;  // True if pairing existing account
 }
+
+// Modul-State: schützt gegen parallele Auto-Onboard-Runs, wenn storage-Event
+// und Polling-Listener im selben Tick feuern (z.B. nach CDP setItem).
+let autoOnboardInFlight = false;
 
 export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps) {
   const { t } = useTranslation();
@@ -42,6 +50,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [showPairing, setShowPairing] = useState(false);
   const [platformInfo] = useState<PlatformInfo | null>(() => platformService.getPlatformInfo());
   const [i2pTestStatus, setI2pTestStatus] = useState<'idle' | 'testing' | 'success' | 'error'>('idle');
+  // null = noch nicht geprüft (kein Modal zeigen), false = fehlt (Modal blockt).
+  const [i2pAppInstalled, setI2pAppInstalled] = useState<boolean | null>(null);
   const [showRestoreFlow, setShowRestoreFlow] = useState(false);
   const [restoreBackupFile, setRestoreBackupFile] = useState<File | null>(null);
   const [restoreKeyFile, setRestoreKeyFile] = useState<File | null>(null);
@@ -49,6 +59,155 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [isRestoring, setIsRestoring] = useState(false);
   const { setUser } = useApp();
+
+  // === DEV/TEST: Auto-onboard via localStorage flag 'secuchat_auto_onboard' ===
+  // Umgeht die UI komplett (für automatisierte Tests ohne manuelles Tippen).
+  // Aktivierbar nur durch explizites CDP/localStorage-Setzen — nie in Production.
+  //
+  // Re-Mount-Harness (Bug-Fix 2026-08-03): useEffect([], []) feuert beim
+  // WebView-Reload nicht erneut, weil React-State im selben Window bleibt.
+  // Wir lauschen zusätzlich auf 'storage'-Events (CDP-setItem triggert sie
+  // auch same-window in modernen Browsern) und pollen alle 500 ms, falls
+  // der storage-Event aus irgendeinem Grund nicht feuert (z.B. private mode).
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof localStorage === 'undefined') return;
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (cancelled) return;
+      if (localStorage.getItem('secuchat_auto_onboard') !== '1') return;
+      if (autoOnboardInFlight) return;
+      autoOnboardInFlight = true;
+      try {
+        console.log('[AUTO-ONBOARD] start');
+        // Username + DeviceName: erlauben Override via localStorage für Test-Mode
+        // Onboarding pro Gerät (Standardwerte bleiben für Backwards-Compat).
+        const u = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_username')
+          : null) || 'Android';
+        const dev = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_device')
+          : null) || 'Pixel Phone';
+        const p = TEST_PASSPHRASE;
+        const keys = await cryptoService.generateKeyPair(u, p);
+        if (cancelled) return;
+        // SAM-Destination ZUERST erzeugen (bevor generateIdentity läuft und die
+        // Identity überschreibt). Sonst droht der Race, bei dem setSamDestination
+        // die Destination verwirft, weil this.identity zwischenzeitlich null ist.
+        let samDestination: string | undefined;
+        // Android seit dem Wechsel auf i2p-App (Java I2P via I2CP): das alte
+        // Capacitor-Plugin "SAM" ist nicht mehr implementiert. Wir gehen direkt
+        // über i2pPlugin (Capacitor-Plugin "I2P") und erzeugen die Destination
+        // über das native I2CP-Socket. Auf dem Browser bleibt der SAM-Pfad
+        // unverändert (kein i2pPlugin verfügbar).
+        const isAndroid = platformService.isAndroidNative();
+        if (isAndroid) {
+          try {
+            const i2cpHost = (typeof localStorage !== 'undefined'
+              ? (localStorage.getItem('secuchat_auto_onboard_host')
+                  || localStorage.getItem('secuchat_sam_host'))
+              : null) || '127.0.0.1';
+            const initResult = await i2pPlugin.initialize({
+              host: i2cpHost,
+              port: 7654,
+              enabled: true,
+            });
+            console.log('[AUTO-ONBOARD] i2pPlugin.initialize', { host: i2cpHost, b32: initResult?.b32Address?.slice(0, 20) });
+            // The native I2CP layer persists the private key itself (IdentityStore
+            // in I2PPlugin.java). We only need the public SAM destination (Base64
+            // privateKey) for sharing with peers. The b32 address is the same as
+            // dest.toBase32() computed by the Java side.
+            const b32 = initResult?.b32Address;
+            if (b32) {
+              // Cache as samDestination so setSamDestination semantics keep
+              // working downstream. The native side already owns the canonical
+              // private key — we keep the b32 here purely for the user record.
+              samDestination = b32;
+              i2pService.setSamDestination(b32);
+              console.log('[AUTO-ONBOARD] i2p destination set on service', {
+                b32Len: b32.length,
+                identityHasDestination: !!i2pService.exportIdentity()?.samDestination,
+              });
+            } else {
+              console.warn('[AUTO-ONBOARD] i2pPlugin.initialize returned no b32');
+            }
+          } catch (e) { console.warn('[AUTO-ONBOARD] i2pPlugin init failed:', e); }
+        }
+        const i2p = await i2pService.generateIdentity();
+        if (cancelled) return;
+        // Nach generateIdentity nochmal lesen — der Service hat evtl. selbst
+        // eine Destination erzeugt (SAM connected) und wir wollen den echten Wert.
+        if (!samDestination) {
+          samDestination = i2pService.exportIdentity()?.samDestination;
+        }
+        await storageService.init();
+        const userRec = {
+          id: crypto.randomUUID(), username: u, deviceId: crypto.randomUUID(),
+          deviceName: dev, pgpPublicKey: keys.publicKey, pgpPrivateKey: keys.privateKey,
+          fingerprint: keys.fingerprint, i2pAddress: i2p.b32Address,
+          i2pPublicKey: uint8ArrayToBase64(i2p.publicKey), i2pPrivateKey: uint8ArrayToBase64(i2p.privateKey),
+          i2pSamDestination: samDestination, createdAt: new Date().toISOString(),
+        };
+        console.log('[AUTO-ONBOARD] userRec built', {
+          samDestLen: (userRec.i2pSamDestination || '').length,
+          samStart: (userRec.i2pSamDestination || '').slice(0, 32),
+        });
+        storageService.setEncryptionPassphrase(p);
+        // Test-Passphrase liegt als Konstante in utils/testMode.ts — der AppContext
+        // liest sie beim Auto-Unlock direkt von dort, nicht mehr aus einem
+        // verlustbaren localStorage-Flag.
+        await storageService.saveUser(userRec);
+        const platform = platformService.getPlatformInfo();
+        // I2CP-Host für i2p-App: Emulator → 10.0.2.2:7654, Telefon im LAN → 192.168.x.x:7654
+        const hostOverride = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_auto_onboard_host')
+          : null) || '127.0.0.1';
+        // Android: i2p-App spricht I2CP (7654), Browser/Electron: SAM-Proxy (7657).
+        const portOverride = platform.i2pSupport === 'native' ? 7654 : 7657;
+        await storageService.saveSettings({
+          theme: 'dark', language: 'de', notifications: true,
+          notificationSettings: { enabled: true, sound: true, vibration: true, showPreview: true, priority: 'high' },
+          soundEnabled: true, autoLock: false, lockTimeout: 5, screenshotProtection: true,
+          syncEnabled: true, deviceName: dev,
+          i2p: { mode: platform.i2pSupport === 'native' ? 'auto' : 'sam',
+                 sam: { enabled: true, host: hostOverride, port: portOverride, nickname: 'securechat' } },
+        } as AppSettings);
+        localStorage.removeItem('secuchat_auto_onboard');
+        console.log('[AUTO-ONBOARD] success, reloading');
+        autoOnboardInFlight = false;
+        onComplete();
+      } catch (err) {
+        autoOnboardInFlight = false;
+        console.error('[AUTO-ONBOARD] FAILED:', err instanceof Error ? err.message : String(err), err);
+      }
+    };
+
+    // 1) Direkter Mount-Check (für Reload-Szenarien, bei denen das Flag schon gesetzt ist)
+    void run();
+
+    // 2) storage-Event: triggert auch same-window bei modernen Browsern/WebViews,
+    //    wenn CDP ein setItem aufruft, NACHDEM React gemountet wurde.
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key === 'secuchat_auto_onboard' && ev.newValue === '1') {
+        void run();
+      }
+    };
+    window.addEventListener('storage', onStorage);
+
+    // 3) Polling-Fallback: alle 500 ms prüfen, falls storage-Event im WebView
+    //    nicht zuverlässig same-window feuert (historisch auf manchen Android-WebViews).
+    const pollInterval = setInterval(() => {
+      void run();
+    }, 500);
+
+    return () => {
+      cancelled = true;
+      window.removeEventListener('storage', onStorage);
+      clearInterval(pollInterval);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const totalSteps = isNewDevice ? 3 : 5;
   const progress = (step / totalSteps) * 100;
@@ -84,6 +243,36 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step]);
+
+  // Android: die I2P-Router-App (net.i2p.android) ist Pflicht — ohne sie gibt es
+  // keinen I2CP-Router. Bei fehlender App blockt I2PAppInstallModal Schritt 4.
+  const checkI2pAppPresence = useCallback(async () => {
+    if (!platformService.isAndroidNative()) return;
+    try {
+      const installed = await i2pPlugin.isI2pAppInstalled();
+      if (isMountedRef.current) setI2pAppInstalled(installed);
+    } catch (e) {
+      // Plugin-Aufruf fehlgeschlagen (z.B. alte Native-Version): als "fehlt"
+      // behandeln, damit der Nutzer die Install-Anleitung sieht statt später
+      // an einem unklaren start()-Fehler zu scheitern.
+      logger.warn('[Onboarding] isI2pAppInstalled failed:', e);
+      if (isMountedRef.current) setI2pAppInstalled(false);
+    }
+  }, []);
+
+  // Ref-Indirection wie bei testI2PConnectionRef: die Zuweisung passiert in
+  // einem Effect (nicht während des Renders), und der Mount-Effect ruft nur
+  // ref.current() — so löst der Effect-Body keine direkte setState-Kette aus.
+  // Deklarationsreihenfolge ist wichtig: der Sync-Effect muss vor dem
+  // Mount-Effect stehen, damit die Ref beim ersten Lauf schon gesetzt ist.
+  const checkI2pAppPresenceRef = useRef<() => Promise<void>>(() => Promise.resolve());
+  useEffect(() => {
+    checkI2pAppPresenceRef.current = checkI2pAppPresence;
+  });
+
+  useEffect(() => {
+    checkI2pAppPresenceRef.current();
+  }, []);
 
   const generateKeys = async () => {
     if (passphrase !== confirmPassphrase) {
@@ -149,6 +338,13 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
         theme: 'dark',
         language: 'de',
         notifications: true,
+        notificationSettings: {
+          enabled: true,
+          sound: true,
+          vibration: true,
+          showPreview: true,
+          priority: 'high',
+        },
         soundEnabled: true,
         autoLock: true,
         lockTimeout: 5,
@@ -160,7 +356,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
           sam: {
             enabled: i2pTestStatus === 'success',
             host: '127.0.0.1',
-            port: 7657,
+            port: platformService.isAndroidNative() ? 7656 : 7657,
             nickname: 'securechat',
           },
         },
@@ -184,7 +380,9 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
     setError(null);
 
     // Electron has bundled i2pd that may need a moment to start — give it more time
-    const timeoutMs = platformService.isElectron() ? 30000 : 10000;
+    // Android native uses direct TCP connection (port 7656), not WebSocket proxy (port 7657)
+    const timeoutMs = platformService.isElectron() ? 30000 : 15000;
+    const samPort = platformService.isAndroidNative() ? 7656 : 7657;
 
     try {
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -194,7 +392,7 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
       const available = await Promise.race([
         samService.isAvailable({
           host: '127.0.0.1',
-          port: 7657,
+          port: samPort,
           enabled: true,
         }),
         timeoutPromise,
@@ -202,18 +400,22 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
       setI2pTestStatus(available ? 'success' : 'error');
       if (!available) {
-        setError(t('onboarding.i2pdNotReachable'));
+        setError(platformService.isAndroidNative()
+          ? t('onboarding.javaI2pNotReachableAndroid')
+          : t('onboarding.i2pdNotReachable'));
       }
     } catch (err) {
       setI2pTestStatus('error');
       if (err instanceof Error && err.message === 'TIMEOUT') {
         if (platformService.isElectron()) {
           setError(t('onboarding.i2pdElectronTimeout', { timeout: timeoutMs / 1000 }));
+        } else if (platformService.isAndroidNative()) {
+          setError(t('onboarding.javaI2pAndroidTimeout', { timeout: timeoutMs / 1000 }));
         } else {
           setError(t('onboarding.i2pdBrowserTimeout', { timeout: timeoutMs / 1000 }));
         }
       } else {
-        setError(t('onboarding.i2pdTestError'));
+        setError(t('onboarding.javaI2pTestError'));
       }
     }
   };
@@ -276,8 +478,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // New device pairing flow
   if (isNewDevice) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-lg">
+      <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
+        <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Smartphone className="h-8 w-8 text-primary" />
@@ -390,8 +592,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
   // Restore from backup flow
   if (showRestoreFlow) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <div className="w-full max-w-lg">
+      <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
+        <div className="w-full max-w-lg my-auto">
           <div className="text-center mb-8">
             <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
               <Upload className="h-8 w-8 text-primary" />
@@ -465,10 +667,10 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
             {/* Validation info */}
             {restoreValidation?.valid && (
-              <div className="p-4 bg-green-500/10 rounded-lg space-y-1">
+              <div className="p-4 bg-teal-400/10 rounded-lg space-y-1">
                 <div className="flex items-center gap-2">
-                  <Check className="h-4 w-4 text-green-500" />
-                  <span className="font-medium text-green-500">{t('onboarding.validBackup')}</span>
+                  <Check className="h-4 w-4 text-teal-400" />
+                  <span className="font-medium text-teal-400">{t('onboarding.validBackup')}</span>
                 </div>
                 {restoreValidation.username && (
                   <p className="text-sm text-muted-foreground">{t('onboarding.user', { name: restoreValidation.username })}</p>
@@ -525,8 +727,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
 
   // New account flow
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
+    <div className="h-dvh bg-background flex items-start justify-center p-4 overflow-y-auto">
+      <div className="w-full max-w-lg my-auto">
         {/* Header */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/10 mb-4">
@@ -702,8 +904,8 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div className="p-4 bg-green-500/10 rounded-lg text-center">
-                    <Check className="h-8 w-8 text-green-500 mx-auto mb-2" />
+                  <div className="p-4 bg-teal-400/10 rounded-lg text-center">
+                    <Check className="h-8 w-8 text-teal-400 mx-auto mb-2" />
                     <p className="font-medium">{t('onboarding.keysCreated')}</p>
                   </div>
 
@@ -795,12 +997,12 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
                         ) : i2pTestStatus === 'success' ? (
                           <>
                             <Check className="h-4 w-4 mr-2" />
-                            {t('onboarding.i2pdConnected')}
+                            {t('onboarding.javaI2pConnected')}
                           </>
                         ) : i2pTestStatus === 'error' ? (
                           <>
                             <AlertCircle className="h-4 w-4 mr-2" />
-                            {t('onboarding.i2pdNotFound')}
+                            {t('onboarding.javaI2pNotFound')}
                           </>
                         ) : (
                           <>
@@ -827,14 +1029,24 @@ export function Onboarding({ onComplete, isNewDevice = false }: OnboardingProps)
               <div className="p-3 bg-yellow-500/10 rounded-lg border border-yellow-500/30">
                 <p className="text-sm text-yellow-500 font-medium flex items-center gap-2">
                   <Lock className="h-4 w-4" />
-                  {platformService.isElectron() ? t('onboarding.i2pdIntegrated') : t('onboarding.i2pdSamRequired')}
+                  {platformService.isElectron()
+                    ? t('onboarding.i2pdIntegrated')
+                    : platformService.isAndroidNative()
+                      ? t('onboarding.javaI2pAndroidRequired')
+                      : t('onboarding.i2pdSamRequired')}
                 </p>
                 <p className="text-xs text-muted-foreground mt-1">
                   {platformService.isElectron()
                     ? t('onboarding.i2pdIntegratedDesc')
-                    : t('onboarding.i2pdSamRequiredDesc')}
+                    : platformService.isAndroidNative()
+                      ? t('onboarding.javaI2pAndroidRequiredDesc')
+                      : t('onboarding.i2pdSamRequiredDesc')}
                 </p>
               </div>
+
+              {platformService.isAndroidNative() && i2pAppInstalled === false && (
+                <I2PAppInstallModal onRetry={checkI2pAppPresence} />
+              )}
             </div>
           )}
 
@@ -1032,9 +1244,9 @@ function DeviceManualImport({ onComplete }: { onComplete: () => void }) {
       )}
 
       {success && (
-        <Alert className="bg-green-500/10 border-green-500/30">
-          <Check className="h-4 w-4 text-green-500" />
-          <AlertDescription className="text-green-500">{t('onboarding.contactImported')}</AlertDescription>
+        <Alert className="bg-teal-400/10 border-teal-400/30">
+          <Check className="h-4 w-4 text-teal-400" />
+          <AlertDescription className="text-teal-400">{t('onboarding.contactImported')}</AlertDescription>
         </Alert>
       )}
 

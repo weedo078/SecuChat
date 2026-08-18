@@ -16,7 +16,7 @@ import { encryptData, decryptData } from './encryption';
 import { LocalStorageFallback, STORE_KEY_FIELDS } from './fallback';
 
 const DB_NAME = 'SecureChatDB';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 /** Encryption format version marker */
 const ENCRYPTION_VERSION_MARKER = 'v2:';
@@ -71,6 +71,7 @@ export class BrowserStorageProvider implements StorageProvider {
    */
   async init(): Promise<void> {
     if (this.db !== null || this._usingFallback) {
+      this.restoreTestModePassphrase();
       return;
     }
     if (this._initPromise) {
@@ -78,8 +79,38 @@ export class BrowserStorageProvider implements StorageProvider {
     }
     this._initPromise = this._doInit().finally(() => {
       this._initPromise = null;
+      this.restoreTestModePassphrase();
     });
     return this._initPromise;
+  }
+
+  /**
+   * Restore the encryption passphrase from localStorage after a page reload.
+   *
+   * Bug fix: `encryptionPassphrase` is an in-memory field on the storage provider.
+   * After `window.location.reload()` (used by auto-onboarding), the passphrase is
+   * lost. The next `saveUser` call would then encrypt an already-encrypted
+   * (`v2:...`) pgpPrivateKey string a SECOND time — producing a double-encrypted
+   * blob that can never be decrypted back to the original `-----BEGIN PGP`
+   * armored key. Symptom: `AppContext.isLocked=true`, chats/contacts loaded but
+   * UI shows empty "Welcome" screen, `tryDecrypt.directAesGcm.ok=false`.
+   *
+   * In test mode (`secuchat_test_mode === '1'`), the passphrase is the constant
+   * `TEST_PASSPHRASE` from `@/utils/testMode`. Restore it automatically on init
+   * so re-saves don't double-encrypt.
+   */
+  private restoreTestModePassphrase(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      if (localStorage.getItem('secuchat_test_mode') !== '1') return;
+      if (this.encryptionPassphrase !== null) return;
+      const stored = localStorage.getItem('secuchat_test_pw');
+      const passphrase = stored && stored.length > 0 ? stored : 'testpass123';
+      this.encryptionPassphrase = passphrase;
+      console.log('[Storage] Restored test-mode encryption passphrase from localStorage');
+    } catch {
+      // localStorage may be unavailable (SSR, tests); ignore.
+    }
   }
 
   private async _doInit(): Promise<void> {
@@ -114,28 +145,64 @@ export class BrowserStorageProvider implements StorageProvider {
         reject(new Error('IndexedDB open timed out'));
       }, 5000);
 
+      // Holds the in-flight v2→v3 migration promise. We must NOT resolve
+      // `onsuccess` until it finishes — otherwise `this.db` gets handed
+      // out and other code starts new transactions while the upgrade is
+      // still mutating the schema. The Promise itself is created inside
+      // `onupgradeneeded` so it can run synchronously up to its first
+      // `await`, then drain as microtasks before we resolve.
+      let migrationPromise: Promise<void> | null = null;
+
       request.onerror = () => {
         clearTimeout(timeout);
         reject(request.error);
       };
 
       request.onsuccess = () => {
-        clearTimeout(timeout);
-        this.db = request.result;
+        // Wait for any pending schema migration to finish before exposing
+        // the DB to the rest of the provider.
+        const finish = () => {
+          clearTimeout(timeout);
+          this.db = request.result;
 
-        this.db.onclose = () => {
-          console.warn('[Storage] IndexedDB connection closed unexpectedly');
-          this.db = null;
-          this.initIndexedDB().catch((err) => {
-            console.error('[Storage] Failed to reconnect IndexedDB:', err);
-          });
+          this.db.onclose = () => {
+            console.warn('[Storage] IndexedDB connection closed unexpectedly');
+            this.db = null;
+            this.initIndexedDB().catch((err) => {
+              console.error('[Storage] Failed to reconnect IndexedDB:', err);
+            });
+          };
+
+          resolve();
         };
 
-        resolve();
+        if (migrationPromise) {
+          migrationPromise.then(finish).catch((err) => reject(err));
+        } else {
+          finish();
+        }
       };
 
       request.onupgradeneeded = (event) => {
         const db = (event.target as IDBOpenDBRequest).result;
+        const oldVersion = event.oldVersion;
+
+        // v2 → v3: make chats.contactId UNIQUE. Pre-dedup legacy duplicate
+        // chats (same contactId) BEFORE changing the index — IndexedDB would
+        // otherwise abort the upgrade with a ConstraintError. We keep the
+        // chat with the most recent lastMessageTimestamp (oldest chat loses
+        // its messages and gets deleted).
+        //
+        // Must run BEFORE the contains-guards below (which only act on
+        // missing stores). The chats store exists from v1+.
+        //
+        // We assign the migration promise so `onsuccess` can wait for it.
+        // IDB holds the upgrade transaction open until the JS callback
+        // chain drains — by chaining awaits inside the helper, every
+        // delete/createIndex lands before the tx commits.
+        if (oldVersion < 3 && db.objectStoreNames.contains('chats')) {
+          migrationPromise = this.migrateChatsToUniqueContactId(db);
+        }
 
         if (!db.objectStoreNames.contains('user')) {
           db.createObjectStore('user', { keyPath: 'id' });
@@ -148,7 +215,7 @@ export class BrowserStorageProvider implements StorageProvider {
 
         if (!db.objectStoreNames.contains('chats')) {
           const chatStore = db.createObjectStore('chats', { keyPath: 'id' });
-          chatStore.createIndex('contactId', 'contactId', { unique: false });
+          chatStore.createIndex('contactId', 'contactId', { unique: true });
         }
 
         if (!db.objectStoreNames.contains('messages')) {
@@ -172,6 +239,97 @@ export class BrowserStorageProvider implements StorageProvider {
         console.warn('[Storage] IndexedDB open blocked');
       };
     });
+  }
+
+  /**
+   * v2 → v3 migration: deduplicate chats that share a contactId, then
+   * rebuild the `contactId` index as UNIQUE. Called from onupgradeneeded.
+   *
+   * Why pre-dedup: IndexedDB refuses to upgrade an index to UNIQUE while
+   * duplicates exist — it aborts the upgrade transaction with a
+   * ConstraintError. We therefore pick a winner per contactId group first,
+   * delete the losers (and their messages), then recreate the index.
+   *
+   * Winner selection: chat with the latest `lastMessageTimestamp` wins.
+   * Falls back to insertion order (first seen via Map iteration).
+   *
+   * The handler wraps every async IDB request in a Promise because IDB
+   * callbacks are not awaitable; chaining them with `await` is the only
+   * way to guarantee ordering inside an upgrade transaction.
+   */
+  private async migrateChatsToUniqueContactId(db: IDBDatabase): Promise<void> {
+    if (!db.objectStoreNames.contains('chats')) return;
+    // Combine chats + messages into a single upgrade transaction so we
+    // can interleave reads/deletes across both stores safely.
+    const upgradeTx = db.transaction(['chats', 'messages'], 'readwrite');
+    const chatStore = upgradeTx.objectStore('chats');
+    if (!chatStore.indexNames.contains('contactId')) return;
+    const messageStore = upgradeTx.objectStore('messages');
+    const messagesByChat = messageStore.index('chatId');
+
+    // Step 1: read all chats (await cursor walk).
+    const allChats = await new Promise<Chat[]>((resolve, reject) => {
+      const out: Chat[] = [];
+      const req = chatStore.openCursor();
+      req.onsuccess = (evt) => {
+        const cursor = (evt.target as IDBRequest<IDBCursorWithValue>).result;
+        if (!cursor) {
+          resolve(out);
+          return;
+        }
+        out.push(cursor.value as Chat);
+        cursor.continue();
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    // Step 2: group by contactId, pick winner, delete losers + their msgs.
+    const byContact = new Map<string, Chat[]>();
+    for (const chat of allChats) {
+      if (!chat.contactId) continue;
+      const arr = byContact.get(chat.contactId) ?? [];
+      arr.push(chat);
+      byContact.set(chat.contactId, arr);
+    }
+
+    let dedupedChats = 0;
+    for (const dupes of byContact.values()) {
+      if (dupes.length <= 1) continue;
+      dupes.sort((a, b) =>
+        (b.lastMessageTimestamp ?? '').localeCompare(a.lastMessageTimestamp ?? ''),
+      );
+      for (let i = 1; i < dupes.length; i++) {
+        const loser = dupes[i];
+        // Delete this chat's messages first to avoid orphan rows.
+        await new Promise<void>((resolve, reject) => {
+          const req = messagesByChat.openCursor(IDBKeyRange.only(loser.id));
+          req.onsuccess = (evt) => {
+            const cursor = (evt.target as IDBRequest<IDBCursorWithValue>).result;
+            if (!cursor) {
+              resolve();
+              return;
+            }
+            cursor.delete();
+            cursor.continue();
+          };
+          req.onerror = () => reject(req.error);
+        });
+        await new Promise<void>((resolve, reject) => {
+          const req = chatStore.delete(loser.id);
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+        });
+        dedupedChats++;
+      }
+    }
+
+    // Step 3: drop the non-unique index and recreate it as UNIQUE.
+    chatStore.deleteIndex('contactId');
+    chatStore.createIndex('contactId', 'contactId', { unique: true });
+
+    console.log(
+      `[Storage] Migrated chats.contactId → UNIQUE; removed ${dedupedChats} duplicate chat(s) across ${byContact.size} contact(s)`,
+    );
   }
 
   private initLocalStorageFallback(): void {

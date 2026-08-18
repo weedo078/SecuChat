@@ -1,7 +1,7 @@
 {
   "name": "my-app",
   "private": true,
-  "version": "1.0.14",
+  "version": "1.0.20",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -9,9 +9,29 @@
     "lint": "rm -rf android/app/build android/app/.gradle android/build android/.gradle && eslint .",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "cap:sync": "npx cap sync android",
+    "cap:copy": "npx cap copy android",
+    "cap:open": "npx cap open android",
+    "cap:run": "npx cap run android",
+    "build:android": "npm run build && npx cap sync android",
+    "android": "npm run build && npx cap run android"
   },
   "dependencies": {
+    "@capacitor-community/file-opener": "^8.0.0",
+    "@capacitor-community/keep-awake": "^8.0.0",
+    "@capacitor/android": "^8.2.0",
+    "@capacitor/app": "^8.0.1",
+    "@capacitor/cli": "^8.2.0",
+    "@capacitor/core": "^8.2.0",
+    "@capacitor/filesystem": "^8.1.2",
+    "@capacitor/keyboard": "^8.0.1",
+    "@capacitor/local-notifications": "^8.0.2",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.1",
+    "@capawesome-team/capacitor-android-foreground-service": "^8.0.1",
+    "@capawesome/capacitor-file-picker": "^8.0.2",
     "@hookform/resolvers": "^5.2.2",
     "@radix-ui/react-accordion": "^1.2.12",
     "@radix-ui/react-alert-dialog": "^1.1.15",
@@ -47,11 +67,12 @@
     "cmdk": "^1.1.1",
     "date-fns": "^4.1.0",
     "embla-carousel-react": "^8.6.0",
-    "i18next": "^26.0.2",
+    "html5-qrcode": "^2.3.8",
+    "i18next": "^26.3.6",
     "i18next-browser-languagedetector": "^8.2.1",
     "input-otp": "^1.4.2",
     "jsqr": "^1.4.0",
-    "lucide-react": "^1.7.0",
+    "lucide-react": "^0.562.0",
     "next-themes": "^0.4.6",
     "openpgp": "^6.3.0",
     "qrcode": "^1.5.4",
@@ -69,6 +90,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^25.5.2",
@@ -87,5 +109,17 @@
     "typescript-eslint": "^8.58.1",
     "vite": "^8.2.0",
     "vitest": "^4.1.0"
+  },
+  "overrides": {
+    "tar": "^7.5.11",
+    "glob": "^10.4.0",
+    "minimatch": "^3.1.5",
+    "@xmldom/xmldom": "^0.8.12",
+    "rimraf": "^6.0.0",
+    "handlebars": "^4.7.9",
+    "lodash": "^4.17.21",
+    "picomatch": "^4.0.4",
+    "brace-expansion": "^1.1.13",
+    "flatted": "^3.4.1"
   }
 }

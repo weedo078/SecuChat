@@ -3,11 +3,13 @@ import { useTranslation } from 'react-i18next';
 import { Send, Image as ImageIcon, MoreVertical, Phone, Video, Shield, Check, CheckCheck, Clock, X, Download, Trash2, ShieldCheck, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import appIcon from '/icon-192x192.png';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useApp } from '@/contexts/AppContext';
 import { toast } from 'sonner';
 import { statusMessenger } from '@/services/statusMessages';
+import { MessageSkeleton } from './MessageSkeleton';
 import { ContactVerificationDialog, VerificationBadge } from './ContactVerificationDialog';
 import { VoiceRecordButton } from './VoiceMessageUI';
 import { FileTransferDialog } from './FileTransferUI';
@@ -44,7 +46,7 @@ import {
 
 export function ChatView() {
   const { t } = useTranslation();
-  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat } = useApp();
+  const { activeChat, messages, sendMessage, sendFile, user, encryptionState, i2pStatus, deleteChat, decrypting } = useApp();
   const [messageText, setMessageText] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -261,19 +263,19 @@ export function ChatView() {
   if (!activeChat) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center bg-background p-8">
-        <Shield className="h-24 w-24 text-primary/20 mb-6" aria-hidden="true" />
+        <img src={appIcon} alt="SecuChat" className="h-24 w-24 mb-6 opacity-80" />
         <h2 className="text-2xl font-semibold mb-2">{t('chat.welcome')}</h2>
         <p className="text-muted-foreground text-center max-w-md mb-6">
           {t('chat.welcomeDescription')}
         </p>
         <div className="flex flex-col items-center gap-3 text-sm text-muted-foreground">
           <div className="flex items-center gap-2">
-            <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />
+            <Shield className="h-4 w-4 text-teal-400" aria-hidden="true" />
             <span>{t('chat.pgpActive')}</span>
           </div>
           <div className="flex items-center gap-2">
             <span
-              className={`h-2 w-2 rounded-full ${i2pStatus?.samConnected ? 'bg-green-500' : 'bg-red-500'}`}
+              className={`h-2 w-2 rounded-full ${i2pStatus?.samConnected ? 'bg-teal-400' : 'bg-red-500'}`}
               aria-label={i2pStatus?.samConnected ? t('chat.i2pConnected') : t('chat.i2pNotConnected')}
               role="status"
             />
@@ -290,7 +292,7 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-background">
+    <div className="flex-1 flex flex-col bg-background h-full overflow-hidden">
       {/* Chat Header */}
       <div className="h-16 border-b border-border flex items-center justify-between px-4 shrink-0">
         <div className="flex items-center gap-3">
@@ -300,7 +302,7 @@ export function ChatView() {
             </Avatar>
             {activeChat.contact?.status === 'online' && (
               <span
-                className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-background"
+                className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-teal-400 border-2 border-background"
                 aria-label={t('common.online')}
                 role="status"
               />
@@ -313,7 +315,7 @@ export function ChatView() {
               {encryptionState === 'encrypted' && (
                 <>
                   <span aria-hidden="true">•</span>
-                  <span className="text-green-500 flex items-center gap-1">
+                  <span className="text-teal-400 flex items-center gap-1">
                     <Shield className="h-3 w-3" aria-hidden="true" />
                     {t('chat.encrypted')}
                   </span>
@@ -396,9 +398,12 @@ export function ChatView() {
       </div>
 
       {/* Messages Area */}
-      <ScrollArea ref={scrollRef} className="flex-1 p-4" role="log" aria-label={t('chat.messageHistory')}>
+      <div className="flex-1 overflow-hidden">
+        <ScrollArea ref={scrollRef} className="h-full overflow-y-auto p-4" role="log" aria-label={t('chat.messageHistory')}>
         <div className="space-y-4">
-          {messages.length === 0 ? (
+          {decrypting && messages.length === 0 ? (
+            <MessageSkeleton />
+          ) : messages.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
               <p>{t('chat.noMessages')}</p>
               <p className="text-sm">{t('chat.writeFirstMessage')}</p>
@@ -472,6 +477,7 @@ export function ChatView() {
           )}
         </div>
       </ScrollArea>
+      </div>
 
       {/* Typing Indicator */}
       {isContactTyping && (
@@ -521,7 +527,7 @@ export function ChatView() {
       )}
 
       {/* Input Area */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border shrink-0">
         <div className="flex items-center gap-2">
           <input
             type="file"

@@ -83,9 +83,9 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
   };
 
   return (
-    <div className="w-full h-full flex flex-col bg-card border-r border-border">
+    <div className="w-full h-full flex flex-col bg-card border-r border-border overflow-hidden">
       {/* Header */}
-      <div className="p-4 border-b border-border">
+      <div className="p-4 border-b border-border shrink-0">
         <div className="flex items-center justify-between mb-4">
           <h2 className="font-semibold text-lg">{t('sidebar.chats')}</h2>
           <div className="flex gap-1">
@@ -95,6 +95,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                   variant="ghost"
                   size="icon"
                   aria-label={t('sidebar.createNewChat')}
+                  className="hover:bg-accent"
                 >
                   <Plus className="h-5 w-5" aria-hidden="true" />
                 </Button>
@@ -140,6 +141,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
               size="icon"
               onClick={onAddContact}
               aria-label={t('sidebar.addContact')}
+              className="hover:bg-accent"
             >
               <UserPlus className="h-5 w-5" aria-hidden="true" />
             </Button>
@@ -148,6 +150,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
               size="icon"
               onClick={onShareContact}
               aria-label={t('sidebar.shareContact')}
+              className="hover:bg-accent"
             >
               <Share2 className="h-5 w-5" aria-hidden="true" />
             </Button>
@@ -167,7 +170,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       </div>
 
       {/* Chat List */}
-      <ScrollArea className="flex-1" role="navigation" aria-label={t('chat.chatList')}>
+      <ScrollArea className="flex-1 overflow-y-auto" role="navigation" aria-label={t('chat.chatList')}>
         <div className="p-2">
           {filteredChats.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground">
@@ -197,7 +200,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
                   </Avatar>
                   {chat.contact?.status === 'online' && (
                     <span
-                      className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-green-500 border-2 border-card"
+                      className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-teal-400 border-2 border-card"
                       aria-label={t('common.online')}
                       role="status"
                     />
@@ -276,7 +279,7 @@ export function Sidebar({ onAddContact, onShareContact, onSettingsClick }: Sideb
       </AlertDialog>
 
       {/* Footer */}
-      <div className="p-4 border-t border-border">
+      <div className="p-4 border-t border-border shrink-0">
         <div className="flex items-center justify-between">
           <Button
             variant="ghost"

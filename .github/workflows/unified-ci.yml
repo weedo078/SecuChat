@@ -12,7 +12,18 @@ on:
         required: false
 
 env:
-  I2PD_VERSION: '2.59.0'
+  # Kimi API configuration - can be overridden via repository variables
+  # I2PD_VERSION removed in commit <sha>: i2pd-bundled resources are obsolete
+  # post-I2CP migration (Java I2P replaces i2pd on Linux + Windows via the
+  # install scripts .github/scripts/setup-i2p.{sh,ps1}).
+  KIMI_API_URL: ${{ vars.KIMI_API_URL || 'https://api.kimi.com/coding/' }}
+  KIMI_MODEL: ${{ vars.KIMI_MODEL || 'kimi-for-coding' }}
+  KIMI_MAX_TOKENS: ${{ vars.KIMI_MAX_TOKENS || '4000' }}
+  # Diff processing limits - prevents API payload size issues and keeps reviews focused
+  # 100 lines: preview shown in logs for debugging
+  # 300 lines: maximum diff content sent to API (keeps reviews focused on most relevant changes)
+  DIFF_PREVIEW_LINES: 100
+  DIFF_MAX_LINES: 300
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
@@ -102,13 +113,6 @@ jobs:
         working-directory: ./app
         run: npm run build
 
-      - name: Upload Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-build
-          path: app/dist
-          retention-days: 1
-
   # ═══════════════════════════════════════════════════════════════
   # SECURITY CHECKS
   # ═══════════════════════════════════════════════════════════════
@@ -158,6 +162,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      - name: Update version for PR build
+        shell: bash
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          BETA_NUM=${{ github.run_number }}
+          # SemVer format for Electron: 1.0.0-PR107-beta.44
+          NEW_VERSION="1.0.0-PR${PR_NUM}-beta.${BETA_NUM}"
+          echo "Setting version to: $NEW_VERSION"
+          # Update package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
+
       - name: Get version info
         id: version
         shell: bash
@@ -172,14 +187,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20.19'
-
-      - name: Download i2pd (Windows x64)
-        shell: pwsh
-        run: |
-          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
-          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
-          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
-          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
 
       - name: Update package.json version
         shell: pwsh
@@ -248,17 +255,35 @@ jobs:
       - name: Check if Android directory exists
         id: check-android
         run: |
-          if [ -d "android" ]; then
+          if [ -d "app/android" ]; then
             echo "exists=true" >> $GITHUB_OUTPUT
           else
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "Android directory not found, skipping Android build"
           fi
 
+      - name: Update version for PR build
+        if: steps.check-android.outputs.exists == 'true' && github.event_name == 'pull_request'
+        working-directory: ./app
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          BETA_NUM=${{ github.run_number }}
+          # SemVer format: 1.0.0-PR107-beta.44
+          NEW_VERSION="1.0.0-PR${PR_NUM}-beta.${BETA_NUM}"
+          echo "Setting version to: $NEW_VERSION"
+          # Update package.json
+          node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('package.json','utf8')); p.version='$NEW_VERSION'; fs.writeFileSync('package.json',JSON.stringify(p,null,2)+'\n');"
+          # Update Android versionCode und versionName
+          cd android/app
+          sed -i "s/versionName \"[^\"]*\"/versionName \"$NEW_VERSION\"/" build.gradle
+          # versionCode muss auch erhöht werden (Android braucht Integer)
+          # Nutze run_number als versionCode (eindeutig steigend)
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" build.gradle
+
       - uses: actions/setup-node@v4
         if: steps.check-android.outputs.exists == 'true'
         with:
-          node-version: '20.19'
+          node-version: '22'
           cache: 'npm'
           cache-dependency-path: app/package-lock.json
 
@@ -266,37 +291,61 @@ jobs:
         if: steps.check-android.outputs.exists == 'true'
         uses: actions/setup-java@v5
         with:
-          java-version: '17'
+          java-version: '21'
           distribution: 'temurin'
 
       - name: Setup Android SDK
         if: steps.check-android.outputs.exists == 'true'
         uses: android-actions/setup-android@v4
 
+      - name: Cache Gradle
+        if: steps.check-android.outputs.exists == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Configure Gradle
+        if: steps.check-android.outputs.exists == 'true'
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.configureondemand=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
       - name: Install Capacitor dependencies
         if: steps.check-android.outputs.exists == 'true'
-        working-directory: ./android
+        working-directory: ./app
         run: npm ci
 
       - name: Build Web App
         if: steps.check-android.outputs.exists == 'true'
         working-directory: ./app
-        run: npm ci && npm run build:android || npm run build
+        run: npm run build:android || npm run build
 
       - name: Sync Capacitor
         if: steps.check-android.outputs.exists == 'true'
-        working-directory: ./android
+        working-directory: ./app
         run: npx cap sync android
+
+      - name: Make gradlew executable
+        if: steps.check-android.outputs.exists == 'true'
+        working-directory: ./app/android
+        run: chmod +x gradlew
 
       - name: Build Debug APK
         if: steps.check-android.outputs.exists == 'true'
-        working-directory: ./android/android
-        run: ./gradlew assembleDebug
+        working-directory: ./app/android
+        run: ./gradlew assembleDebug --build-cache --configure-on-demand
 
       - name: Validate APK
         if: steps.check-android.outputs.exists == 'true'
         run: |
-          APK_SIZE=$(stat -c%s "android/android/app/build/outputs/apk/debug/app-debug.apk")
+          APK_SIZE=$(stat -c%s "app/android/app/build/outputs/apk/debug/app-debug.apk")
           echo "APK Size: $APK_SIZE bytes"
           if [ $APK_SIZE -lt 1000000 ]; then
             echo "❌ APK seems too small!"
@@ -308,82 +357,53 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: android-debug-apk
-          path: android/android/app/build/outputs/apk/debug/app-debug.apk
+          path: app/android/app/build/outputs/apk/debug/app-debug.apk
           retention-days: 7
 
   # ═══════════════════════════════════════════════════════════════
-  # KIMI CODE REVIEW (PRs only)
+  # PR COMMENT (Combined Windows + Android build status with download links)
   # ═══════════════════════════════════════════════════════════════
-  kimi-review:
-    name: Kimi Code Review
+  pr-comment:
+    name: Comment PR Builds
     runs-on: ubuntu-latest
-    needs: detect-changes
+    needs: [build-windows-pr, build-android]
     if: |
       github.event_name == 'pull_request' &&
-      github.event.pull_request.draft == false &&
-      (needs.detect-changes.outputs.app-core == 'true' ||
-       needs.detect-changes.outputs.electron == 'true' ||
-       needs.detect-changes.outputs.android == 'true')
+      github.event.pull_request.draft == false
     permissions:
-      contents: read
       pull-requests: write
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Get changed files
-        id: changed-files
-        run: |
-          git fetch origin ${{ github.base_ref }} --depth=1
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.(ts|tsx|js|jsx|json)$' | head -50 || true)
-          echo "files<<EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGED_FILES" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Run Kimi Code Review
-        id: review
-        env:
-          KIMI_API_KEY: ${{ secrets.KIMI_API_KEY }}
-        run: |
-          REVIEW_CONTENT=""
-          for file in ${{ steps.changed-files.outputs.files }}; do
-            if [ -f "$file" ]; then
-              REVIEW_CONTENT+="\n=== $file ===\n"
-              REVIEW_CONTENT+=$(cat "$file" | head -100)
-            fi
-          done
-
-          PAYLOAD=$(jq -n \
-            --arg content "$REVIEW_CONTENT" \
-            --arg pr "${{ github.event.pull_request.number }}" \
-            '{model: "kimi-coding/k2p5", messages: [{role: "system", content: "You are a code reviewer. Review the following code changes and provide feedback on: 1) Bugs or issues 2) Security concerns 3) Performance improvements 4) Code style. Be concise and actionable."}, {role: "user", content: $content}]}')
-
-          RESPONSE=$(curl -s -X POST "https://api.openrouter.ai/v1/chat/completions" \
-            -H "Authorization: Bearer $KIMI_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d "$PAYLOAD")
-
-          REVIEW_TEXT=$(echo "$RESPONSE" | jq -r '.choices[0].message.content // "No review generated"')
-          echo "review<<EOF" >> $GITHUB_OUTPUT
-          echo "$REVIEW_TEXT" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Post review comment
+      - name: Post build status comment
         uses: actions/github-script@v9
         with:
           script: |
-            const review = `${{ steps.review.outputs.review }}`;
-            const prNumber = context.issue.number;
+            const windowsStatus = '${{ needs.build-windows-pr.result }}';
+            const androidStatus = '${{ needs.build-android.result }}';
+
+            const windowsEmoji = windowsStatus === 'success' ? '✅' : (windowsStatus === 'failure' ? '❌' : '⏭️');
+            const androidEmoji = androidStatus === 'success' ? '✅' : (androidStatus === 'failure' ? '❌' : '⏭️');
+
+            let body = `## 📦 PR Build Status\n\n`;
+            body += `| Platform | Status | Download |\n`;
+            body += `|----------|--------|----------|\n`;
+
+            if (windowsStatus !== 'skipped') {
+              body += `| 🪟 Windows | ${windowsEmoji} | [Artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
+            }
+
+            if (androidStatus !== 'skipped') {
+              body += `| 🤖 Android | ${androidEmoji} | [Artifact](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}) |\n`;
+            }
+
+            body += `\n> ⚠️ Diese Builds sind für Testzwecke.\n`;
+
             github.rest.issues.createComment({
-              issue_number: prNumber,
+              issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: `🤖 **Kimi Code Review**\n\n${review}\n\n---\n*Powered by Kimi via Claude Code integration*`
+              body: body
             });
 
-  # ═══════════════════════════════════════════════════════════════
   # RELEASE JOBS (Only on main push or workflow_dispatch)
   # ═══════════════════════════════════════════════════════════════
   determine-version:
@@ -453,14 +473,6 @@ jobs:
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
 
-      - name: Download i2pd (Linux x64)
-        run: |
-          curl -L -o i2pd.deb "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1_amd64.deb"
-          dpkg-deb -x i2pd.deb /tmp/i2pd_extract
-          I2PD_BIN=$(find /tmp/i2pd_extract -name "i2pd" -type f | head -1)
-          cp "$I2PD_BIN" electron/resources/i2pd/linux/i2pd
-          chmod +x electron/resources/i2pd/linux/i2pd
-
       - name: Build
         working-directory: ./app
         run: npm ci && npm run build
@@ -495,15 +507,6 @@ jobs:
           V_PLAIN="${V#v}"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('electron/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('electron/package.json',JSON.stringify(p,null,2)+'\n');"
           node -e "const fs=require('fs'); const p=JSON.parse(fs.readFileSync('app/package.json','utf8')); p.version='$V_PLAIN'; fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');"
-
-      - name: Download i2pd (Linux arm64)
-        run: |
-          curl -L -o i2pd.deb "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}-1_arm64.deb"
-          dpkg-deb -x i2pd.deb /tmp/i2pd_extract
-          I2PD_BIN=$(find /tmp/i2pd_extract -name "i2pd" -type f | head -1)
-          mkdir -p electron/resources/i2pd/linux
-          cp "$I2PD_BIN" electron/resources/i2pd/linux/i2pd
-          chmod +x electron/resources/i2pd/linux/i2pd
 
       - name: Build
         working-directory: ./app
@@ -543,14 +546,6 @@ jobs:
           $ap.version = $VPlain
           $ap | ConvertTo-Json -Depth 100 | Set-Content 'app/package.json'
 
-      - name: Download i2pd (Windows)
-        shell: pwsh
-        run: |
-          $url = "https://github.com/PurpleI2P/i2pd/releases/download/${{ env.I2PD_VERSION }}/i2pd_${{ env.I2PD_VERSION }}_win64_mingw.zip"
-          Invoke-WebRequest -Uri $url -OutFile i2pd.zip
-          Expand-Archive -Path i2pd.zip -DestinationPath i2pd_extract
-          Copy-Item i2pd_extract\i2pd.exe electron\resources\i2pd\win\i2pd.exe
-
       - name: Build
         working-directory: ./app
         run: npm ci && npm run build
@@ -566,10 +561,91 @@ jobs:
           name: windows-release
           path: electron/release/*.exe
 
+  # ── Android Release ───────────────────────────────────────────
+  build-release-android:
+    name: Release Android
+    needs: [determine-version, test]
+    runs-on: ubuntu-latest
+    if: needs.determine-version.outputs.should-release == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: gradle-${{ runner.os }}-
+
+      - name: Configure Gradle
+        run: |
+          mkdir -p ~/.gradle
+          echo "org.gradle.daemon=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.parallel=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.configureondemand=true" >> ~/.gradle/gradle.properties
+          echo "org.gradle.caching=true" >> ~/.gradle/gradle.properties
+
+      - name: Install Capacitor dependencies
+        working-directory: ./app
+        run: npm ci
+
+      - name: Build Web App
+        working-directory: ./app
+        run: npm run build:android || npm run build
+
+      - name: Sync Capacitor
+        working-directory: ./app
+        run: npx cap sync android
+
+      - name: Make gradlew executable
+        working-directory: ./app/android
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        working-directory: ./app/android
+        run: ./gradlew assembleRelease --build-cache --configure-on-demand
+
+      - name: Validate APK
+        run: |
+          APK_SIZE=$(stat -c%s "app/android/app/build/outputs/apk/release/app-release-unsigned.apk")
+          echo "APK Size: $APK_SIZE bytes"
+          if [ $APK_SIZE -lt 1000000 ]; then
+            echo "❌ APK seems too small!"
+            exit 1
+          fi
+
+      - name: Rename APK with version
+        run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          cp app/android/app/build/outputs/apk/release/app-release-unsigned.apk \
+             "app/android/app/build/outputs/apk/release/SecuChat-${VERSION}-android.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: app/android/app/build/outputs/apk/release/SecuChat-*.apk
+
   # ── Create GitHub Release ─────────────────────────────────────
   create-release:
     name: Create GitHub Release
-    needs: [determine-version, build-release-linux-x64, build-release-linux-arm64, build-release-windows]
+    needs: [determine-version, build-release-linux-x64, build-release-linux-arm64, build-release-windows, build-release-android]
     runs-on: ubuntu-latest
     if: needs.determine-version.outputs.should-release == 'true'
     permissions:
@@ -596,16 +672,25 @@ jobs:
           git push
           git push --tags
 
-      - uses: actions/download-artifact@v4
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          pattern: |
+            linux-x64-release
+            linux-arm64-release
+            windows-release
+            android-release
+          path: release-artifacts
           merge-multiple: true
+
+      - name: List release files
+        run: find release-artifacts -type f | sort
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ needs.determine-version.outputs.version }}
-          files: artifacts/*
+          files: release-artifacts/**
           draft: false
           generate_release_notes: true
 
@@ -648,7 +733,7 @@ jobs:
   summary:
     name: CI Summary
     runs-on: ubuntu-latest
-    needs: [detect-changes, test, security, kimi-review, build-windows-pr]
+    needs: [detect-changes, test, security, build-windows-pr, build-android, pr-comment]
     if: always()
     steps:
       - name: Generate Summary
@@ -667,4 +752,5 @@ jobs:
           echo "| Test & Lint | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Security | ${{ needs.security.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Windows PR | ${{ needs.build-windows-pr.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Kimi Review | ${{ needs.kimi-review.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Android Build | ${{ needs.build-android.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PR Comment | ${{ needs.pr-comment.result }} |" >> $GITHUB_STEP_SUMMARY

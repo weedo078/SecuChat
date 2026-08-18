@@ -61,6 +61,10 @@ interface AppContextType {
   securitySettings: SecuritySettings;
   updateSecuritySettings: (settings: Partial<SecuritySettings>) => Promise<void>;
 
+  // Theme
+  theme: 'dark' | 'light' | 'system';
+  setTheme: (theme: 'dark' | 'light' | 'system') => void;
+
   // Connection
   connectionState: ConnectionState;    // derived from i2pStatus + isLocked
   encryptionState: EncryptionState;    // 'encrypted' | 'unencrypted' | 'error'
@@ -79,6 +83,22 @@ interface AppContextType {
   initialize: () => Promise<void>;
 }
 ```
+
+### Default Settings
+
+`AppSettings` includes notification preferences and other platform-aware defaults:
+
+```ts
+const defaultSettings: AppSettings = {
+  i2p: { enabled: false, sam: { host: '127.0.0.1', port: 7657 } },
+  notifications: { enabled: true, soundEnabled: true },
+  autoLock: true,
+  autoLockTimeout: 5, // minutes
+  language: 'auto',   // follows system, falls back to English
+};
+```
+
+`effectiveSamConfig()` adjusts the SAM port based on platform: Electron forces 7657 (bundled proxy), Android uses 7656 (native plugin), browser uses the user-configured value.
 
 ---
 
@@ -147,7 +167,7 @@ useEffect(() => {
 
 `initialize()` is called once on mount from `App.tsx`:
 
-1. `storageService.init()` — open IndexedDB
+1. `storageService.init()` — detect platform, initialize appropriate storage provider (IndexedDB / SQLite / Capacitor)
 2. Load user → detect if keys are encrypted → set `isLocked` if so
 3. Load contacts, chats, settings
 4. `cryptoService.importKeyPair()` — if keys are plaintext

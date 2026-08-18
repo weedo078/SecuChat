@@ -1,43 +1,27 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Upload, Globe, Shield, AlertTriangle, Check, Download, UserPlus, FileDown } from 'lucide-react';
+import { Upload, Shield, AlertTriangle, Check, Download, UserPlus, FileDown, QrCode, ScanLine } from 'lucide-react';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Input } from '@/components/ui/input';
 import { useApp } from '@/contexts/AppContext';
 import { i2pService } from '@/services/i2p';
 import { cryptoService } from '@/services/crypto';
+import { exportContact, importContact, canShareNatively } from '@/services/nativeFileSharing';
+import { AnimatedContactQR } from '@/components/custom/AnimatedContactQR';
+import { QRContactScanner } from '@/components/custom/QRContactScanner';
 import type { Contact } from '@/types';
 
 interface AddContactDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onContactAdded?: (contact: Contact) => void;
-  initialTab?: 'import' | 'share' | 'manual';
+  initialTab?: 'import' | 'share';
 }
 
-/** New format (v1.0) */
+/** v2 contact format - the canonical format for .secuchat files */
 interface ContactData {
-  version: '1.0';
-  metadata: {
-    timestamp: string;
-    username: string;
-    deviceId: string;
-  };
-  keys: {
-    pgpPublicKey: string;
-    fingerprint: string;
-  };
-  network: {
-    p2pIdentifier: string;
-    protocol: string;
-    i2pAddress: string;
-  };
-}
-
-/** Legacy format (v2 compact) for backwards compatibility */
-interface ContactDataLegacy {
   v: '2';
   t: 'sc';
   n: string;
@@ -66,51 +50,151 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const [importError, setImportError] = useState<string | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isAddingContact, setIsAddingContact] = useState(false);
+  const [qrShareData, setQRShareData] = useState<{
+    v: '2'; t: 'sc'; n: string; i: string; f: string; k: string; ts: number;
+  } | null>(null);
+  const showQRShare = qrShareData !== null;
+  const [showQRScan, setShowQRScan] = useState(false);
+  const [cameraPermissionDenied, setCameraPermissionDenied] = useState(false);
 
-  const [manualName, setManualName] = useState('');
-  const [manualI2p, setManualI2p] = useState('');
-  const [manualPgp, setManualPgp] = useState('');
-  const [manualError, setManualError] = useState<string | null>(null);
+  /**
+   * Pre-flight check for camera permission. Solves the "Kamera öffnet sich
+   * nicht" UX bug on Android.
+   *
+   * Wichtige Android-WebView-Eigenheit (Chromium-Implementierung):
+   *   navigator.permissions.query({ name: 'camera' }) gibt auf Android
+   *   WebView *immer* 'prompt' zurück, unabhängig davon, ob die
+   *   Android-MANIFEST-Permission `android.permission.CAMERA` granted
+   *   ist. 'granted' ist in der WebView-Permission-API auf Android
+   *   praktisch unerreichbar. Quelle: empirisch verifiziert auf A54
+   *   mit `granted=true` per `dumpsys package`. Folgerung: 'prompt'
+   *   darf NICHT als "Permission fehlt" interpretiert werden.
+   *
+   * Strategie:
+   * 1. Prüfe Permissions-API nur auf 'denied' (= hart verweigert)
+   * 2. Sonst: einfach QR-Scanner öffnen. Wenn `getUserMedia` real
+   *    fehlschlägt (NotAllowedError / NotFoundError), greift der
+   *    Scanner-eigene Error-Handler (handleQRError) und blendet die
+   *    "Berechtigung fehlt"-Box korrekt ein.
+   */
+  const handleStartQRScan = useCallback(async () => {
+    setImportError(null);
+    setCameraPermissionDenied(false);
+
+    try {
+      const permsApi = (navigator as Navigator & { permissions?: Permissions }).permissions;
+      if (permsApi && typeof permsApi.query === 'function') {
+        const status = await permsApi.query({ name: 'camera' as PermissionName });
+        console.log('[QR-Scan] permission pre-flight state:', status.state);
+        // 'denied' = User hat vorher hart verweigert ("Don't ask again" oder
+        //   manuell in App-Info deaktiviert). Nur dann vorab den Hinweis
+        //   zeigen, weil getUserMedia sonst sofort mit NotAllowedError stirbt.
+        // 'prompt' auf Android-WebView = fast immer "eigentlich granted" —
+        //   nicht拦门.
+        if (status.state === 'denied') {
+          setCameraPermissionDenied(true);
+          return;
+        }
+      }
+    } catch (err) {
+      // Some WebViews throw on unknown permission names — fall through to
+      // the normal getUserMedia path; the scanner's own catch will handle errors.
+      console.warn('[QR-Scan] permission pre-flight failed:', err);
+    }
+
+    setShowQRScan(true);
+  }, []);
+
+  /**
+   * Open native app-settings page so the user can re-enable camera.
+   *
+   * Wichtige Befunde:
+   *   - `Capacitor.Plugins.App.openSettings()` ist im Android-Plugin
+   *     *nicht implementiert* (empirisch verifiziert via CDP-Eval auf
+   *     A54: throws "App.openSettings() is not implemented on android").
+   *   - Auf Android öffnen wir daher per `settings` URL-Intent die
+   *     App-Detail-Settings-Seite. Das ist der Standard-Weg und
+   *     funktioniert auf jedem Android.
+   *   - iOS fällt auf `App.openSettings()` zurück (dort implementiert).
+   *   - Web (Browser) → Toast-Hinweis.
+   */
+  const handleOpenAppSettings = useCallback(() => {
+    void (async () => {
+      try {
+        const { Capacitor } = await import('@capacitor/core');
+        if (!Capacitor.isNativePlatform()) {
+          toast.info(t('qr.permissionDeniedAndroidHint'));
+          return;
+        }
+
+        const platform = Capacitor.getPlatform();
+
+        if (platform === 'android') {
+          // Android: open app-detail settings via Intent. Two compatible shapes:
+          // 1. Package name via cordova-plugin-buildinfo / fallback on Android-Info.
+          // 2. Falls das nicht klappt: ACTION_APPLICATION_DETAILS_SETTINGS mit package-URI.
+          const { App } = await import('@capacitor/app');
+          const info = await App.getInfo();
+          const pkg = info?.id;
+          if (pkg) {
+            // Standard-Intent: openen der App-Info-Seite in den System-Settings.
+            // Auf modernen Androids (API 26+) ist dies der saubere Weg.
+            const intentUrl = `intent://details#Intent;scheme=package;package=${pkg};end`;
+            const fallbackUrl = `package://${pkg}`;
+            // Try primary intent
+            window.location.href = intentUrl;
+            // Fallback: altes "package:" Schema nach kurzer Zeit, falls intent: nicht greift.
+            setTimeout(() => { window.location.href = fallbackUrl; }, 250);
+            return;
+          }
+        }
+
+        if (platform === 'ios') {
+          const { App } = await import('@capacitor/app');
+          // App.openSettings is iOS-only; on Android the plugin doesn't implement it.
+          const open = (App as unknown as { openSettings?: () => Promise<void> }).openSettings;
+          if (typeof open === 'function') {
+            await open.call(App);
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('[QR-Scan] openSettings failed:', err);
+      }
+      // Fallback (Browser / unknown) — Toast-Hinweis mit manuellen Pfad.
+      toast.info(t('qr.permissionDeniedAndroidHint'));
+    })();
+  }, [t]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Toggle handler — runs in a click event, so Date.now() is allowed (not in render).
+  const handleToggleQRShare = () => {
+    if (qrShareData) {
+      setQRShareData(null);
+      return;
+    }
+    if (!user?.i2pAddress) return;
+    setQRShareData({
+      v: '2',
+      t: 'sc',
+      n: user.username,
+      i: user.i2pAddress || '',
+      f: user.fingerprint,
+      k: user.pgpPublicKey,
+      ts: Date.now(),
+    });
+  };
+
 
   // ── Parse ──────────────────────────────────────────────────────────────────
 
   const parseContactData = (raw: string): ContactData | null => {
     try {
       const data = JSON.parse(raw);
-      console.log('[Import] Parsed JSON keys:', Object.keys(data));
-
-      // New format (v1.0)
-      if (data.version === '1.0' && data.metadata && data.keys && data.network) {
-        console.log('[Import] Recognized as v1.0 format');
+      if (data.v === '2' && data.t === 'sc' && data.f && data.i) {
         return data as ContactData;
       }
-
-      // Legacy compact format (v2)
-      if (data.v === '2' && data.t === 'sc') {
-        console.log('[Import] Recognized as legacy v2 format, converting...');
-        const legacy = data as ContactDataLegacy;
-        return {
-          version: '1.0',
-          metadata: {
-            timestamp: new Date(legacy.ts || Date.now()).toISOString(),
-            username: legacy.n,
-            deviceId: '',
-          },
-          keys: {
-            pgpPublicKey: legacy.k || '',
-            fingerprint: legacy.f,
-          },
-          network: {
-            p2pIdentifier: '',
-            protocol: legacy.i ? 'i2p-webrtc' : 'webrtc',
-            i2pAddress: legacy.i,
-          },
-        };
-      }
-
-      console.warn('[Import] Unknown format. v:', data.v, 't:', data.t, 'version:', data.version);
       return null;
     } catch (e) {
       console.error('[Import] JSON parse error:', e);
@@ -118,7 +202,87 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     }
   };
 
+  // Listen for contact import from native Android (file opened from file manager)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail as string;
+      if (detail) {
+        const contact = parseContactData(detail);
+        if (contact) {
+          setImportedContact(contact);
+          setImportError(null);
+          setActiveTab('import');
+        } else {
+          setImportError(t('addContact.invalidFile'));
+        }
+      }
+    };
+    window.addEventListener('secuchat-contact-import', handler);
+    return () => window.removeEventListener('secuchat-contact-import', handler);
+  }, [t]);
+
+  // ── QR Scan Result ────────────────────────────────────────────────────────
+
+  // useCallback stabilisiert die Referenz. Sonst erzeugt der QRContactScanner-
+  // useEffect bei jedem Parent-Render einen neuen Cleanup+Start der Camera,
+  // weil onError als inline-arrow uebergeben wurde → Endlos-Loop, React
+  // rendert nichts mehr, Camera-Stream kommt nie als <video>-Frame an →
+  // schwarzer Preview (User-Bug "Kamera oeffnet nicht").
+  const handleQRScanned = useCallback((raw: string) => {
+    const contact = parseContactData(raw);
+    if (contact) {
+      setImportedContact(contact);
+      setShowQRScan(false);
+    } else {
+      setImportError(t('addContact.invalidFile'));
+    }
+  }, [t]);
+
+  const handleQRError = useCallback((err: string) => {
+    setShowQRScan(false);
+    // Distinguish permission errors (user-fixable) from generic scan errors.
+    if (/permission|notallowed|not.*allowed|denied/i.test(err)) {
+      setCameraPermissionDenied(true);
+      return;
+    }
+    setImportError(err);
+  }, []);
+
   // ── Import ─────────────────────────────────────────────────────────────────
+
+  const handleNativeImport = async () => {
+    if (!canShareNatively()) return;
+
+    setIsImporting(true);
+    setImportError(null);
+
+    try {
+      const result = await importContact();
+
+      if (result.success && result.data) {
+        const contact: ContactData = {
+          v: '2',
+          t: 'sc',
+          n: result.data.name || '',
+          i: result.data.i2pAddress,
+          f: result.data.fingerprint,
+          k: result.data.pgpPublicKey,
+          ts: Date.now(),
+        };
+        setImportedContact(contact);
+      } else {
+        console.warn('[Import] Native import failed:', result.error);
+        // Fall back to file input
+        fileInputRef.current?.click();
+      }
+    } catch (error) {
+      console.error('[Import] Native import exception:', error);
+      // Fall back to file input
+      fileInputRef.current?.click();
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -137,7 +301,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       });
 
       console.log('[Import] Contact parse result:', contact
-        ? { version: contact.version, username: contact.metadata.username, hasKey: !!contact.keys.pgpPublicKey }
+        ? { name: contact.n, hasKey: !!contact.k }
         : null);
 
       if (contact) {
@@ -160,9 +324,9 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     if (!importedContact) return;
     setIsAddingContact(true);
     try {
-      if (importedContact.keys.pgpPublicKey) {
-        console.log('[Import] Validating PGP key, length:', importedContact.keys.pgpPublicKey.length, 'starts with:', importedContact.keys.pgpPublicKey.slice(0, 30));
-        const validation = await cryptoService.validatePublicKey(importedContact.keys.pgpPublicKey);
+      if (importedContact.k) {
+        console.log('[Import] Validating PGP key, length:', importedContact.k.length, 'starts with:', importedContact.k.slice(0, 30));
+        const validation = await cryptoService.validatePublicKey(importedContact.k);
         console.log('[Import] PGP validation result:', validation);
         if (!validation.valid) {
           setImportError(t('addContact.invalidPgpKey'));
@@ -174,11 +338,11 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
       const contact: Contact = {
         id: crypto.randomUUID(),
-        name: importedContact.metadata.username,
-        pgpPublicKey: importedContact.keys.pgpPublicKey || '',
-        fingerprint: importedContact.keys.fingerprint,
-        p2pIdentifier: importedContact.network.p2pIdentifier || importedContact.network.i2pAddress,
-        i2pAddress: importedContact.network.i2pAddress,
+        name: importedContact.n,
+        pgpPublicKey: importedContact.k || '',
+        fingerprint: importedContact.f,
+        p2pIdentifier: importedContact.i,
+        i2pAddress: importedContact.i,
         status: 'unknown',
       };
 
@@ -186,10 +350,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
       console.log('[AddContact] Saving contact to storage:', contact.name);
       await addContact(contact);
 
-      if (i2pStatus?.samConnected && importedContact.network.i2pAddress) {
-        console.log('[AddContact] I2P connected, attempting peer connection to:', importedContact.network.i2pAddress.slice(0, 20) + '...');
+      if (i2pStatus?.samConnected && importedContact.i) {
+        console.log('[AddContact] I2P connected, attempting peer connection to:', importedContact.i.slice(0, 20) + '...');
         try {
-          await i2pService.connectToPeer(importedContact.network.i2pAddress);
+          await i2pService.connectToPeer(importedContact.i);
           console.log('[AddContact] Peer connected successfully, updating status to online');
           const onlineContact = { ...contact, status: 'online' as const };
           await updateContact(onlineContact);
@@ -210,25 +374,58 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
 
   // ── Export ─────────────────────────────────────────────────────────────────
 
-  const exportContactFile = () => {
+  const exportContactFile = async () => {
     if (!user) return;
-    // Use new format (v1.0) as defined in crypto.ts
+
+    console.log('[AddContactDialog] Export starting, canShareNatively:', canShareNatively());
+
+    // On native Android, use the native share dialog
+    if (canShareNatively()) {
+      try {
+        toast.info('Exportiere Kontakt...', {
+          description: 'Datei wird vorbereitet',
+        });
+
+        const result = await exportContact(
+          {
+            name: user.username,
+            i2pAddress: user.i2pAddress || '',
+            fingerprint: user.fingerprint,
+            pgpPublicKey: user.pgpPublicKey,
+          },
+          { share: true }
+        );
+
+        if (result.success) {
+          toast.success('Kontakt exportiert', {
+            description: 'Teilen-Dialog wird geöffnet',
+          });
+          return;
+        } else {
+          console.error('[AddContactDialog] Export failed:', result.error);
+          toast.error('Export fehlgeschlagen', {
+            description: result.error || 'Versuche Download-Modus',
+          });
+          // Fall through to browser download
+        }
+      } catch (error) {
+        console.error('[AddContactDialog] Native export error:', error);
+        toast.error('Native Export Fehler', {
+          description: 'Wechsle zu Download-Modus',
+        });
+        // Fall back to browser download
+      }
+    }
+
+    // Use browser download for web/PWA
     const contactData = {
-      version: '1.0',
-      metadata: {
-        timestamp: new Date().toISOString(),
-        username: user.username,
-        deviceId: user.deviceId,
-      },
-      keys: {
-        pgpPublicKey: user.pgpPublicKey,
-        fingerprint: user.fingerprint,
-      },
-      network: {
-        p2pIdentifier: user.id,
-        protocol: user.i2pAddress ? 'i2p-webrtc' : 'webrtc',
-        i2pAddress: user.i2pAddress,
-      },
+      v: '2',
+      t: 'sc',
+      n: user.username,
+      i: user.i2pAddress || '',
+      f: user.fingerprint,
+      k: user.pgpPublicKey,
+      ts: Date.now(),
     };
     const blob = new Blob([JSON.stringify(contactData, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -237,43 +434,10 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
     link.download = `${user.username}.secuchat`;
     link.click();
     URL.revokeObjectURL(url);
-  };
 
-  // ── Manual ─────────────────────────────────────────────────────────────────
-
-  const addManualContact = async () => {
-    if (!manualName || !manualI2p || !manualPgp) {
-      setManualError(t('addContact.allFieldsRequired'));
-      return;
-    }
-    setIsAddingContact(true);
-    try {
-      const validation = await cryptoService.validatePublicKey(manualPgp);
-      if (!validation.valid) {
-        setManualError(t('addContact.invalidPgpKeyManual'));
-        return;
-      }
-      const contact: Contact = {
-        id: crypto.randomUUID(),
-        name: manualName,
-        pgpPublicKey: manualPgp,
-        fingerprint: validation.fingerprint!,
-        p2pIdentifier: manualI2p,
-        i2pAddress: manualI2p,
-        status: 'unknown',
-      };
-      await addContact(contact);
-      if (i2pStatus?.samConnected) {
-        try {
-          await i2pService.connectToPeer(manualI2p);
-          await updateContact({ ...contact, status: 'online' as const });
-        } catch { /* I2P not ready */ }
-      }
-      onContactAdded?.(contact);
-      resetAndClose();
-    } finally {
-      setIsAddingContact(false);
-    }
+    toast.success('Kontakt heruntergeladen', {
+      description: `${user.username}.secuchat wurde gespeichert`,
+    });
   };
 
   // ── Reset ──────────────────────────────────────────────────────────────────
@@ -281,10 +445,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   const resetAndClose = () => {
     setImportedContact(null);
     setImportError(null);
-    setManualError(null);
-    setManualName('');
-    setManualI2p('');
-    setManualPgp('');
     setActiveTab('import');
     setIsAddingContact(false);
     onClose();
@@ -293,7 +453,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
   // ── Anonymity display ──────────────────────────────────────────────────────
 
   const anonymity = i2pStatus?.samConnected
-    ? { icon: <Shield className="h-4 w-4 text-green-500" aria-hidden="true" />, text: t('addContact.anonymous'), color: 'text-green-500', description: t('addContact.anonymousDesc') }
+    ? { icon: <Shield className="h-4 w-4 text-teal-400" aria-hidden="true" />, text: t('addContact.anonymous'), color: 'text-teal-400', description: t('addContact.anonymousDesc') }
     : { icon: <AlertTriangle className="h-4 w-4 text-red-500" aria-hidden="true" />, text: t('addContact.notConnected'), color: 'text-red-500', description: t('addContact.notConnectedDesc') };
 
   return (
@@ -316,7 +476,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
         </div>
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="import">
               <Upload className="h-4 w-4 mr-2" aria-hidden="true" />
               {t('addContact.importTab')}
@@ -325,18 +485,51 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
               <FileDown className="h-4 w-4 mr-2" aria-hidden="true" />
               {t('addContact.shareTab')}
             </TabsTrigger>
-            <TabsTrigger value="manual">
-              <Globe className="h-4 w-4 mr-2" aria-hidden="true" />
-              {t('addContact.manualTab')}
-            </TabsTrigger>
           </TabsList>
 
           {/* ── Import Tab ── */}
           <TabsContent value="import" className="space-y-4">
-            {!importedContact ? (
+            {showQRScan ? (
+              <QRContactScanner
+                onContactScanned={handleQRScanned}
+                onError={handleQRError}
+              />
+            ) : cameraPermissionDenied ? (
+              <div className="p-4 rounded-lg border border-destructive/30 bg-destructive/5 space-y-3" role="alert">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" aria-hidden="true" />
+                  <div>
+                    <p className="font-medium text-sm">{t('qr.permissionDeniedTitle')}</p>
+                    <p className="text-sm text-muted-foreground mt-1">
+                      {t('qr.permissionDeniedDescription')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-2 font-mono">
+                      {t('qr.permissionDeniedAndroidHint')}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="flex-1"
+                    onClick={handleOpenAppSettings}
+                  >
+                    {t('qr.openSettings')}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setCameraPermissionDenied(false)}
+                  >
+                    {t('common.back')}
+                  </Button>
+                </div>
+              </div>
+            ) : !importedContact ? (
               <>
                 <button
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => canShareNatively() ? handleNativeImport() : fileInputRef.current?.click()}
                   className="w-full p-6 rounded-lg border-2 border-dashed border-border hover:border-primary hover:bg-accent transition-colors flex flex-col items-center gap-3"
                   aria-label={t('addContact.importSecuchat')}
                 >
@@ -350,6 +543,15 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                     </p>
                   </div>
                 </button>
+
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  onClick={handleStartQRScan}
+                >
+                  <ScanLine className="h-4 w-4 mr-2" />
+                  {t('addContact.scanQR')}
+                </Button>
 
                 <input
                   ref={fileInputRef}
@@ -374,16 +576,16 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
               </>
             ) : (
               <div className="space-y-4">
-                <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
+                <div className="p-4 bg-teal-400/10 rounded-lg border border-teal-400/30">
                   <div className="flex items-center gap-2 mb-3">
-                    <Check className="h-5 w-5 text-green-500" aria-hidden="true" />
-                    <p className="font-medium text-green-500">{t('addContact.contactDetected')}</p>
+                    <Check className="h-5 w-5 text-teal-400" aria-hidden="true" />
+                    <p className="font-medium text-teal-400">{t('addContact.contactDetected')}</p>
                   </div>
                   <div className="space-y-1.5 text-sm">
-                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.metadata.username}</span></p>
-                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.network.i2pAddress.slice(0, 40)}…</p>
-                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.keys.fingerprint.slice(0, 16)}…</p>
-                    {!importedContact.keys.pgpPublicKey && (
+                    <p><span className="text-muted-foreground">Name:</span> <span className="font-medium">{importedContact.n}</span></p>
+                    <p className="font-mono text-xs break-all"><span className="text-muted-foreground">I2P: </span>{importedContact.i.slice(0, 40)}…</p>
+                    <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{importedContact.f.slice(0, 16)}…</p>
+                    {!importedContact.k && (
                       <p className="text-xs text-yellow-500 mt-2">{t('addContact.noPgpKey')}</p>
                     )}
                   </div>
@@ -416,7 +618,7 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             {user ? (
               <>
                 {/* I2P address guard */}
-                {!user.i2pSamDestination ? (
+                {!user.i2pAddress ? (
                   <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 text-sm space-y-1" role="alert">
                     <p className="font-medium text-destructive">{t('addContact.exportNotPossible')}</p>
                     <p className="text-destructive/80 text-xs">
@@ -438,12 +640,29 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
                   <p className="font-mono text-xs"><span className="text-muted-foreground">PGP: </span>{user.fingerprint?.slice(0, 16)}…</p>
                 </div>
 
-                <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pSamDestination}>
+                <Button className="w-full" onClick={exportContactFile} disabled={!user.i2pAddress}>
                   <Download className="h-4 w-4 mr-2" aria-hidden="true" />
                   {t('addContact.saveFile', { name: user.username })}
                 </Button>
 
-                {user.i2pSamDestination && (
+                {user.i2pAddress && (
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={handleToggleQRShare}
+                  >
+                    <QrCode className="h-4 w-4 mr-2" />
+                    {showQRShare ? t('qr.hideQR') : t('qr.showQR')}
+                  </Button>
+                )}
+
+                {showQRShare && user.i2pAddress && (
+                  <AnimatedContactQR
+                    contactData={qrShareData}
+                  />
+                )}
+
+                {user.i2pAddress && !showQRShare && (
                   <p className="text-xs text-muted-foreground text-center">
                     {t('addContact.sendFileToContact')}
                   </p>
@@ -454,54 +673,6 @@ export function AddContactDialog({ isOpen, onClose, onContactAdded, initialTab =
             )}
           </TabsContent>
 
-          {/* ── Manual Tab ── */}
-          <TabsContent value="manual" className="space-y-4">
-            <div className="space-y-3">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Name</label>
-                <Input
-                  placeholder={t('addContact.contactName')}
-                  value={manualName}
-                  onChange={(e) => setManualName(e.target.value)}
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">{t('addContact.i2pAddress')}</label>
-                <Input
-                  placeholder="xxxx...xxxx.b32.i2p"
-                  value={manualI2p}
-                  onChange={(e) => setManualI2p(e.target.value)}
-                  className="font-mono text-sm"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">{t('addContact.pgpPublicKey')}</label>
-                <textarea
-                  className="w-full h-32 p-3 rounded-md border border-input bg-background text-xs font-mono resize-none"
-                  placeholder="-----BEGIN PGP PUBLIC KEY BLOCK-----"
-                  value={manualPgp}
-                  onChange={(e) => setManualPgp(e.target.value)}
-                />
-              </div>
-              <Button
-                className="w-full"
-                onClick={addManualContact}
-                disabled={!manualName || !manualI2p || !manualPgp || isAddingContact}
-              >
-                {isAddingContact ? (
-                  <><div className="h-4 w-4 border-2 border-current border-t-transparent rounded-full animate-spin mr-2" />{t('addContact.adding')}</>
-                ) : (
-                  <><UserPlus className="h-4 w-4 mr-2" aria-hidden="true" />{t('addContact.addContact')}</>
-                )}
-              </Button>
-            </div>
-
-            {manualError && (
-              <div className="p-3 rounded-lg bg-destructive/10 text-destructive text-sm" role="alert">
-                {manualError}
-              </div>
-            )}
-          </TabsContent>
         </Tabs>
       </DialogContent>
     </Dialog>

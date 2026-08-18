@@ -5,7 +5,9 @@ import type { User, Contact, Chat, Message, AppSettings, SecuritySettings, Conne
 import type { I2PStatus } from '@/services/i2p';
 import { storageService } from '@/services/storage';
 import { cryptoService } from '@/services/crypto';
-import { i2pService } from '@/services/i2p';
+import { i2pService, samService } from '@/services/i2p';
+import { platformService } from '@/services/platform';
+import { isTestMode, TEST_PASSPHRASE } from '@/utils/testMode';
 
 // Zod Schema for incoming message validation
 const incomingMessageSchema = z.object({
@@ -48,7 +50,11 @@ interface AppContextType {
   updateSettings: (settings: Partial<AppSettings>) => Promise<void>;
   securitySettings: SecuritySettings;
   updateSecuritySettings: (settings: Partial<SecuritySettings>) => Promise<void>;
-  
+
+  // Theme
+  theme: 'dark' | 'light';
+  setTheme: (theme: 'dark' | 'light') => void;
+
   // Connection
   connectionState: ConnectionState;
   encryptionState: EncryptionState;
@@ -64,7 +70,10 @@ interface AppContextType {
   
   // Loading
   isLoading: boolean;
-  
+
+  // Decryption indicator (true while messages are being re-decrypted after unlock)
+  decrypting: boolean;
+
   // Initialization
   initialize: () => Promise<void>;
 }
@@ -73,6 +82,13 @@ const defaultSettings: AppSettings = {
   theme: 'dark',
   language: 'de',
   notifications: true,
+  notificationSettings: {
+    enabled: true,
+    sound: true,
+    vibration: true,
+    showPreview: true,
+    priority: 'high',
+  },
   soundEnabled: true,
   autoLock: true,
   lockTimeout: 5,
@@ -104,13 +120,50 @@ const isElectron = typeof window !== 'undefined' &&
   !!(window as { electronAPI?: { isElectron?: boolean } }).electronAPI?.isElectron;
 
 function effectiveSamConfig(sam: AppSettings['i2p']['sam']): AppSettings['i2p']['sam'] {
-  if (isElectron) return { ...sam, enabled: true };
-  return sam;
+  const config = { ...sam };
+
+  // Electron: bundled SAM proxy always runs on port 7657 — force enabled.
+  if (isElectron) {
+    config.enabled = true;
+  }
+
+  // Android native: i2p-App exponiert I2CP auf 7654 (nicht SAM auf 7656).
+  // Der Default `sam.enabled=false` ist ein Relikt aus der SAM-Bridge-Welt
+  // ("kein Proxy → keine Init"). Mit dem nativen I2CP-Plugin ist die
+  // Initialisierung immer gewollt — i2pService.initializeViaI2PPlugin
+  // ignoriert `enabled` ohnehin und hardcoded `true`. Ohne diese Korrektur
+  // läuft der 30s-Auto-Retry in AppContext nie an und ein 8s-Cold-Start-Lag
+  // lässt den "I2P nicht verbunden"-Banner dauerhaft sichtbar.
+  if (platformService.isAndroidNative()) {
+    config.port = 7654;
+    config.enabled = true;
+  }
+
+  // DEV/TEST: optionaler SAM-Bridge-Host via localStorage (Emulator→10.0.2.2, Telefon→Host-LAN-IP).
+  if (typeof localStorage !== 'undefined') {
+    const hostOverride = localStorage.getItem('secuchat_sam_host');
+    if (hostOverride) config.host = hostOverride;
+  }
+
+  return config;
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
   // Refs for tracking listener registration state
   const listenersRegisteredRef = useRef(false);
+
+  // Mount-time anchor for the grace period: peers don't go "offline" during the
+  // first APP_MOUNT_GRACE_MS after the very first component render, because
+  // LeaseSets need minutes to propagate after a fresh SAM session.
+  const mountTimeRef = useRef<number>(0);
+
+  // Mirror of `contacts` for use inside intervals/timers. Reading contacts via a
+  // ref keeps React state updaters PURE — previously the periodic status check
+  // launched its network side-effects from inside a setContacts(prev => ...)
+  // updater, which React may invoke more than once per commit. That turned every
+  // 30 s tick into a burst of duplicate connectTo() calls and let a single peer
+  // failure increment the shared failure counter 1/3→3/3 in a few milliseconds.
+  const contactsRef = useRef<Contact[]>([]);
 
   // Stable message handler ref — always points to the latest handleIncomingMessage.
   // This avoids stale closure issues when activeChat/user change after initial registration.
@@ -126,19 +179,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
   
   // Contacts state
   const [contacts, setContacts] = useState<Contact[]>([]);
-  
+  // Mirror contacts into a ref so interval callbacks can read the latest list
+  // without forcing a re-render. Updates are scheduled as a post-render effect
+  // to keep render pure (eslint react-hooks/refs).
+  useEffect(() => {
+    contactsRef.current = contacts;
+  }, [contacts]);
+
   // Chats state
   const [chats, setChats] = useState<Chat[]>([]);
   const [activeChat, setActiveChatState] = useState<Chat | null>(null);
   
   // Messages state
   const [messages, setMessages] = useState<Message[]>([]);
+  const [decrypting, setDecrypting] = useState(false);
   
   // Settings state
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [securitySettings, setSecuritySettings] = useState<SecuritySettings>(defaultSecuritySettings);
-  
-  // Connection state (connectionState is derived — see below)
+
+  // Theme state
+  const [theme, setThemeState] = useState<'dark' | 'light'>(settings.theme);
+
+  // Connection state (derived from i2pStatus, isLocked, encryptionState — see below)
   const [encryptionState, setEncryptionState] = useState<EncryptionState>('unencrypted');
   
   // I2P status
@@ -147,6 +210,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  
+  // Inactivity tracking for auto-lock. lastActivityRef is updated by event handlers
+  // (no Date.now() during render). We mirror it into state for components that
+  // re-render on inactivity changes (e.g. auto-lock countdown).
+  const lastActivityRef = useRef<number>(0);
+  const [lastActivity, setLastActivity] = useState<number>(0);
+  // Initialize on first effect — keeps Date.now() out of render but the state
+  // is available for the consumer effect's first run.
+  useEffect(() => {
+    lastActivityRef.current = Date.now();
+    setLastActivity(lastActivityRef.current);
+  }, []);
   
   // Loading state
   const [isLoading, setIsLoading] = useState(true);
@@ -170,17 +245,106 @@ export function AppProvider({ children }: { children: ReactNode }) {
         const keysEncrypted = savedUser.pgpPrivateKey &&
           !savedUser.pgpPrivateKey.startsWith('-----BEGIN PGP');
 
-        if (keysEncrypted) {
+        // TEST-ONLY Auto-Unlock: Im Test-Mode (secuchat_test_mode='1') direkt mit
+        // der festen Test-Passphrase entsperren — ohne UnlockDialog. Die Passphrase
+        // liegt als Konstante in utils/testMode.ts und geht daher nie verloren
+        // (früher aus localStorage gelesen, was nach Wipe/App-Neustart fehlte).
+        const testModeEnabled = isTestMode();
+        const testPassphrase = testModeEnabled ? TEST_PASSPHRASE : null;
+        console.log('[AppContext] Auto-unlock diagnostics:', JSON.stringify({
+          keysEncrypted,
+          testModeEnabled,
+          testPassphrase: testPassphrase ? '***' : null,
+          pkPrefix: savedUser.pgpPrivateKey?.slice(0, 20),
+          pkLen: savedUser.pgpPrivateKey?.length,
+        }));
+
+        if (keysEncrypted && testPassphrase) {
+          console.log('[AppContext] Auto-unlock: entering try-block');
+          // Auto-Onboarding hat einen Test-Modus-Pass hinterlegt — direkt entsperren
+          try {
+            storageService.setEncryptionPassphrase(testPassphrase);
+            console.log('[AppContext] Auto-unlock: passphrase set');
+            const decryptedUser = await storageService.getUser();
+            console.log('[AppContext] Auto-unlock: getUser returned, decrypted prefix:', decryptedUser?.pgpPrivateKey?.slice(0, 20));
+            if (decryptedUser?.pgpPrivateKey?.startsWith('-----BEGIN PGP')) {
+              await cryptoService.importKeyPair(
+                decryptedUser.pgpPrivateKey,
+                decryptedUser.pgpPublicKey,
+                testPassphrase
+              );
+              setUser(decryptedUser);
+              setIsLocked(false);
+              setIsAuthenticated(true);
+              setEncryptionState('encrypted');
+              console.log('[AppContext] Test-mode auto-unlock successful');
+              // Register I2P listeners in the test-mode auto-unlock path too —
+              // the general path below (line ~367) only runs when `keysEncrypted`
+              // is false. Without this, incoming messages are silently dropped
+              // because i2pPlugin fires i2pMessage but no JS handler exists.
+              // Deregister first to prevent double-registration on re-init.
+              if (listenersRegisteredRef.current) {
+                i2pService.offMessage(stableMessageHandler);
+                i2pService.offStatusChange(setI2pStatus);
+              }
+              i2pService.onMessage(stableMessageHandler);
+              i2pService.onStatusChange(setI2pStatus);
+              listenersRegisteredRef.current = true;
+              // Auch i2pService.restoreIdentity + initialize triggern — sonst
+              // bleibt der i2pService.identity leer und SAM kann nicht starten.
+              if (decryptedUser.i2pAddress && decryptedUser.i2pPublicKey
+                  && decryptedUser.i2pPrivateKey) {
+                try {
+                  await i2pService.restoreIdentity(
+                    decryptedUser.i2pPublicKey,
+                    decryptedUser.i2pPrivateKey,
+                    decryptedUser.i2pSamDestination,
+                    decryptedUser.i2pAddress
+                  );
+                  const savedSettings = await storageService.getSettings();
+                  const i2pSettings = savedSettings?.i2p || defaultSettings.i2p;
+                  const status = await i2pService.initialize(
+                    effectiveSamConfig(i2pSettings.sam)
+                  );
+                  setI2pStatus(status);
+                  console.log('[AppContext] Test-mode I2P init:', {
+                    samConnected: status.samConnected,
+                    address: status.address?.slice(0, 20),
+                    leasesetPublished: status.leasesetPublished,
+                  });
+                } catch (i2pErr) {
+                  console.warn('[AppContext] Test-mode I2P init failed:', i2pErr);
+                }
+              }
+            } else {
+              needsUnlock = true;
+              setIsLocked(true);
+            }
+          } catch (err) {
+            console.warn('[AppContext] Test-mode auto-unlock failed:', err);
+            needsUnlock = true;
+            setIsLocked(true);
+          }
+        } else if (keysEncrypted) {
           // Keys are encrypted in storage — need passphrase to unlock
           needsUnlock = true;
           setIsLocked(true);
         } else if (savedUser.pgpPrivateKey) {
           // Keys are plaintext (freshly created with passphrase still in memory)
           try {
+            // Test-Mode: PGP-Key ist IMMER mit TEST_PASSPHRASE verschlüsselt.
+            // Wir koennen nicht zwischen "frisch generiert, Passphrase in Memory"
+            // und "aus dem Storage geladen, noch entschluesselt" unterscheiden —
+            // der armored PGP-Block enthaelt den PGP-Passwort-Schutz immer. Wenn
+            // wir die leere Passphrase uebergeben, scheitert `decryptKey` und der
+            // User bleibt locked. Im Test-Mode ist die korrekte Passphrase
+            // immer TEST_PASSPHRASE; ausserhalb des Test-Modes werden Keys
+            // ueber den `keysEncrypted`-Pfad entsperrt (UnlockDialog).
+            const pgpPassphrase = isTestMode() ? TEST_PASSPHRASE : '';
             await cryptoService.importKeyPair(
               savedUser.pgpPrivateKey,
               savedUser.pgpPublicKey,
-              '' // PGP key passphrase not needed when key is already decrypted by OpenPGP.js
+              pgpPassphrase
             );
             setEncryptionState('encrypted');
             setIsAuthenticated(true);
@@ -213,6 +377,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const savedSettings = await storageService.getSettings();
       if (savedSettings) {
         setSettings(savedSettings);
+        if (savedSettings.theme) {
+          setThemeState(savedSettings.theme);
+        }
       }
       
       const savedSecuritySettings = await storageService.getSecuritySettings();
@@ -250,6 +417,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setI2pStatus(status);
           if (savedUser && status.samConnected) {
             const identity = i2pService.getIdentity();
+
+            // CRITICAL FIX: If identity lacks samDestination but SAM has a session, sync it
+            if (identity && !identity.samDestination) {
+              const samSession = samService.exportSession();
+              if (samSession?.privateKey) {
+                console.log('[AppContext] Syncing missing samDestination from SAM session (init)');
+                i2pService.setSamDestination(samSession.privateKey);
+              }
+            }
+
             let updatedUser = { ...savedUser };
             // CRITICAL: Always persist the SAM destination when:
             // 1. A new destination was just generated, OR
@@ -378,26 +555,28 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
       // Update chat unread count & timestamp
       if (localChat) {
+        const chatId = localChat.id;
         const updatedChat = {
           ...localChat,
           lastMessageTimestamp: message.timestamp,
           unreadCount: isChatActive ? 0 : (localChat.unreadCount || 0) + 1,
         };
         await storageService.saveChat(updatedChat);
-        setChats(prev => prev.map(c => c.id === localChat!.id ? updatedChat : c));
+        setChats(prev => prev.map(c => c.id === chatId ? updatedChat : c));
       }
 
       // Update contact status to online when receiving a message
       if (localContact) {
+        const contactId = localContact.id;
         const updatedContact = {
           ...localContact,
           status: 'online' as const,
           lastSeen: new Date().toISOString(),
         };
         await storageService.saveContact(updatedContact);
-        setContacts(prev => prev.map(c => c.id === localContact!.id ? updatedContact : c));
+        setContacts(prev => prev.map(c => c.id === contactId ? updatedContact : c));
         setChats(prev => prev.map(ch =>
-          ch.contactId === localContact!.id ? { ...ch, contact: updatedContact } : ch
+          ch.contactId === contactId ? { ...ch, contact: updatedContact } : ch
         ));
       }
 
@@ -423,10 +602,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const samCfg = effectiveSamConfig(settings.i2p.sam);
     if (!user || i2pStatus?.samConnected || !samCfg.enabled) return;
-    const timer = setTimeout(() => {
-      i2pService.initialize(samCfg).then(setI2pStatus).catch((err) => {
+    const timer = setTimeout(async () => {
+      try {
+        const status = await i2pService.initialize(samCfg);
+        setI2pStatus(status);
+        if (status.samConnected && user) {
+          const identity = i2pService.getIdentity();
+          if (identity?.samDestination && !user.i2pSamDestination) {
+            const updatedUser = { ...user, i2pSamDestination: identity.samDestination };
+            await storageService.saveUser(updatedUser);
+            setUser(updatedUser);
+          }
+        }
+      } catch (err) {
         setI2pStatus({ samConnected: false, samAvailable: false, address: null, error: String(err) });
-      });
+      }
     }, 30000);
     return () => clearTimeout(timer);
   }, [user, i2pStatus, settings.i2p.sam]);
@@ -445,13 +635,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           ch.contactId === contact.id ? { ...ch, contact: updated } : ch
         ));
       } catch {
-        // Peer not reachable — mark as offline
-        const updated = { ...contact, status: 'offline' as const };
-        await storageService.saveContact(updated);
-        setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-        setChats(prev => prev.map(ch =>
-          ch.contactId === contact.id ? { ...ch, contact: updated } : ch
-        ));
+        // Don't immediately mark offline on first check — I2P tunnel build can take minutes.
+        // The periodic status check will handle offline detection after consecutive failures.
+        console.log(`[I2P Connect] ${contact.name} not yet reachable, keeping current status`);
       }
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- run only when SAM connects
@@ -523,31 +709,82 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // In I2P, peers may be temporarily unreachable (LeaseSet propagation, network issues)
   // We continuously retry to detect when they come back online
   useEffect(() => {
-    if (!i2pStatus?.samConnected || contacts.length === 0) return;
+    if (!i2pStatus?.samConnected) return;
 
-    // Track last retry time per contact to avoid hammering (10s minimum interval)
-    const lastRetryMap = new Map<string, number>();
+    // Lazy-init mountTime on first effect run (avoids Date.now() in render).
+    if (mountTimeRef.current === 0) {
+      mountTimeRef.current = Date.now();
+    }
 
-    const interval = setInterval(() => {
-      contacts.forEach(async (contact) => {
-        if (!contact.i2pAddress) return;
+    // Track consecutive failures per contact — only mark offline after 6 failures.
+    // LeaseSet propagation after a fresh SAM session can take several minutes; the
+    // old 3 × 30 s = 90 s window flipped legitimate peers to "offline" while they
+    // were still propagating. 6 × 90 s = 9 min + a 5-min grace period covers normal
+    // i2pd tunnel-build + LeaseSet-publish windows.
+    // NOTE: mountTimeRef is declared at component top-level (Rules of Hooks) — it's
+    // initialized once on first render and shared across this useEffect re-runs.
+    const APP_MOUNT_GRACE_MS = 5 * 60 * 1000;
+    const consecutiveFailures = new Map<string, number>();
+    const FAILURE_THRESHOLD = 6; // 6×90s = 9 min before marking offline
+    // Guards against overlapping pings for the same contact. A single ping can
+    // outlive the 30 s interval, and without this a slow peer accumulates one
+    // in-flight connect attempt per tick (the connectTo storm).
+    const inFlight = new Set<string>();
 
-        // Don't retry same contact within 10 seconds
-        const now = Date.now();
-        const lastRetry = lastRetryMap.get(contact.id) || 0;
-        if (now - lastRetry < 10000) return;
-        lastRetryMap.set(contact.id, now);
-        try {
-          console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
-          await i2pService.connectToPeer(contact.i2pAddress);
-          console.log(`[Status Check] ${contact.name} is online`);
-          // Still online - update lastSeen
-          const updated = { ...contact, lastSeen: new Date().toISOString() };
-          await storageService.saveContact(updated);
-          setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
-        } catch (err) {
-          // Mark as offline
-          console.log(`[Status Check] ${contact.name} unreachable, marking offline:`, err instanceof Error ? err.message : err);
+    const pingContact = async (contact: Contact) => {
+      if (!contact.i2pAddress || inFlight.has(contact.id)) return;
+      inFlight.add(contact.id);
+      try {
+        console.log(`[Status Check] Pinging ${contact.name} (${contact.i2pAddress.slice(0, 20)}...)`);
+        // Only disconnect+reconnect if peer is NOT already connected.
+        // Blind disconnect kills active streams — any message sent during the
+        // reconnect window would be lost.
+        const peerStatus = i2pService.getPeerStatus(contact.i2pAddress);
+        if (peerStatus !== 'connected') {
+          i2pService.disconnectPeer(contact.i2pAddress);
+          // maxRetries: 0 — this poller IS the retry loop. Letting the SAM layer
+          // run its own ~67 s backoff chain here made attempts outlive the
+          // interval and stack up.
+          await i2pService.connectToPeer(contact.i2pAddress, undefined, { maxRetries: 0 });
+        }
+        console.log(`[Status Check] ${contact.name} is online`);
+        // Reset failure counter on success
+        consecutiveFailures.delete(contact.id);
+        // Update lastSeen and ensure status is online
+        const updated = { ...contact, lastSeen: new Date().toISOString(), status: 'online' as const };
+        await storageService.saveContact(updated);
+        setContacts(prev => {
+          // Only update if still offline/unknown (avoid unnecessary re-renders)
+          const existing = prev.find(c => c.id === contact.id);
+          if (existing?.status === 'online') return prev;
+          return prev.map(c => c.id === contact.id ? updated : c);
+        });
+        setChats(prev => prev.map(ch =>
+          ch.contactId === contact.id && ch.contact?.status !== 'online'
+            ? { ...ch, contact: updated }
+            : ch
+        ));
+      } catch (err) {
+        // Skip counting if SAM session is dead — the auto-reconnect will handle it
+        const errMsg = err instanceof Error ? err.message : String(err);
+        if (errMsg.includes('No session created') || errMsg.includes('INVALID_ID')) {
+          console.log(`[Status Check] SAM session lost, skipping ping for ${contact.name}`);
+          return;
+        }
+        // Grace-Period nach App-Mount: frische LeaseSets brauchen Minuten zur
+        // Propagation. In den ersten 5 Min keine Offline-Markierung, nur loggen.
+        const sinceMount = Date.now() - mountTimeRef.current;
+        if (sinceMount < APP_MOUNT_GRACE_MS) {
+          console.log(`[Status Check] ${contact.name} not yet reachable — grace period (${Math.round(sinceMount / 1000)}s/${APP_MOUNT_GRACE_MS / 1000}s), not marking offline`);
+          return;
+        }
+        // Cap at threshold + 1 to avoid unbounded counter growth
+        const rawFailures = (consecutiveFailures.get(contact.id) || 0) + 1;
+        const failures = Math.min(rawFailures, FAILURE_THRESHOLD + 1);
+        consecutiveFailures.set(contact.id, failures);
+        console.log(`[Status Check] ${contact.name} unreachable (${failures}/${FAILURE_THRESHOLD})`);
+        // Only mark offline after consecutive failures reach threshold
+        if (failures === FAILURE_THRESHOLD) {
           const updated = { ...contact, status: 'offline' as const };
           await storageService.saveContact(updated);
           setContacts(prev => prev.map(c => c.id === contact.id ? updated : c));
@@ -555,12 +792,33 @@ export function AppProvider({ children }: { children: ReactNode }) {
             ch.contactId === contact.id ? { ...ch, contact: updated } : ch
           ));
         }
+      } finally {
+        inFlight.delete(contact.id);
+      }
+    };
+
+    const interval = setInterval(() => {
+      // Live-check: if SAM session died, update status so auto-reconnect triggers
+      if (!i2pService.isReady()) {
+        const status = i2pService.getStatus();
+        if (!status.samConnected && i2pStatus?.samConnected) {
+          console.log('[Status Check] SAM session lost, updating status');
+          setI2pStatus(status);
+        }
+        return; // Skip peer pings until SAM reconnects
+      }
+
+      // Read contacts from a ref — NOT from inside a state updater. React may call
+      // a state updater multiple times per commit, which previously multiplied
+      // every ping into a burst of duplicate connect attempts.
+      contactsRef.current.filter(c => c.i2pAddress).forEach(contact => {
+        void pingContact(contact);
       });
-    }, 30000); // Check every 30 seconds
-    console.log('[Status Check] Started periodic status check (30s interval)');
+    }, 90000); // Check every 90s — spart 3× weniger Probe-Traffic als vorher
+    console.log('[Status Check] Started periodic status check (90s interval, 5min grace period, offline after 6 consecutive failures)');
 
     return () => clearInterval(interval);
-  }, [i2pStatus?.samConnected, contacts]);
+  }, [i2pStatus?.samConnected]);
 
   // Sync connectionState with I2P status, isLocked and encryptionState (derived)
   const connectionState = useMemo<ConnectionState>(() => {
@@ -570,6 +828,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (i2pStatus?.error) return 'error';
     return 'disconnected';
   }, [i2pStatus, isLocked, encryptionState]);
+
+  // Track user activity for auto-lock
+  useEffect(() => {
+    const updateActivity = () => setLastActivity(Date.now());
+    
+    window.addEventListener('mousemove', updateActivity);
+    window.addEventListener('keydown', updateActivity);
+    window.addEventListener('touchstart', updateActivity);
+    window.addEventListener('click', updateActivity);
+    
+    return () => {
+      window.removeEventListener('mousemove', updateActivity);
+      window.removeEventListener('keydown', updateActivity);
+      window.removeEventListener('touchstart', updateActivity);
+      window.removeEventListener('click', updateActivity);
+    };
+  }, []);
 
   // Contact operations
   const addContact = useCallback(async (contact: Contact) => {
@@ -681,10 +956,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
       savedMessage = message;
       setMessages(prev => [...prev, message]);
 
-      // Try to send via I2P (i2pService.sendMessage handles JSON.stringify internally)
+      // Try to send via I2P with retry — peer may need time for LeaseSet propagation
       let sent = false;
       if (i2pStatus?.samConnected) {
-        sent = await i2pService.sendMessage(contact.i2pAddress, {
+        const i2pMessage = {
           type: 'chat-message',
           id: message.id,
           chatId: message.chatId,
@@ -694,7 +969,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
           encryptedContent: message.encryptedContent,
           timestamp: message.timestamp,
           sequenceNumber: message.sequenceNumber,
-        });
+        };
+
+        sent = await i2pService.sendMessage(contact.i2pAddress, i2pMessage);
+
+        // If first attempt failed, retry once after a short delay (tunnel build can be slow)
+        if (!sent) {
+          console.log('[sendMessage] First attempt failed, retrying in 5s...');
+          await new Promise(r => setTimeout(r, 5000));
+          sent = await i2pService.sendMessage(contact.i2pAddress, i2pMessage);
+        }
       }
 
       // Update message status
@@ -734,7 +1018,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const loadMessages = useCallback(async (chatId: string) => {
     const chatMessages = await storageService.getMessagesByChatId(chatId);
-    
+
     // Try to decrypt messages if we have the key pair loaded
     if (cryptoService.hasKeyPair()) {
       const decryptedMessages = await Promise.all(
@@ -756,6 +1040,21 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setMessages(chatMessages);
     }
   }, []);
+
+  // Re-decrypt active chat when unlock succeeds.
+  // Hinweis: Mit D4 (Chat-Liste nach Unlock) ist activeChatRef.current in der
+  // Regel null, weil lockApp activeChat clearet. Dieser useEffect deckt trotzdem
+  // den Fall ab, falls D4 je gelockert wird.
+  useEffect(() => {
+    if (!isLocked && user && activeChatRef.current && cryptoService.hasKeyPair()) {
+      const chatId = activeChatRef.current.id;
+      setDecrypting(true);
+      void loadMessages(chatId).finally(() => {
+        // Skeleton mindestens 500ms sichtbar für UX-Feedback
+        setTimeout(() => setDecrypting(false), 500);
+      });
+    }
+  }, [isLocked, user, loadMessages]);
 
   // File operations
   const sendFile = useCallback(async (to: string, file: File) => {
@@ -782,13 +1081,72 @@ export function AppProvider({ children }: { children: ReactNode }) {
     await storageService.saveSecuritySettings(updated);
   }, [securitySettings]);
 
+  // Theme operations
+  const setTheme = useCallback(async (newTheme: 'dark' | 'light') => {
+    setThemeState(newTheme);
+    const updated = { ...settings, theme: newTheme };
+    setSettings(updated);
+    await storageService.saveSettings(updated);
+  }, [settings]);
+
   // Auth operations
   const lockApp = useCallback(() => {
     setIsLocked(true);
+    setActiveChatState(null);   // NEU: clears active chat
+    setMessages([]);            // NEU: clears in-memory messages
     cryptoService.clearKeyPair();
     storageService.clearEncryptionPassphrase();
     setEncryptionState('unencrypted');
   }, []);
+
+  // Auto-lock after inactivity
+  useEffect(() => {
+    if (isLocked || !isAuthenticated) return;
+
+    const lockTimeout = settings.autoLock ? (settings.lockTimeout ?? 5) : 0;
+    if (lockTimeout <= 0) return;
+
+    const interval = setInterval(() => {
+      const inactiveMs = Date.now() - lastActivity;
+      if (inactiveMs > lockTimeout * 60 * 1000) {
+        lockApp();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [lastActivity, isLocked, isAuthenticated, settings.autoLock, settings.lockTimeout, lockApp]);
+
+  // Test-only: expose AppContext state to window so the DevBridge can read it
+  // for diagnostics. Only active when secuchat_test_mode is enabled.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isTestMode()) return;
+    interface DebugSnapshot {
+      chatsCount: number;
+      contactsCount: number;
+      chatsFirst: { id: string; contactId: string; hasContactField: boolean; contactName?: string } | null;
+      contactsFirst: { id: string; name: string } | null;
+      isLocked: boolean;
+      isAuthenticated: boolean;
+    }
+    const w = window as unknown as { __secuchatAppDebug?: () => DebugSnapshot };
+    w.__secuchatAppDebug = () => ({
+      chatsCount: chats.length,
+      contactsCount: contacts.length,
+      chatsFirst: chats[0] ? {
+        id: chats[0].id,
+        contactId: chats[0].contactId,
+        hasContactField: !!chats[0].contact,
+        contactName: chats[0].contact?.name,
+      } : null,
+      contactsFirst: contacts[0] ? { id: contacts[0].id, name: contacts[0].name } : null,
+      isLocked,
+      isAuthenticated,
+    });
+    return () => {
+      delete (window as unknown as { __secuchatAppDebug?: () => DebugSnapshot }).__secuchatAppDebug;
+    };
+  }, [chats, contacts, isLocked, isAuthenticated]);
 
   const unlockApp = useCallback(async (passphrase: string): Promise<boolean> => {
     try {
@@ -841,6 +1199,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
           setI2pStatus(status);
           if (status.samConnected) {
             const identity = i2pService.getIdentity();
+            console.log('[AppContext] I2P connected, identity:', identity ? { hasSamDestination: !!identity.samDestination } : null);
+
+            // CRITICAL FIX: If identity lacks samDestination but SAM has a session, sync it
+            if (identity && !identity.samDestination) {
+              const samSession = samService.exportSession();
+              if (samSession?.privateKey) {
+                console.log('[AppContext] Syncing missing samDestination from SAM session');
+                i2pService.setSamDestination(samSession.privateKey);
+              }
+            }
+
             let updatedUser = { ...decryptedUser };
             // CRITICAL: Always persist the SAM destination when:
             // 1. A new destination was just generated, OR
@@ -848,6 +1217,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
             // This ensures the destination survives app restarts and we never use TRANSIENT
             const needsSamDestinationUpdate = identity?.samDestination &&
               (!decryptedUser.i2pSamDestination || status.newDestinationGenerated || decryptedUser.i2pSamDestination !== identity.samDestination);
+            console.log('[AppContext] needsSamDestinationUpdate:', needsSamDestinationUpdate, 'userHasDestination:', !!decryptedUser.i2pSamDestination);
             if (needsSamDestinationUpdate) {
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
@@ -860,6 +1230,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
               console.log('[AppContext] Force-saving SAM destination that was missing from storage');
               updatedUser = { ...updatedUser, i2pSamDestination: identity.samDestination };
             }
+            console.log('[AppContext] Saving user updates:', {
+              hasSamDestination: !!updatedUser.i2pSamDestination,
+              userChanged: updatedUser !== decryptedUser
+            });
             if (updatedUser !== decryptedUser) {
               try {
                 await storageService.saveUser(updatedUser);
@@ -917,6 +1291,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     updateSettings,
     securitySettings,
     updateSecuritySettings,
+    theme,
+    setTheme,
     connectionState,
     encryptionState,
     i2pStatus,
@@ -926,6 +1302,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     unlockApp,
     isLoading,
     initialize,
+    decrypting,
   };
 
   return (

@@ -98,10 +98,19 @@ export interface I2PSettings {
   sam: SAMSettings;
 }
 
+export interface NotificationSettings {
+  enabled: boolean;
+  sound: boolean;
+  vibration: boolean;
+  showPreview: boolean;
+  priority: 'high' | 'normal' | 'low';
+}
+
 export interface AppSettings {
   theme: 'dark' | 'light';
   language: string;
   notifications: boolean;
+  notificationSettings: NotificationSettings;
   soundEnabled: boolean;
   autoLock: boolean;
   lockTimeout: number;
@@ -111,12 +120,24 @@ export interface AppSettings {
   i2p: I2PSettings;
 }
 
+export type TrustLevel = 'unverified' | 'verified' | 'blocked';
+export type VerificationMethod = 'qr' | 'manual' | 'none';
+
+export interface ContactVerification {
+  contactId: string;
+  publicKeyFingerprint: string;
+  trustLevel: TrustLevel;
+  verifiedAt?: string;
+  verificationMethod: VerificationMethod;
+}
+
 export interface SecuritySettings {
   biometricEnabled: boolean;
   pinEnabled: boolean;
   duressPin?: string;
   autoLockEnabled: boolean;
   autoLockTimeout: number;
+  contactVerifications?: ContactVerification[];
 }
 
 export interface BackupData {

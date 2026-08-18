@@ -1,15 +1,24 @@
 # Getting Started
 
-SecuChat is a privacy-focused browser messaging app with end-to-end PGP encryption and optional I2P network routing for anonymity. No server accounts, no phone numbers — just keys.
+SecuChat is a privacy-focused cross-platform messaging app with end-to-end PGP encryption and I2P network routing for anonymity. No server accounts, no phone numbers — just keys. Runs on **Browser**, **Android**, and **Desktop (Electron)**.
 
 ## Prerequisites
 
-- A modern browser (Chrome, Firefox, Edge, or Brave)
-- Optional but recommended: [i2pd](https://i2pd.website/) for anonymous routing (see [I2P Setup](I2P-Setup))
+Choose your platform:
+
+- **Browser:** A modern browser (Chrome, Firefox, Edge, or Brave)
+- **Android:** Android device with i2pd from [F-Droid](https://f-droid.org/packages/org.purplei2p.i2pd/)
+- **Desktop:** Windows or Linux — download the installer or build from source
+
+Optional but recommended for browser: [i2pd](https://i2pd.website/) for anonymous routing (see [I2P Setup](I2P-Setup))
 
 ## First Launch
 
-Open the app in your browser. If no profile exists, the onboarding wizard starts automatically.
+Open the app. If no profile exists, the onboarding wizard starts automatically.
+
+- **Browser:** Open the hosted URL or `http://localhost:5173` in dev mode
+- **Android:** Install the APK or build with Capacitor (see [Build & Deploy](Build-and-Deploy))
+- **Desktop:** Run the installed application or `cd electron && npm run dev` for development
 
 ### Step 1 — Choose your name
 
@@ -38,13 +47,15 @@ Key generation happens entirely in your browser. Nothing is uploaded.
 
 ### Step 4 — I2P setup (optional)
 
-If you want to use I2P for anonymous routing, you can configure the SAM proxy connection here. This step can be skipped and done later in **Settings → I2P**.
+If you want to use I2P for anonymous routing, you can configure the connection here. This step can be skipped and done later in **Settings → I2P**.
 
-See [I2P Setup](I2P-Setup) for detailed installation instructions.
+- **Browser:** Configure SAM proxy connection (see [I2P Setup](I2P-Setup))
+- **Android:** Install i2pd from F-Droid and start it — SecuChat connects automatically
+- **Desktop:** I2P is bundled and configured automatically
 
 ### Step 5 — Done
 
-Your profile is saved to IndexedDB (or localStorage as fallback). The app opens to the main chat view.
+Your profile is saved to local storage (IndexedDB / SQLite / Capacitor Preferences depending on platform). The app opens to the main chat view.
 
 ## Locking and Unlocking
 
@@ -60,4 +71,4 @@ You can also lock manually via the header menu.
 
 ## Backup
 
-After setup, export a backup via **Settings → Backup**. The backup contains your keys (still encrypted with your passphrase) and your contacts and messages. Store it somewhere safe — it is the only way to restore your identity.
+After setup, export a backup via **Settings → Backup**. Backups use Age encryption (v3.0-age format) and produce two files: the encrypted backup and a separate decryption key. Store both somewhere safe — they are the only way to restore your identity.

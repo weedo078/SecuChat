@@ -19,6 +19,7 @@ export interface FileTransferMeta {
   mimeType: string;
   chunksTotal: number;
   thumbnailDataUrl?: string; // Base64 thumbnail for images
+  fileHash?: string; // SHA-256 hash of the complete file
 }
 
 export interface FileTransferProgress {
@@ -40,6 +41,7 @@ class FileTransferManager {
   private activeTransfers: Map<string, FileTransferProgress> = new Map();
   private receivedChunks: Map<string, Map<number, string>> = new Map(); // transferId -> chunkIndex -> base64data
   private pendingAccepts: Map<string, (accepted: boolean) => void> = new Map();
+  private transferMetas: Map<string, FileTransferMeta> = new Map();
   private initialized = false;
 
   initialize(): void {
@@ -90,6 +92,13 @@ class FileTransferManager {
       thumbnailDataUrl = await this.generateThumbnail(file);
     }
 
+    // Compute SHA-256 hash for integrity verification
+    const fileBuffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest('SHA-256', fileBuffer);
+    const fileHash = Array.from(new Uint8Array(hashBuffer))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
     const meta: FileTransferMeta = {
       transferId,
       fileName: file.name,
@@ -97,6 +106,7 @@ class FileTransferManager {
       mimeType: file.type,
       chunksTotal,
       thumbnailDataUrl,
+      fileHash,
     };
 
     // Track progress
@@ -142,7 +152,7 @@ class FileTransferManager {
     this.notifyProgress(progress);
 
     const startTime = Date.now();
-    const arrayBuffer = await file.arrayBuffer();
+    const arrayBuffer = fileBuffer;
 
     for (let i = 0; i < chunksTotal; i++) {
       const start = i * CHUNK_SIZE;
@@ -195,7 +205,11 @@ class FileTransferManager {
       mimeType: msg.mimeType,
       chunksTotal: msg.chunksTotal,
       thumbnailDataUrl: msg.thumbnailDataUrl,
+      fileHash: msg.fileHash,
     };
+
+    // Store meta for hash verification on completion
+    this.transferMetas.set(meta.transferId, meta);
 
     // Track progress
     const progress: FileTransferProgress = {
@@ -267,9 +281,30 @@ class FileTransferManager {
   /**
    * Handle transfer completion
    */
-  private handleComplete(msg: { transferId: string }): void {
+  private async handleComplete(msg: { transferId: string }): Promise<void> {
     const progress = this.activeTransfers.get(msg.transferId);
     if (progress) {
+      // Verify file hash if available
+      const chunks = this.receivedChunks.get(msg.transferId);
+      const meta = this.transferMetas.get(msg.transferId);
+      if (chunks && meta?.fileHash) {
+        const blob = this.getReceivedFile(msg.transferId);
+        if (blob) {
+          const buffer = await blob.arrayBuffer();
+          const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+          const computedHash = Array.from(new Uint8Array(hashBuffer))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+
+          if (computedHash !== meta.fileHash) {
+            progress.status = 'failed';
+            this.notifyProgress(progress);
+            logger.error('[FileTransfer] Hash verification failed for:', msg.transferId);
+            return;
+          }
+        }
+      }
+
       progress.status = 'completed';
       progress.percent = 100;
       progress.bytesTransferred = progress.totalBytes;
@@ -355,6 +390,7 @@ class FileTransferManager {
   destroy(): void {
     this.activeTransfers.clear();
     this.receivedChunks.clear();
+    this.transferMetas.clear();
     this.pendingAccepts.clear();
     this.offerHandlers = [];
     this.progressHandlers = [];

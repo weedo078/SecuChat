@@ -1,0 +1,83 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace = "com.secuchat.app"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "com.secuchat.app"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    // ProcessLifecycleOwner for SecuChatApplication — detects when the app
+    // has been backgrounded for >5s so we can SESSION DESTROY cleanly.
+    implementation "androidx.lifecycle:lifecycle-process:$androidxLifecycleVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+// SECUCHAT:I2P — I2P Core von Maven Central, Streaming-JAR als Binary-Asset
+// Quelle: net.i2p:i2p:2.8.0 (Maven Central, Public Domain)
+// streaming.jar: TCP-über-I2P Streaming-API (net.i2p.client.streaming.*) —
+// nicht auf Maven Central veröffentlicht, deshalb als statisches Binary-Asset
+// unter app/android/libs/streaming.jar eingecheckt. Regenerierung nur bei
+// I2P-Major-Version nötig (siehe docs/superpowers/specs/ für Merge-Prozedere).
+
+dependencies {
+    // I2P Core / I2CP-Protokoll-Client (net.i2p.client.I2PClient/I2PSession)
+    implementation 'net.i2p:i2p:2.8.0'
+    // TCP-über-I2P Streaming-API (net.i2p.client.streaming.I2PSocketManagerFactory)
+    implementation files(rootProject.file('libs/streaming.jar'))
+}
+
+// License-Notice-Asset: libs/THIRD_PARTY_NOTICES.txt wird in der App-„Über"-Sektion verlinkt.
+
+// Compile-Protection: keine GPL/jetty/routerconsole/i2ptunnel-Module in implementation
+configurations.all {
+    exclude group: 'i2p', module: 'i2ptunnel'
+    exclude group: 'i2p', module: 'sam'
+    exclude group: 'i2p', module: 'jetty'
+    exclude group: 'i2p', module: 'routerconsole'
+    // net.i2p:i2p:2.8.0 zieht transitive Router-Konsole; nicht in App übernehmen
+    exclude group: 'net.i2p', module: 'routerconsole'
+}
+
+apply from: 'capacitor.build.gradle'
+
+try {
+    def servicesJSON = file('google-services.json')
+    if (servicesJSON.text) {
+        apply plugin: 'com.google.gms.google-services'
+    }
+} catch(Exception e) {
+    logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}

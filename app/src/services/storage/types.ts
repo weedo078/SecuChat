@@ -15,7 +15,7 @@ import type {
 /**
  * Platform type for storage provider selection
  */
-export type StoragePlatform = 'browser' | 'electron';
+export type StoragePlatform = 'browser' | 'electron' | 'capacitor';
 
 /**
  * Storage provider interface - abstracted storage operations

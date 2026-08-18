@@ -8,6 +8,11 @@
 import * as openpgp from 'openpgp';
 import QRCode from 'qrcode';
 import { logger } from '@/utils/logger';
+import type { ContactVerification, TrustLevel, VerificationMethod } from '@/types';
+import { storageService } from './storage';
+
+// Re-export types for backward compatibility with existing consumers
+export type { ContactVerification, TrustLevel, VerificationMethod };
 
 // BIP39-inspired word list (2048 words, using common German+English mix)
 const WORD_LIST = [
@@ -45,16 +50,6 @@ const WORD_LIST = [
   'keystone', 'legend', 'mirror', 'needle', 'oracle', 'phantom', 'raptor', 'scepter',
 ];
 
-export type TrustLevel = 'unverified' | 'verified' | 'blocked';
-export type VerificationMethod = 'qr' | 'manual' | 'none';
-
-export interface ContactVerification {
-  contactId: string;
-  publicKeyFingerprint: string;
-  trustLevel: TrustLevel;
-  verifiedAt?: string;
-  verificationMethod: VerificationMethod;
-}
 
 /**
  * Generate a SHA-256 fingerprint from a PGP public key
@@ -125,17 +120,56 @@ export async function generateQRCode(safetyNumber: string): Promise<string> {
   }
 }
 
+
 /**
- * Verification storage helpers — stored in IndexedDB via storageService
+ * Verification storage helpers — stored in encrypted IndexedDB via storageService.
+ * Migrated from localStorage to IndexedDB as part of security hardening.
  */
 export class VerificationStore {
-  private static STORE_KEY = 'contact_verifications';
+  private static readonly STORE_KEY = 'contact_verifications';
+
+  /**
+   * Migrate any old localStorage data to IndexedDB.
+   * Called automatically during getAll().
+   */
+  private static async migrateFromLocalStorage(): Promise<void> {
+    const oldData = localStorage.getItem(this.STORE_KEY);
+    if (!oldData) return;
+
+    try {
+      const oldArr: ContactVerification[] = JSON.parse(oldData);
+      if (oldArr.length > 0) {
+        const settings = await storageService.getSecuritySettings();
+        const existingMap = new Map<string, ContactVerification>(
+          (settings?.contactVerifications ?? []).map(v => [v.contactId, v])
+        );
+        // Merge old data (existing IndexedDB data takes precedence)
+        for (const v of oldArr) {
+          if (!existingMap.has(v.contactId)) {
+            existingMap.set(v.contactId, v);
+          }
+        }
+        await storageService.saveSecuritySettings({
+          ...settings,
+          biometricEnabled: settings?.biometricEnabled ?? false,
+          pinEnabled: settings?.pinEnabled ?? false,
+          autoLockEnabled: settings?.autoLockEnabled ?? true,
+          autoLockTimeout: settings?.autoLockTimeout ?? 5,
+          contactVerifications: Array.from(existingMap.values()),
+        });
+      }
+      localStorage.removeItem(this.STORE_KEY);
+      logger.info('[VerificationStore] Migrated', oldArr.length, 'verifications from localStorage to IndexedDB');
+    } catch (error) {
+      logger.error('[VerificationStore] Failed to migrate from localStorage:', error);
+    }
+  }
 
   static async getAll(): Promise<Map<string, ContactVerification>> {
+    await this.migrateFromLocalStorage();
     try {
-      const raw = localStorage.getItem(this.STORE_KEY);
-      if (!raw) return new Map();
-      const arr: ContactVerification[] = JSON.parse(raw);
+      const settings = await storageService.getSecuritySettings();
+      const arr = settings?.contactVerifications ?? [];
       return new Map(arr.map(v => [v.contactId, v]));
     } catch {
       return new Map();
@@ -150,12 +184,28 @@ export class VerificationStore {
   static async save(verification: ContactVerification): Promise<void> {
     const all = await this.getAll();
     all.set(verification.contactId, verification);
-    localStorage.setItem(this.STORE_KEY, JSON.stringify(Array.from(all.values())));
+    const settings = await storageService.getSecuritySettings();
+    await storageService.saveSecuritySettings({
+      ...settings,
+      biometricEnabled: settings?.biometricEnabled ?? false,
+      pinEnabled: settings?.pinEnabled ?? false,
+      autoLockEnabled: settings?.autoLockEnabled ?? true,
+      autoLockTimeout: settings?.autoLockTimeout ?? 5,
+      contactVerifications: Array.from(all.values()),
+    });
   }
 
   static async remove(contactId: string): Promise<void> {
     const all = await this.getAll();
     all.delete(contactId);
-    localStorage.setItem(this.STORE_KEY, JSON.stringify(Array.from(all.values())));
+    const settings = await storageService.getSecuritySettings();
+    await storageService.saveSecuritySettings({
+      ...settings,
+      biometricEnabled: settings?.biometricEnabled ?? false,
+      pinEnabled: settings?.pinEnabled ?? false,
+      autoLockEnabled: settings?.autoLockEnabled ?? true,
+      autoLockTimeout: settings?.autoLockTimeout ?? 5,
+      contactVerifications: Array.from(all.values()),
+    });
   }
 }

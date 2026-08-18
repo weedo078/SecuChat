@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Shield, Lock, Unlock, Menu, Settings, User as UserIcon, LogOut } from 'lucide-react';
+import { Lock, Unlock, Menu, Settings, User as UserIcon, LogOut } from 'lucide-react';
+import appIcon from '/icon-192x192.png';
 import { Button } from '@/components/ui/button';
 import { useApp } from '@/contexts/AppContext';
 import {
@@ -32,7 +33,7 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
 
   const getEncryptionIcon = () => {
     if (encryptionState === 'encrypted') {
-      return <Lock className="h-4 w-4 text-green-500" aria-hidden="true" />;
+      return <Lock className="h-4 w-4 text-teal-400" aria-hidden="true" />;
     }
     return <Unlock className="h-4 w-4 text-yellow-500" aria-hidden="true" />;
   };
@@ -45,7 +46,7 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
     if (i2pStatus?.samConnected) {
       return (
         <span
-          className="h-2 w-2 rounded-full bg-green-500"
+          className="h-2 w-2 rounded-full bg-teal-400"
           aria-label={t('header.i2pConnected')}
           role="status"
         />
@@ -89,7 +90,7 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
             <Menu className="h-5 w-5" aria-hidden="true" />
           </Button>
           <div className="flex items-center gap-2">
-            <Shield className="h-6 w-6 text-primary" aria-hidden="true" />
+            <img src={appIcon} alt="SecuChat" className="h-6 w-6" />
             <span className="font-semibold text-lg">SecureChat</span>
           </div>
         </div>
@@ -117,6 +118,19 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
             </span>
           </div>
 
+          {/* Quick Lock */}
+          {user && !isLocked && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={lockApp}
+              aria-label={t('header.lock') ?? 'Sperren'}
+              className="hidden sm:inline-flex"
+            >
+              <Lock className="h-5 w-5" aria-hidden="true" />
+            </Button>
+          )}
+
           {/* User Menu */}
           {user && (
             <DropdownMenu>
@@ -142,19 +156,13 @@ export function Header({ onMenuClick, onSettingsClick }: HeaderProps) {
                   <Settings className="h-4 w-4 mr-2" aria-hidden="true" />
                   {t('common.settings')}
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={isLocked ? () => setShowUnlockDialog(true) : lockApp}>
-                  {isLocked ? (
-                    <>
-                      <Unlock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      {t('header.unlock')}
-                    </>
-                  ) : (
-                    <>
-                      <Lock className="h-4 w-4 mr-2" aria-hidden="true" />
-                      {t('header.lock')}
-                    </>
-                  )}
-                </DropdownMenuItem>
+                {/* Lock/Unlock moved to dedicated QuickLockButton in header — no duplicate here */}
+                {isLocked && (
+                  <DropdownMenuItem onClick={() => setShowUnlockDialog(true)}>
+                    <Unlock className="h-4 w-4 mr-2" aria-hidden="true" />
+                    {t('header.unlock')}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem className="text-destructive">
                   <LogOut className="h-4 w-4 mr-2" aria-hidden="true" />

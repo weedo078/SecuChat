@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { isAndroid } from '@/services/platform';
 import { Sheet, SheetContent } from '@/components/ui/sheet';
 import { useApp } from '@/contexts/AppContext';
 import { Header } from '@/components/custom/Header';
@@ -8,37 +9,47 @@ import { ContactManager } from '@/components/custom/ContactManager';
 import { AddContactDialog } from '@/components/custom/AddContactDialog';
 import { Settings } from '@/components/custom/Settings';
 import { Onboarding } from '@/components/custom/Onboarding';
-import { UnlockDialog } from '@/components/custom/UnlockDialog';
+import { FullScreenLock } from '@/components/custom/FullScreenLock';
+import { QuickLockButton } from '@/components/custom/QuickLockButton';
 import { UpdateNotification } from '@/components/custom/UpdateNotification';
 import { Toaster } from '@/components/ui/sonner';
 
 function App() {
-  const { user, initialize, isLoading, isLocked, unlockApp } = useApp();
+  const { user, initialize, isLoading, isLocked, lockApp, unlockApp } = useApp();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showContactManager, setShowContactManager] = useState(false);
   const [showShareContact, setShowShareContact] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [unlockDismissed, setUnlockDismissed] = useState(false);
-
-  // Derive unlock dialog from isLocked state without useEffect
-  const showUnlockDialog = isLocked && !unlockDismissed;
+  // Bug 1 fix: kein unlockDismissed-Flag mehr. Der State wurde vergessen
+  // zurückzusetzen, sodass nach Auto-Lock der Unlock-Dialog nicht mehr öffnete.
+  // FullScreenLock mounted direkt aus isLocked.
+  const showFullScreenLock = isLocked;
 
   useEffect(() => {
     initialize();
   }, [initialize]);
 
-  const handleUnlock = async (passphrase: string): Promise<boolean> => {
-    const success = await unlockApp(passphrase);
-    if (success) {
-      setUnlockDismissed(true);
+  // Basic environment integrity check
+  useEffect(() => {
+    // Verify we're running in a secure context
+    if (!window.isSecureContext && window.location.protocol !== 'file:') {
+      console.warn('[App] Not running in secure context — some features may be limited');
     }
-    return success;
-  };
 
-  const handleCloseUnlockDialog = () => {
-    // Dialog kann nicht geschlossen werden ohne Entsperrung
-    // (optional: könnte auch setUnlockDismissed(false) bleiben)
+    // Verify Capacitor plugins are intact (if native platform)
+    if (typeof window !== 'undefined') {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const cap = (window as any).Capacitor;
+      if (cap?.isNativePlatform?.() && !cap.Plugins) {
+        console.error('[App] Capacitor plugins not loaded — possible integrity issue');
+      }
+    }
+  }, []);
+
+  const handleUnlock = async (passphrase: string): Promise<boolean> => {
+    return await unlockApp(passphrase);
   };
+  // Kein handleCloseUnlockDialog mehr nötig — FullScreenLock hat keinen Close-Button.
 
   if (isLoading) {
     return (
@@ -61,16 +72,20 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <Header 
-        onMenuClick={() => setSidebarOpen(true)} 
-        onSettingsClick={() => setShowSettings(true)} 
-      />
+    <div className="fixed inset-0 bg-background flex flex-col">
+      {/* Fixed Header - stays below notification bar on Android */}
+      <div className="fixed top-0 left-0 right-0 z-50" style={{ paddingTop: isAndroid() ? '28px' : undefined }} >
+        <Header
+          onMenuClick={() => setSidebarOpen(true)}
+          onSettingsClick={() => setShowSettings(true)}
+        />
+      </div>
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* Main content with padding for fixed header */}
+      <div className="flex-1 flex overflow-hidden" style={{ paddingTop: isAndroid() ? 'calc(4rem + 28px)' : '4rem' }} >
         {/* Desktop Sidebar */}
-        <div className="hidden lg:block w-80 shrink-0">
-          <Sidebar 
+        <div className="hidden lg:flex w-80 shrink-0 flex-col h-full overflow-hidden">
+          <Sidebar
             onAddContact={() => setShowContactManager(true)}
             onShareContact={() => setShowShareContact(true)}
             onSettingsClick={() => setShowSettings(true)}
@@ -79,8 +94,8 @@ function App() {
 
         {/* Mobile Sidebar */}
         <Sheet open={sidebarOpen} onOpenChange={setSidebarOpen}>
-          <SheetContent side="left" className="p-0 w-80">
-            <Sidebar 
+          <SheetContent side="left" className={`p-0 w-80 ${isAndroid() ? '[&>button]:hidden' : ''}`} style={{ paddingTop: isAndroid() ? '28px' : 'env(safe-area-inset-top, 0px)' }}>
+            <Sidebar
               onAddContact={() => {
                 setSidebarOpen(false);
                 setShowContactManager(true);
@@ -98,7 +113,9 @@ function App() {
         </Sheet>
 
         {/* Main Content */}
-        <ChatView />
+        <div className="flex-1 flex flex-col h-full overflow-hidden">
+          <ChatView />
+        </div>
       </div>
 
       {/* Dialogs */}
@@ -116,11 +133,16 @@ function App() {
         onClose={() => setShowSettings(false)} 
       />
 
-      <UnlockDialog
-        isOpen={showUnlockDialog}
-        onClose={handleCloseUnlockDialog}
-        onUnlock={handleUnlock}
-      />
+      {showFullScreenLock && (
+        <FullScreenLock onUnlock={handleUnlock} />
+      )}
+
+      {/* Quick-Lock FAB (mobile only) */}
+      {user && !isLocked && (
+        <div className="sm:hidden">
+          <QuickLockButton variant="fab" onLock={lockApp} />
+        </div>
+      )}
 
       <Toaster />
       

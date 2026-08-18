@@ -1,7 +1,11 @@
 {
   "appId": "com.securechat.desktop",
   "productName": "SecuChat",
-  "asar": false,
+  "asar": true,
+  "asarUnpack": [
+    "**/*.node",
+    "**/better-sqlite3/**"
+  ],
   "directories": {
     "output": "release",
     "buildResources": "build-assets"
@@ -14,11 +18,6 @@
     {
       "from": "../app/dist",
       "to": "app",
-      "filter": ["**/*"]
-    },
-    {
-      "from": "resources/i2pd",
-      "to": "i2pd",
       "filter": ["**/*"]
     }
   ],
@@ -35,8 +34,9 @@
     "target": [
       { "target": "nsis", "arch": ["x64"] }
     ],
-    "icon": "build-assets/icon.png",
-    "artifactName": "${productName}.Setup.${version}.${ext}"
+    "icon": "build/icon.ico",
+    "artifactName": "${productName}.Setup.${version}.${ext}",
+    "requestedExecutionLevel": "requireAdministrator"
   },
   "nsis": {
     "oneClick": false,

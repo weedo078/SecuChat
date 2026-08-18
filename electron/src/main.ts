@@ -1,19 +1,44 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol, session } from 'electron';
 import { join, normalize } from 'path';
 import { existsSync } from 'fs';
 import { autoUpdater } from 'electron-updater';
-import { startI2pd, stopI2pd, isI2pReady, getI2PManager } from './i2p-manager';
-import { startSamProxy, stopSamProxy } from './sam-proxy';
+import { I2PPlugin } from './i2p/i2p-plugin';
+import {
+  I2P_EVENT_NAMES,
+  parseCloseOpts,
+  parseConnectToOpts,
+  parseSendOpts,
+  parseStartOpts,
+  type I2PEventName,
+} from './i2p/ipc-validators';
 import { registerStorageIpcHandlers, unregisterStorageIpcHandlers } from './storage';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
 let mainWindow: BrowserWindow | null = null;
-let i2pStatus = {
+const i2pStatus = {
   isRunning: false,
   isReady: false,
   error: null as string | null,
 };
+
+/**
+ * Push the current I2P status to every renderer.
+ *
+ * Channel is `i2p:event:i2pStatus`, NOT the legacy `i2p:status`. The preload
+ * bridge (Task 8) only forwards `i2p:event:<name>` channels through
+ * `onI2pEvent`, so a send on `i2p:status` would be silently undeliverable.
+ *
+ * Broadcasting to all windows (rather than `mainWindow` only) keeps this
+ * consistent with the plugin event forwarding below; the app is
+ * single-window today but `app.on('activate')` can create more.
+ */
+function broadcastI2pStatus(): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send('i2p:event:i2pStatus', { ...i2pStatus });
+  }
+}
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
@@ -28,7 +53,7 @@ protocol.registerSchemesAsPrivileged([
 
 const APP_DIST = app.isPackaged
   ? join(process.resourcesPath, 'app')
-  : join(__dirname, '../app/dist');
+  : join(__dirname, '../../app/dist');
 console.log('[Main] APP_DIST:', APP_DIST, '(isPackaged:', app.isPackaged, ')');
 
 // Verify index.html exists
@@ -53,13 +78,16 @@ function createWindow(): void {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools();
+    // Only open DevTools with explicit --devtools flag or OPEN_DEVTOOLS=1 env var
+    if (process.argv.includes('--devtools') || process.env.OPEN_DEVTOOLS === '1') {
+      mainWindow.webContents.openDevTools();
+    }
   } else {
     const indexPath = join(APP_DIST, 'index.html');
     console.log('[Main] Loading file:', indexPath);
@@ -75,7 +103,7 @@ function createWindow(): void {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-    mainWindow?.webContents.send('i2p:status', i2pStatus);
+    broadcastI2pStatus();
   });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -88,29 +116,52 @@ function createWindow(): void {
 
 // ─── I2P Initialization ───────────────────────────────────────────────────────
 
+/**
+ * I2CP endpoint of the locally-installed I2P router. SecuChat attaches to an
+ * existing router rather than bundling one; 7654 is the I2CP default for both
+ * Java I2P and i2pd.
+ */
+const I2CP_HOST = '127.0.0.1';
+const I2CP_PORT = 7654;
+const I2CP_NICKNAME = 'SecuChat';
+
+/**
+ * Probe for a local I2P router and, if present, open the I2CP session.
+ *
+ * Unlike the previous i2pd-based flow, SecuChat no longer spawns or bundles a
+ * router: it attaches to an externally-managed Java I2P instance on
+ * 127.0.0.1:7654 (installed via electron/scripts/setup-i2p.{sh,ps1}). The
+ * cheap `isI2pAvailable()` TCP probe runs first so a missing router yields a
+ * fast, actionable error instead of an I2CP handshake timeout.
+ */
 async function initializeI2P(): Promise<boolean> {
-  console.log('[Main] Initializing I2P...');
+  console.log('[Main] Probing I2P router availability...');
+  const plugin = I2PPlugin.getInstance();
+
+  const { available } = await plugin.isI2pAvailable();
+  if (!available) {
+    console.warn('[Main] I2P router not available on 127.0.0.1:7654');
+    i2pStatus.isRunning = false;
+    i2pStatus.isReady = false;
+    i2pStatus.error = 'I2P-Router nicht erreichbar. Installiere Java I2P via setup-i2p.sh/ps1';
+    broadcastI2pStatus();
+    return false;
+  }
 
   try {
-    const success = await startI2pd();
-
-    if (success) {
-      i2pStatus.isRunning = true;
-      i2pStatus.isReady = true;
-      console.log('[Main] I2P initialized successfully');
-      return true;
-    } else {
-      i2pStatus.isRunning = false;
-      i2pStatus.isReady = false;
-      i2pStatus.error = 'Failed to start i2pd';
-      console.error('[Main] I2P initialization failed');
-      return false;
-    }
+    const { b32Address } = await plugin.start({ host: I2CP_HOST, port: I2CP_PORT, nickname: I2CP_NICKNAME });
+    i2pStatus.isRunning = true;
+    i2pStatus.isReady = true;
+    i2pStatus.error = null;
+    console.log('[Main] I2P session established, b32:', b32Address);
+    broadcastI2pStatus();
+    return true;
   } catch (error) {
     i2pStatus.isRunning = false;
     i2pStatus.isReady = false;
     i2pStatus.error = error instanceof Error ? error.message : 'Unknown error';
     console.error('[Main] I2P initialization error:', error);
+    broadcastI2pStatus();
     return false;
   }
 }
@@ -141,39 +192,26 @@ app.whenReady().then(async () => {
   });
   console.log('[Main] Registered app:// protocol:', protocolRegistered, 'serving from:', APP_DIST);
 
-  // Starte SAM Proxy zuerst (für I2P-Kommunikation)
-  try {
-    await startSamProxy();
-    console.log('[Main] SAM Proxy started');
-  } catch (err: any) {
-    console.error('[Main] SAM Proxy failed to start:', err);
-    // Nicht blockieren - App kann trotzdem ohne I2P laufen
-  }
-
-  // Starte i2pd
+  // Attach to the locally-installed I2P router (no bundled daemon to spawn).
   const i2pSuccess = await initializeI2P();
 
   if (!i2pSuccess) {
     const isWindows = process.platform === 'win32';
-    let detailMsg = 'SecuChat will start, but I2P connectivity may not work.\n\n';
-    
-    if (isWindows) {
-      detailMsg += 'Possible causes on Windows:\n' +
-                   '• Antivirus software blocking i2pd.exe\n' +
-                   '• Windows Defender preventing execution\n' +
-                   '• Missing write permissions to %appdata%\n\n' +
-                   'Try:\n' +
-                   '1. Add SecuChat to antivirus exclusions\n' +
-                   '2. Run as Administrator\n' +
-                   '3. Check Windows Event Viewer for errors';
-    } else {
-      detailMsg += 'Please check the logs or try restarting the application.';
-    }
-    
+    const setupScript = isWindows ? 'electron\\scripts\\setup-i2p.ps1' : 'electron/scripts/setup-i2p.sh';
+    const detailMsg =
+      'SecuChat will start, but I2P connectivity will not work until a router is reachable.\n\n' +
+      `SecuChat connects to an I2P router's I2CP port on ${I2CP_HOST}:${I2CP_PORT}. ` +
+      'It does not bundle or start a router itself.\n\n' +
+      'Try:\n' +
+      `1. Install a router with ${setupScript}\n` +
+      '2. Make sure the router is running and fully started\n' +
+      `3. Confirm I2CP is enabled and listening on ${I2CP_HOST}:${I2CP_PORT}\n\n` +
+      `Details: ${i2pStatus.error ?? 'unknown error'}`;
+
     const result = await dialog.showMessageBox({
       type: 'warning',
       title: 'I2P Warning',
-      message: 'Could not start I2P daemon',
+      message: 'Could not reach an I2P router',
       detail: detailMsg,
       buttons: ['Continue', 'Exit'],
       defaultId: 0,
@@ -185,6 +223,18 @@ app.whenReady().then(async () => {
     }
   }
 
+  // Set CSP header for all requests
+  session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    callback({
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [
+          "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' ws://127.0.0.1:7657 http://127.0.0.1:7070; media-src 'self' blob:; worker-src 'self' blob:"
+        ]
+      }
+    });
+  });
+
   createWindow();
 
   app.on('activate', () => {
@@ -192,25 +242,41 @@ app.whenReady().then(async () => {
   });
 });
 
+/**
+ * Tear down the I2CP session. Safe to call repeatedly: `window-all-closed`
+ * and `before-quit` both fire during a normal quit, and `I2PPlugin.disconnect`
+ * no-ops once `socketManager` is null. Errors are logged rather than thrown so
+ * a failed teardown cannot block app exit.
+ */
+async function shutdownI2P(): Promise<void> {
+  try {
+    await I2PPlugin.getInstance().disconnect();
+  } catch (error) {
+    console.error('[Main] I2P disconnect failed:', error);
+  }
+}
+
 app.on('window-all-closed', async () => {
   console.log('[Main] All windows closed');
   unregisterStorageIpcHandlers();
-  await stopSamProxy();
-  await stopI2pd();
+  await shutdownI2P();
   if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('before-quit', async () => {
   console.log('[Main] Before quit');
   unregisterStorageIpcHandlers();
-  await stopSamProxy();
-  await stopI2pd();
+  await shutdownI2P();
 });
 
 // ─── Auto-Updater ─────────────────────────────────────────────────────────────
 
+// Note: Updates are verified via SHA-512 hash from latest.yml by electron-updater.
+// For full security, code signing should be enabled to ensure latest.yml itself
+// hasn't been tampered with: https://www.electron.build/code-signing
 autoUpdater.autoDownload = false;
 autoUpdater.autoInstallOnAppQuit = true;
+autoUpdater.forceDevUpdateConfig = true; // Allow update testing in dev mode
 
 function checkForUpdates(): void {
   if (isDev) {
@@ -282,6 +348,14 @@ autoUpdater.on('download-progress', (progress) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
+  // Verify update integrity: electron-updater already validates sha512 from latest.yml,
+  // but we log it explicitly for auditability
+  if (info.sha512) {
+    console.log('[Auto-Update] Update hash verified (sha512):', info.sha512.substring(0, 16) + '...');
+  } else {
+    console.warn('[Auto-Update] No SHA-512 hash in update metadata — integrity cannot be verified');
+  }
+
   console.log('[Auto-Update] Update downloaded, ready to install');
   mainWindow?.webContents.send('update:downloaded', {
     version: info.version,
@@ -311,20 +385,83 @@ ipcMain.handle('update:install', () => {
   autoUpdater.quitAndInstall();
 });
 
-// I2P IPC
-ipcMain.handle('i2p:status', async () => ({
-  ...i2pStatus,
-  isReady: await isI2pReady(),
-  samInfo: getI2PManager().getSamInfo(),
-}));
+// ─── I2P IPC ─────────────────────────────────────────────────────────────────
+//
+// One handler per channel in `ALLOWED_I2P_CHANNELS` (electron/src/preload.ts).
+// The preload allowlist gates *which* channel a renderer may invoke; the
+// `parse*Opts` validators gate the *shape* of the payload. Both are required:
+// IPC arguments are fully renderer-controlled, so an unvalidated `opts` would
+// let a compromised renderer smuggle arbitrary fields into the plugin.
+//
+// A validator throwing inside an `ipcMain.handle` callback rejects the
+// renderer's promise, surfacing as a normal Error at the `i2pInvoke` call site.
+//
+// NOTE: the legacy `i2p:status` and `i2p:restart` handlers were removed here.
+// Both were i2pd-era and unreachable — neither appears in the preload
+// allowlist (so `i2pInvoke` rejects them) and a repo-wide grep found no
+// callers. Status is now *pushed* on `i2p:event:i2pStatus` instead. Restoring
+// a pull-based status query would need a preload allowlist entry as well.
 
-ipcMain.handle('i2p:restart', async () => {
-  console.log('[Main] Restarting I2P...');
-  await stopI2pd();
-  const success = await initializeI2P();
-  mainWindow?.webContents.send('i2p:status', i2pStatus);
-  return success;
-});
+const i2pPlugin = I2PPlugin.getInstance();
+
+ipcMain.handle('i2p:start', (_event, opts: unknown) => i2pPlugin.start(parseStartOpts(opts)));
+ipcMain.handle('i2p:connectTo', (_event, opts: unknown) => i2pPlugin.connectTo(parseConnectToOpts(opts)));
+ipcMain.handle('i2p:acceptIncoming', () => i2pPlugin.acceptIncoming());
+ipcMain.handle('i2p:send', (_event, opts: unknown) => i2pPlugin.send(parseSendOpts(opts)));
+ipcMain.handle('i2p:close', (_event, opts: unknown) => i2pPlugin.close(parseCloseOpts(opts)));
+ipcMain.handle('i2p:disconnect', () => i2pPlugin.disconnect());
+ipcMain.handle('i2p:getB32Address', () => i2pPlugin.getB32Address());
+ipcMain.handle('i2p:isAvailable', () => i2pPlugin.isI2pAvailable());
+
+/** Broadcast one plugin event to every live renderer as `i2p:event:<name>`. */
+function broadcastI2pEvent(eventName: I2PEventName, data: unknown): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    win.webContents.send(`i2p:event:${eventName}`, data);
+  }
+}
+
+/**
+ * Bridge one plugin event channel onto the IPC bus.
+ *
+ * `subscribe` is the plugin's own `onI2pXxx` method, so `T` is inferred from
+ * that method's callback signature — no cast and no dynamic `plugin[...]`
+ * indexing, which means renaming a plugin method is a compile error here
+ * rather than a silent runtime no-op.
+ */
+function forwardI2pEvent<T>(eventName: I2PEventName, subscribe: (cb: (data: T) => void) => () => void): void {
+  subscribe((data) => broadcastI2pEvent(eventName, data));
+}
+
+/**
+ * Registering as a `Record<I2PEventName, …>` makes coverage exhaustive: adding
+ * a name to `I2P_EVENT_NAMES` without wiring it here fails the type check.
+ */
+function registerI2pEventForwarding(): void {
+  const forwarders: Record<I2PEventName, () => void> = {
+    i2pStatus: () => forwardI2pEvent('i2pStatus', (cb) => i2pPlugin.onI2pStatus(cb)),
+    i2pMessage: () => forwardI2pEvent('i2pMessage', (cb) => i2pPlugin.onI2pMessage(cb)),
+    i2pStreamConnected: () => forwardI2pEvent('i2pStreamConnected', (cb) => i2pPlugin.onI2pStreamConnected(cb)),
+    i2pStreamClosed: () => forwardI2pEvent('i2pStreamClosed', (cb) => i2pPlugin.onI2pStreamClosed(cb)),
+  };
+  for (const eventName of I2P_EVENT_NAMES) {
+    forwarders[eventName]();
+  }
+}
+
+// Registered at module scope so the forwarders are attached before
+// `initializeI2P()` runs inside `app.whenReady()` and can therefore observe
+// the `i2pStatus` event emitted by `plugin.start()`.
+//
+// Residual bootstrap race (Phase-4 follow-up): `I2PPlugin`'s ring buffer
+// guarantees delivery to a late-attaching *main-process* listener, but a
+// forwarded event is dropped if no renderer has loaded yet — `webContents.send`
+// to a window whose preload has not run has no receiver. In practice only
+// `i2pStatus` can fire that early (start() precedes createWindow()), and the
+// `ready-to-show` hook re-pushes it via `broadcastI2pStatus()`. Stream events
+// cannot precede a window because they require a renderer-initiated
+// `i2p:connectTo`.
+registerI2pEventForwarding();
 
 // Check for updates on startup (after 5s delay)
 app.whenReady().then(() => {
@@ -337,7 +474,7 @@ app.whenReady().then(() => {
 
 process.on('uncaughtException', (error) => {
   console.error('[Main] Uncaught exception:', error);
-  stopI2pd().finally(() => {
+  shutdownI2P().finally(() => {
     dialog.showErrorBox(
       'Fatal Error',
       `An unexpected error occurred:\n${error.message}\n\nThe application will now exit.`

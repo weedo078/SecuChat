@@ -33,6 +33,9 @@ export interface SAMStream {
 }
 
 import { logger } from '@/utils/logger';
+import { platformService } from './platform';
+import { samNativeService } from './samNative';
+import { i2pPlugin } from './i2pPlugin';
 type ResponseResolver = (response: string) => void;
 
 class SAMService {
@@ -58,6 +61,7 @@ class SAMService {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isReconnecting = false;
   private acceptLoopActive = false;
+  private useNativeBridge = false;
 
   /**
    * Check if SAM proxy is reachable
@@ -65,7 +69,28 @@ class SAMService {
    */
   async isAvailable(config?: SAMConfig, maxAttempts = 3): Promise<boolean> {
     const c = config || this.config;
+    logger.log('[SAM] isAvailable called, enabled:', c.enabled);
     if (!c.enabled) return false;
+
+    // Android: kein SAM-Bridge mehr. i2p-App exponiert I2CP direkt via Capacitor-Plugin
+    // "I2P" (siehe services/i2pPlugin.ts). Das alte SAM-Plugin ist tot.
+    if (platformService.isAndroidNative()) {
+      try {
+        const hostOverride = (typeof localStorage !== 'undefined'
+          ? localStorage.getItem('secuchat_sam_host')
+          : null) || '127.0.0.1';
+        const result = await i2pPlugin.initialize({
+          host: hostOverride,
+          port: 7654,
+          enabled: true,
+        });
+        return !!result?.b32Address;
+      } catch (err) {
+        logger.error('[SAM] Android I2CP init failed:', err);
+        return false;
+      }
+    }
+    logger.log('[SAM] Using WebSocket proxy');
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -126,8 +151,120 @@ class SAMService {
     this.config = config;
     if (!config.enabled) return false;
 
+    // Use native bridge for Android
+    if (platformService.isAndroidNative()) {
+      return this.connectNative(config);
+    }
+
+    return this.connectWebSocket(config);
+  }
+
+  /**
+   * Connect using native Android SAM plugin
+   */
+  private async connectNative(config: SAMConfig): Promise<boolean> {
+    try {
+      logger.log('[SAM] Using native Android bridge');
+      const success = await samNativeService.initialize(config);
+      if (success) {
+        this.isConnected = true;
+        this.helloCompleted = true;
+        this.useNativeBridge = true;
+        this.setupNativeEventHandlers();
+        logger.log('[SAM] Native bridge connected');
+      }
+      return success;
+    } catch (error) {
+      logger.error('[SAM] Native connect failed:', error);
+      this.isConnected = false;
+      return false;
+    }
+  }
+
+  private nativeMessageHandler?: (from: string, data: string, _streamId: number) => void;
+  private nativeStreamConnectedHandler?: (streamId: number, peerDestination: string) => void;
+  private nativeStreamClosedHandler?: (streamId: number, _reason?: string) => void;
+  private nativeErrorHandler?: (error: string, streamId: number) => void;
+
+  /**
+   * Setup event handlers for native bridge
+   */
+  private setupNativeEventHandlers(): void {
+    // Remove any existing handlers first
+    this.removeNativeEventHandlers();
+
+    this.nativeMessageHandler = (from: string, data: string) => {
+      this.messageHandlers.forEach(h => h(from, data));
+    };
+    samNativeService.onMessage(this.nativeMessageHandler);
+
+    this.nativeStreamConnectedHandler = (streamId: number, peerDestination: string) => {
+      const existing = this.streams.get(streamId);
+      if (existing) {
+        existing.peerDestination = peerDestination;
+        existing.connected = true;
+        return;
+      }
+
+      const stream: SAMStream = {
+        id: streamId,
+        peerDestination,
+        connected: true,
+      };
+      this.streams.set(streamId, stream);
+      this.streamHandlers.forEach(h => h(stream));
+    };
+    samNativeService.onStreamConnected(this.nativeStreamConnectedHandler);
+
+    this.nativeStreamClosedHandler = (streamId: number) => {
+      const stream = this.streams.get(streamId);
+      if (stream) {
+        stream.connected = false;
+        this.streams.delete(streamId);
+      }
+    };
+    samNativeService.onStreamClosed(this.nativeStreamClosedHandler);
+
+    this.nativeErrorHandler = (error: string, streamId: number) => {
+      logger.error('[SAM] Native error:', error, 'stream:', streamId);
+    };
+    samNativeService.onError(this.nativeErrorHandler);
+  }
+
+  /**
+   * Remove native event handlers
+   *
+   * Must call each samNativeService.off* to actually drop the closure from
+   * the handler arrays. Previously the streamConnected/Closed/error handlers
+   * were only zeroed locally here, which left them registered on the
+   * service and caused duplicate dispatch after reconnect cycles.
+   */
+  private removeNativeEventHandlers(): void {
+    if (this.nativeMessageHandler) {
+      samNativeService.offMessage(this.nativeMessageHandler);
+      this.nativeMessageHandler = undefined;
+    }
+    if (this.nativeStreamConnectedHandler) {
+      samNativeService.offStreamConnected(this.nativeStreamConnectedHandler);
+      this.nativeStreamConnectedHandler = undefined;
+    }
+    if (this.nativeStreamClosedHandler) {
+      samNativeService.offStreamClosed(this.nativeStreamClosedHandler);
+      this.nativeStreamClosedHandler = undefined;
+    }
+    if (this.nativeErrorHandler) {
+      samNativeService.offError(this.nativeErrorHandler);
+      this.nativeErrorHandler = undefined;
+    }
+  }
+
+  /**
+   * Connect using WebSocket proxy (browser/Electron)
+   */
+  private async connectWebSocket(config: SAMConfig): Promise<boolean> {
     // Clean up previous connection
     this.disconnect();
+    this.useNativeBridge = false;
 
     try {
       this.socket = new WebSocket(`ws://${config.host}:${config.port}`);
@@ -193,7 +330,7 @@ class SAMService {
       }
       
       if (!helloResp.includes('RESULT=OK')) {
-        console.error('[SAM] HELLO failed after', maxHelloAttempts, 'attempts:', helloResp);
+        logger.error('[SAM] HELLO failed after', maxHelloAttempts, 'attempts:', helloResp?.slice(0, 100));
         this.disconnect();
         return false;
       }
@@ -203,7 +340,7 @@ class SAMService {
       return true;
 
     } catch (error) {
-      console.error('[SAM] Connect failed:', error);
+      logger.error('[SAM] Connect failed:', error);
       this.isConnected = false;
       return false;
     }
@@ -214,6 +351,20 @@ class SAMService {
    */
   async generateDestination(signatureType = 'EdDSA_SHA512_Ed25519'): Promise<SAMSession> {
     this.requireConnected();
+
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      const result = await samNativeService.generateDestination(signatureType);
+      if (!result) {
+        throw new Error('DEST GENERATE failed via native bridge');
+      }
+      this.session = {
+        id: crypto.randomUUID(),
+        destination: result.publicKey,
+        privateKey: result.privateKey,
+      };
+      return this.session;
+    }
 
     const resp = await this.sendRaw(`DEST GENERATE SIGNATURE_TYPE=${signatureType}`);
 
@@ -246,38 +397,88 @@ class SAMService {
     if (!dest) {
       throw new Error('SAM destination private key is required. Call generateDestination() first or provide a stored key.');
     }
-    console.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
+
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      const success = await samNativeService.createSession(nickname, privateKey);
+      if (!success) {
+        throw new Error('SESSION CREATE failed via native bridge');
+      }
+      this.sessionNickname = nickname;
+      this.lastSessionNickname = nickname;
+      this.lastSessionPrivateKey = privateKey;
+      logger.log('[SAM] Session created via native bridge:', nickname);
+      return;
+    }
+
+    logger.log(`[SAM] Creating session with PERSISTENT destination (length: ${dest.length})`);
     const destParam = `DESTINATION=${dest}`;
-    const resp = await this.sendRaw(
-      `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
-    );
 
-    if (!resp.includes('RESULT=OK')) {
-      throw new Error(`SESSION CREATE failed: ${resp}`);
+    // Retry logic for i2pd initialization (can take 1-3 minutes on first start)
+    const maxRetries = 5;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const resp = await this.sendRaw(
+          `SESSION CREATE STYLE=STREAM ID=${nickname} ${destParam}`
+        );
+
+        if (resp.includes('RESULT=OK')) {
+          // Parse destination from response if available
+          const destMatch = resp.match(/DESTINATION=([^\s]+)/);
+          if (destMatch && !this.session) {
+            this.session = {
+              id: crypto.randomUUID(),
+              destination: destMatch[1],
+              privateKey: dest || '',
+            };
+          }
+
+          this.sessionNickname = nickname;
+          this.lastSessionNickname = nickname;
+          this.lastSessionPrivateKey = privateKey;
+          logger.log('[SAM] Session created:', nickname);
+          return;
+        }
+
+        // Check for DISCONNECTED error (i2pd still initializing)
+        if (resp.includes('RESULT=DISCONNECTED') || resp.includes('DISCONNECTED')) {
+          lastError = new Error(`SESSION CREATE failed: i2pd is still initializing. Please wait...`);
+          logger.warn(`[SAM] SESSION CREATE attempt ${attempt}/${maxRetries} failed: i2pd not ready`);
+
+          if (attempt < maxRetries) {
+            // Exponential backoff: 5s, 7s, 10s, 15s
+            const delay = Math.min(5000 * Math.pow(1.5, attempt - 1), 15000);
+            logger.log(`[SAM] Waiting ${Math.round(delay / 1000)}s before retry...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+        }
+
+        // Other error - fail immediately
+        throw new Error(`SESSION CREATE failed: ${resp}`);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        if (attempt < maxRetries && lastError.message.includes('DISCONNECTED')) {
+          const delay = Math.min(5000 * Math.pow(1.5, attempt - 1), 15000);
+          logger.log(`[SAM] Waiting ${Math.round(delay / 1000)}s before retry ${attempt + 1}/${maxRetries}...`);
+          await new Promise(r => setTimeout(r, delay));
+        } else {
+          throw lastError;
+        }
+      }
     }
 
-    // Parse destination from response if available
-    const destMatch = resp.match(/DESTINATION=([^\s]+)/);
-    if (destMatch && !this.session) {
-      this.session = {
-        id: crypto.randomUUID(),
-        destination: destMatch[1],
-        privateKey: dest || '',
-      };
-    }
-
-    this.sessionNickname = nickname;
-    // Remember for auto-restore after reconnect
-    this.lastSessionNickname = nickname;
-    this.lastSessionPrivateKey = privateKey;
-    logger.log('[SAM] Session created:', nickname);
+    // All retries exhausted
+    throw lastError || new Error('SESSION CREATE failed after all retries. i2pd may still be initializing - please wait 1-3 minutes and try again.');
   }
 
   /**
    * Connect to a remote I2P peer via STREAM CONNECT
    * IMPORTANT: SAM requires a separate socket for STREAM CONNECT
    * We create a new WebSocket, do HELLO + SESSION ID=xxx, then STREAM CONNECT
-   * 
+   *
    * Implements retry logic for LeaseSet lookup failures - peer may need time
    * to publish their LeaseSet after starting i2pd
    */
@@ -286,32 +487,55 @@ class SAMService {
       throw new Error('No session created. Call createSession first.');
     }
 
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      // Honour maxRetries here too — previously the native branch always used the
+      // service default (5 retries / ~67 s), ignoring the caller's request and
+      // letting attempts stack up behind periodic callers.
+      const streamId = await samNativeService.connectTo(destination, 60000, maxRetries);
+      if (streamId === null) {
+        throw new Error('STREAM CONNECT failed via native bridge');
+      }
+      const stream: SAMStream = {
+        id: streamId,
+        peerDestination: destination,
+        connected: true,
+      };
+      this.streams.set(streamId, stream);
+      return stream;
+    }
+
     let lastError: Error | null = null;
-    
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+
+    // maxRetries is a RETRY budget, so the number of attempts is maxRetries + 1.
+    // This keeps the semantics identical to the native branch above and makes
+    // maxRetries = 0 mean "one attempt, fail fast" instead of "never try".
+    const totalAttempts = maxRetries + 1;
+
+    for (let attempt = 1; attempt <= totalAttempts; attempt++) {
       try {
         return await this.attemptStreamConnect(destination);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        
+
         // Check if it's a LeaseSet not found error
         const errorMessage = lastError.message;
-        const isLeaseSetError = errorMessage.includes('LeaseSet not found') || 
+        const isLeaseSetError = errorMessage.includes('LeaseSet not found') ||
                                 errorMessage.includes('CANT_REACH_PEER');
-        
-        if (isLeaseSetError && attempt < maxRetries) {
+
+        if (isLeaseSetError && attempt < totalAttempts) {
           // Wait before retry with exponential backoff
           const delay = Math.min(10000 * attempt, 30000);
-          logger.log(`[SAM] Peer not reachable (attempt ${attempt}/${maxRetries}), waiting ${delay}ms for LeaseSet propagation...`);
+          logger.log(`[SAM] Peer not reachable (attempt ${attempt}/${totalAttempts}), waiting ${delay}ms for LeaseSet propagation...`);
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
-        
+
         // If not a LeaseSet error or last attempt, throw
         throw lastError;
       }
     }
-    
+
     throw lastError || new Error('STREAM CONNECT failed after retries');
   }
 
@@ -460,6 +684,18 @@ class SAMService {
     if (this.acceptLoopActive) return;
     this.acceptLoopActive = true;
     logger.log('[SAM] Starting accept loop');
+
+    // Use native bridge for Android
+    if (this.useNativeBridge && this.sessionNickname) {
+      samNativeService.startAccepting(this.sessionNickname).then(success => {
+        if (!success) {
+          logger.error('[SAM] Failed to start native accept loop');
+          this.acceptLoopActive = false;
+        }
+      });
+      return;
+    }
+
     this.scheduleAccept();
   }
 
@@ -604,16 +840,40 @@ class SAMService {
    */
   isStreamOpen(streamId: number): boolean {
     const stream = this.streams.get(streamId);
+
+    // Native bridge streams don't have WebSocket
+    if (this.useNativeBridge) {
+      return stream?.connected ?? false;
+    }
+
     return !!(stream?.socket && stream.socket.readyState === WebSocket.OPEN);
   }
 
   async send(streamId: number, data: string): Promise<void> {
     const stream = this.streams.get(streamId);
 
-    if (!stream?.socket || stream.socket.readyState !== WebSocket.OPEN) {
+    if (!stream) {
+      throw new Error('Stream not found');
+    }
+
+    // Use native bridge for Android
+    if (this.useNativeBridge) {
+      if (!stream.connected) {
+        throw new Error('Native stream not connected');
+      }
+      const success = await samNativeService.send(streamId, data);
+      if (!success) {
+        stream.connected = false;
+        this.streams.delete(streamId);
+        throw new Error(`Native send failed for stream ${streamId}`);
+      }
+      return;
+    }
+
+    if (!stream.socket || stream.socket.readyState !== WebSocket.OPEN) {
       throw new Error('Stream socket not open');
     }
-    
+
     // Send data directly over the stream socket
     stream.socket.send(data);
   }
@@ -677,7 +937,8 @@ class SAMService {
   }
 
   /**
-   * Disconnect everything
+   * Disconnect the transport (socket, streams, pending commands).
+   * Preserves registered event handlers so they survive auto-reconnect.
    */
   disconnect(): void {
     if (this.reconnectTimer) {
@@ -699,14 +960,37 @@ class SAMService {
       resolver('ERROR RESULT=DISCONNECTED');
     });
     this.pendingResolvers = [];
-    
+
+    // NOTE: messageHandlers, streamHandlers, reconnectHandlers are NOT cleared here.
+    // They are registered once by i2pService.setupSAMListeners() and must persist
+    // across auto-reconnect cycles so incoming messages are not lost.
+
+    // Remove native event handlers if using native bridge
+    this.removeNativeEventHandlers();
+
     this.socket?.close();
     this.socket = null;
     this.isConnected = false;
     this.helloCompleted = false;
     this.isReconnecting = false;
-    this.session = null;
+    // Zero private key material
+    if (this.session?.privateKey) {
+      // Session private key is a string — best effort
+      this.session = null;
+    }
+    this.lastSessionPrivateKey = undefined;
     this.sessionNickname = null;
+  }
+
+  /**
+   * Full teardown — disconnects transport AND clears all event handlers.
+   * Call this when the service is being permanently destroyed (e.g. user logout).
+   */
+  shutdown(): void {
+    this.disconnect();
+    this.messageHandlers = [];
+    this.streamHandlers = [];
+    this.reconnectHandlers = [];
   }
 
   /**
@@ -714,6 +998,7 @@ class SAMService {
    */
   exportSession(): { destination: string; privateKey: string } | null {
     if (!this.session) return null;
+    // CAUTION: exports private key material. Caller must handle securely.
     return {
       destination: this.session.destination,
       privateKey: this.session.privateKey,
@@ -818,7 +1103,13 @@ class SAMService {
   }
 
   private attemptReconnect(): void {
-    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) return;
+    if (this.isReconnecting || this.reconnectAttempts >= this.maxReconnectAttempts) {
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        logger.warn('[SAM] Max reconnect attempts reached, resetting counter for next cycle');
+        this.reconnectAttempts = 0;
+      }
+      return;
+    }
     this.isReconnecting = true;
     this.reconnectAttempts++;
     // Exponential backoff with jitter: min(30s, 1000 * 2^attempt) + random(0-1s)
@@ -836,12 +1127,25 @@ class SAMService {
           const freshNick = `${base}-${Date.now()}`;
           await this.createSession(freshNick, this.lastSessionPrivateKey);
           logger.log('[SAM] Session restored after reconnect as:', freshNick);
+          this.reconnectAttempts = 0;
           this.reconnectHandlers.forEach(h => h());
+        } else if (ok) {
+          // Connected but no session to restore — this shouldn't happen normally
+          logger.warn('[SAM] Connected but no session to restore');
+        } else {
+          // Connection failed — schedule another attempt
+          logger.warn('[SAM] Reconnect failed, will retry');
         }
       } catch (err) {
         logger.warn('[SAM] Reconnect/session restore failed:', err);
       } finally {
         this.isReconnecting = false;
+        // If still not connected, schedule another reconnect after a delay
+        if (!this.isConnected && this.lastSessionPrivateKey) {
+          const retryDelay = 10000;
+          logger.log(`[SAM] Still disconnected, retrying in ${retryDelay / 1000}s...`);
+          this.reconnectTimer = setTimeout(() => this.attemptReconnect(), retryDelay);
+        }
       }
     }, delay);
   }
