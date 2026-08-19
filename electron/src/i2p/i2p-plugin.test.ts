@@ -302,12 +302,12 @@ describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
     }
     expect(await store.loadOrNull()).toBeNull();
 
-    // After start(), the store must contain a freshly generated 384-byte
-    // privKey blob (Task 7 wiring — was previously a stub that threw).
+    // After start(), the store must contain a freshly generated 128-byte
+    // privKey blob (Task 5 spec — 2-key Ed25519 with encryption + signing).
     await plugin.start({ host: '127.0.0.1', port: 7654 });
     const persisted = await store.loadOrNull();
     expect(persisted).not.toBeNull();
-    expect(persisted?.length).toBe(384);
+    expect(persisted?.length).toBe(128);
 
     // The persisted bytes must round-trip through computeB32FromPrivKey
     // and produce a valid [.b32.i2p] address.
