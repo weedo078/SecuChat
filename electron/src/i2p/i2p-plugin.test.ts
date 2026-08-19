@@ -23,7 +23,12 @@ vi.mock('electron', () => ({
 // the real Node Socket does) so `I2PSocketHandle.send()` does not hang.
 // Note the variadic argument shape — Node callers pass either (chunk, cb) or
 // (chunk, encoding, cb); we accept the callback in either slot.
+//
+// Phase-2 (2026-08-18): the mock synthesizes the SessionStatus=1 (Created)
+// reply on 'connect' so the I2CPSocketManager reaches `sessionReady=true`
+// and connectTo/send/close can proceed.
 vi.mock('node:net', () => {
+  let sessionIdCounter = 1;
   const makeFakeSocket = () => {
     const s = new (require('node:events').EventEmitter)();
     s.write = vi.fn((...args: unknown[]) => {
@@ -31,6 +36,27 @@ vi.mock('node:net', () => {
       const cb = args[args.length - 1];
       if (typeof cb === 'function') {
         setImmediate(() => cb(null));
+      }
+      // Intercept outbound frames so we can synthesize matching router
+      // replies. We only react to DestLookup (type 34) so connectTo's
+      // lookupDestination resolves without a real-router 15 s timeout.
+      const chunk = args[0];
+      if (chunk && Buffer.isBuffer(chunk) && chunk.length >= 5) {
+        const type = chunk.readUInt8(4);
+        if (type === 34 /* DestLookup */) {
+          const sid = chunk.length >= 7 ? chunk.readUInt16BE(5) : 0;
+          const destBlob = Buffer.alloc(65, 0x42); // placeholder dest
+          const innerPayload = Buffer.alloc(4 + 65);
+          innerPayload.writeUInt32BE(1, 0); // found = 1
+          destBlob.copy(innerPayload, 4);
+          const innerLen = 1 + 2 + innerPayload.length;
+          const reply = Buffer.alloc(4 + innerLen);
+          reply.writeUInt32BE(innerLen, 0);
+          reply.writeUInt8(35, 4); // I2CP_MSG.DEST_REPLY
+          reply.writeUInt16BE(sid, 5);
+          innerPayload.copy(reply, 7);
+          setImmediate(() => s.emit('data', reply));
+        }
       }
       return true;
     });
@@ -46,7 +72,26 @@ vi.mock('node:net', () => {
   return {
     connect: vi.fn((_port: number, _host: string) => {
       const s = makeFakeSocket();
-      setImmediate(() => s.emit('connect'));
+      // Synthesize SessionStatus=Created on 'connect' (see
+      // i2cp-socket-manager.test.ts for full wire-format explanation).
+      // Wire format MUST match `decodeMessage`:
+      //   [4-byte length BE][1-byte type=20][2-byte sessionId BE][4-byte status BE]
+      // Java I2P historically sends 1-byte sessionId; the production
+      // handler accepts both, but tests use the 2-byte form (the form
+      // that `decodeMessage` decodes generically).
+      const sid = sessionIdCounter++;
+      const innerPayload = Buffer.alloc(4);
+      innerPayload.writeUInt32BE(1, 0); // status = Created
+      const innerLen = 1 + 2 + innerPayload.length;
+      const frame = Buffer.alloc(4 + innerLen);
+      frame.writeUInt32BE(innerLen, 0);
+      frame.writeUInt8(20, 4); // I2CP_MSG.SESSION_STATUS
+      frame.writeUInt16BE(sid, 5);
+      innerPayload.copy(frame, 7);
+      setImmediate(() => {
+        s.emit('connect');
+        setImmediate(() => s.emit('data', frame));
+      });
       return s;
     }),
     Socket: vi.fn(() => makeFakeSocket()),
@@ -236,12 +281,27 @@ describe('I2PPlugin lifecycle (defensive)', () => {
     expect(b32Address.length).toBeGreaterThan(0);
   });
 
+  /**
+   * Phase-2 helper: the I2CP handshake is asynchronous (we wait for the
+   * router's SessionStatus=Created frame). The mock synthesizes that
+   * frame in a setImmediate; callers that need the socket ready before
+   * exercising connectTo/send/close must await this first.
+   */
+  async function waitForSessionReady(): Promise<void> {
+    for (let i = 0; i < 50; i++) {
+      const sm = I2PPlugin.getInstance()['socketManager'];
+      if (sm && (sm as unknown as { isSessionReady: () => boolean }).isSessionReady()) return;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+  }
+
   it('send() after start() forwards to socketManager.send without appending \\n', async () => {
     const plugin = I2PPlugin.getInstance();
     const privKey = new Uint8Array(384);
     const store = plugin['identityStore'];
     await store.save(privKey);
     await plugin.start({ host: '127.0.0.1', port: 7654 });
+    await waitForSessionReady();
 
     const { streamId } = await plugin.connectTo({ destination: 'b'.repeat(52) });
     const socketManager = plugin['socketManager']!;
@@ -262,6 +322,7 @@ describe('I2PPlugin lifecycle (defensive)', () => {
     const store = plugin['identityStore'];
     await store.save(privKey);
     await plugin.start({ host: '127.0.0.1', port: 7654 });
+    await waitForSessionReady();
 
     const connected: Array<{ streamId: number; peerDestination: string }> = [];
     plugin.onI2pStreamConnected((ev) => connected.push(ev));
@@ -288,7 +349,7 @@ describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
     resetSingleton();
   });
 
-  it('start() with no pre-existing identity generates and persists a 384-byte Ed25519 privKey', async () => {
+  it('start() with no pre-existing identity generates and persists a 128-byte Ed25519 privKey (2-key: encryption + signing)', async () => {
     const plugin = I2PPlugin.getInstance();
     const store = plugin['identityStore'];
 

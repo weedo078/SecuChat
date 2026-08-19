@@ -46,6 +46,9 @@ Thumbs.db
 # Git worktrees (created via `git worktree add .worktrees/<branch>`)
 .worktrees/
 
+# ProjectAtlas code-intelligence index (local SQLite, regenerated on demand)
+.projectatlas/
+
 # Playwright artifacts (electron/tests/e2e)
 playwright-report/
 test-results/
