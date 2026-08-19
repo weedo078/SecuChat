@@ -731,44 +731,6 @@ export class I2CPSocketManager {
   getStream(streamId: number): I2PSocketHandle | undefined {
     return this.outgoingStreams.get(streamId) ?? this.incomingStreams.get(streamId);
   }
-
-  /**
-   * TEST-ONLY: force the I2CP session into the "ready" state without
-   * requiring a real SessionStatus=Created frame from a router. Used by
-   * the vitest unit-test suite to bypass the asynchronous handshake so
-   * downstream connectTo/send/close paths can be exercised in
-   * isolation. Not part of the public API; do not call from production
-   * code (no real router behind us would mean every STREAM CONNECT fails
-   * with INVALID_ID anyway).
-   */
-  __testSetSessionReady(sessionId: number): void {
-    this.i2cpSessionId = sessionId;
-    this.sessionReady = true;
-    this.disconnected = false;
-  }
-}
-
-/**
- * Encode a minimal CreateSession properties blob. I2CP wants a protobuf
- * mapping of string→string. Each entry is:
- *   0x0A <varint-length> <key-bytes> 0x12 <varint-length> <value-bytes>
- * where 0x0A is field-tag 1 length-delimited (key) and 0x12 is field-tag 2
- * length-delimited (value).
- *
- * We only ship `nickname` for now. `i2cp.fastReceive=true`,
- * `i2cp.messageReliability=BestEffort`, and `i2cp.username` would also be
- * needed for production. See https://geti2p.net/spec/i2cp#create-session
- */
-function encodeCreateSessionProperties(nickname: string): Buffer {
-  const keyBytes = Buffer.from('nickname', 'utf-8');
-  const valueBytes = Buffer.from(nickname, 'utf-8');
-  const entry = Buffer.concat([
-    Buffer.from([0x0A, keyBytes.length]),
-    keyBytes,
-    Buffer.from([0x12, valueBytes.length]),
-    valueBytes,
-  ]);
-  return entry;
 }
 
 /**
