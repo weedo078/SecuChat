@@ -1,30 +1,79 @@
 import { describe, it, expect } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { IdentityEx } from './i2cp-identity';
-import { encodeCreateSession, encodeCreateLeaseSet2, Lease } from './i2cp-session-creator';
+import { encodeCreateSession, encodeCreateLeaseSet2, Lease2 } from './i2cp-session-creator';
 
-// RFC 8032 §7.1 Test 1 — deterministic Ed25519 seed (used by i2cp-identity.test.ts).
+// RFC 8032 §7.1 Test 1 — deterministic Ed25519 seed.
 const RFC8032_SEED = new Uint8Array([
-  0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
-  0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
-  0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
-  0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+  0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+  0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7d, 0x60,
 ]);
 
 /**
- * Build a valid 128-byte IdentityEx blob whose signing key is the RFC 8032
- * test-vector key. Encryption key slots are arbitrary (zero-filled); only the
- * signing keypair needs to be consistent for sign/verify round-trips.
+ * Build a valid 128-byte IdentityEx blob with deterministic signing key
+ * (RFC 8032 test vector) and random encryption key.
  */
 function makeTestIdentity(): IdentityEx {
+  // 128-byte-Blob: encPriv(32) + encPub(32) + signPriv(32) + signPub(32)
   const blob = new Uint8Array(128);
-  // signing priv seed at offset 64..96
-  blob.set(RFC8032_SEED, 64);
-  // signing pub at offset 96..128 (derived from seed so sign/verify match)
-  const pub = ed.getPublicKey(RFC8032_SEED);
-  blob.set(pub, 96);
+  const encPriv = ed.utils.randomPrivateKey();
+  const encPub = ed.getPublicKey(encPriv);
+  const signPriv = new Uint8Array(RFC8032_SEED); // deterministisch
+  const signPub = ed.getPublicKey(signPriv);
+  blob.set(encPriv, 0);
+  blob.set(encPub, 32);
+  blob.set(signPriv, 64);
+  blob.set(signPub, 96);
   return IdentityEx.fromPrivKey(blob);
 }
+
+function makeTestSigningKey(): Uint8Array {
+  return new Uint8Array(RFC8032_SEED); // 32-byte Ed25519 seed
+}
+
+/** Default test options for encodeCreateLeaseSet2. */
+function makeLeaseSet2Opts(overrides: Partial<{
+  identity: IdentityEx;
+  sessionId: number;
+  leases: Lease2[];
+  publishedSeconds: number;
+  expiresSeconds: number;
+  options: Map<string, string>;
+  signingKey: Uint8Array;
+  privateKeys: Array<{ encryptionType: number; privateKey: Uint8Array }>;
+  storeType: 1 | 3 | 5 | 7;
+  dateMs: number;
+}> = {}) {
+  const identity = overrides.identity ?? makeTestIdentity();
+  const signingKey = overrides.signingKey ?? makeTestSigningKey();
+  return {
+    identity,
+    sessionId: overrides.sessionId ?? 42,
+    leases: overrides.leases ?? [
+      {
+        tunnelGw: new Uint8Array(32).fill(0xcd),
+        tunnelId: 0x11223344,
+        endDateSeconds: 1700000600,
+      },
+    ],
+    publishedSeconds: overrides.publishedSeconds ?? 1700000000,
+    expiresSeconds: overrides.expiresSeconds ?? 600, // 10 minutes
+    options: overrides.options ?? new Map<string, string>(),
+    signingKey,
+    privateKeys: overrides.privateKeys ?? [
+      {
+        encryptionType: 0, // ECIES-X25519 = 0 in i2pd spec table
+        privateKey: new Uint8Array(32).fill(0xee),
+      },
+    ],
+    storeType: overrides.storeType ?? (3 as const),
+    dateMs: overrides.dateMs ?? 1700000000000,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// encodeCreateSession — Pflicht cases
+// ---------------------------------------------------------------------------
 
 describe('encodeCreateSession — Pflicht cases (Plan)', () => {
   it('[1] produces a frame with correct layout (no sessionId in I2CP header)', () => {
@@ -36,12 +85,8 @@ describe('encodeCreateSession — Pflicht cases (Plan)', () => {
     expect(buf.readUInt32BE(0)).toBe(buf.length - 4);
     expect(buf[4]).toBe(1); // CREATE_SESSION
 
-    // No sessionId in the I2CP envelope (body length is 1 + payload, NOT 1 + 2 + payload).
-    // Body length = innerLen = 1 + 0 (no sessionId) + payload.length
-    const innerLen = buf.readUInt32BE(0);
-    expect(innerLen).toBe(buf.length - 4);
-
-    // Body layout: identity(387) + mappingSize(2) + mapping + date(8) + signature(64)
+    // No sessionId in the I2CP envelope — body starts at offset 5 directly.
+    // identity(387) at 5..392, mappingSize(2) at 392..394, mapping at 394..
     expect(buf.subarray(5, 392).equals(identity.toByteArray())).toBe(true);
     const mappingSize = buf.readUInt16BE(392);
     expect(mappingSize).toBeGreaterThan(0);
@@ -95,8 +140,12 @@ describe('encodeCreateSession — Pflicht cases (Plan)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// encodeCreateSession — Pflicht extensions
+// ---------------------------------------------------------------------------
+
 describe('encodeCreateSession — Pflicht extensions (brief)', () => {
-  it('[5] header length = 4 (envelope length) + inner payload — math is consistent', () => {
+  it('[5] header length = inner payload + 5 bytes (math is consistent)', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([['k', 'v']]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
@@ -175,255 +224,261 @@ describe('encodeCreateSession — Pflicht extensions (brief)', () => {
   });
 });
 
-describe('encodeCreateLeaseSet2 — Pflicht cases (Plan)', () => {
-  it('[4] produces a frame with sessionId in I2CP header (CREATE_LEASE_SET_2 = 41)', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(32).fill(0xab),
-        tunnelGw: new Uint8Array(32).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    const buf = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 42,
-      leases,
-      expires: 1700000600000,
-      dateMs: 1700000000000,
-    });
+// ---------------------------------------------------------------------------
+// encodeCreateLeaseSet2 — Pflicht case
+// ---------------------------------------------------------------------------
 
-    // Outer envelope length + type + 2-byte sessionId
+describe('encodeCreateLeaseSet2 — Pflicht case (Plan)', () => {
+  it('[4] produces a frame with sessionId in I2CP header (CREATE_LEASE_SET_2 = 41)', () => {
+    const opts = makeLeaseSet2Opts({ sessionId: 42 });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // Outer envelope: 4-byte length + 1-byte type=41 + 2-byte sessionId
     expect(buf.readUInt32BE(0)).toBe(buf.length - 4);
     expect(buf[4]).toBe(41); // CREATE_LEASE_SET_2
     expect(buf.readUInt16BE(5)).toBe(42); // sessionId in I2CP header
+
+    // storeType at offset 7
+    expect(buf[7]).toBe(3); // LeaseSet2
 
     // Lease body must be present (length > 7 bytes for envelope header)
     expect(buf.length).toBeGreaterThan(7);
   });
 });
 
+// ---------------------------------------------------------------------------
+// encodeCreateLeaseSet2 — Pflicht extensions
+// ---------------------------------------------------------------------------
+
 describe('encodeCreateLeaseSet2 — Pflicht extensions (brief)', () => {
-  it('[11] single lease body = 32 routerHash + 32 tunnelGw + 8 expires = 72 bytes', () => {
+  it('[11] ls2_header Layout — destination(387) + published(4) + expires(2) + flags(2)', () => {
     const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(32).fill(0xab),
-        tunnelGw: new Uint8Array(32).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    const buf = encodeCreateLeaseSet2({
+    const opts = makeLeaseSet2Opts({
       identity,
-      sessionId: 42,
-      leases,
-      expires: 1700000600000,
-      dateMs: 1700000000000,
+      publishedSeconds: 1700000000,
+      expiresSeconds: 600,
+      leases: [],
+      // no privateKeys: makes next-field offset easier to compute
+      privateKeys: [],
     });
-    // Total = 4 (length) + 1 (type) + 2 (sessionId) + payload
-    // payload = 1 (sidByte) + 387 (identity) + 2 (leasesCount) + 72 (lease body) + 8 (date) + 64 (sig)
-    //        = 534
-    expect(buf.length).toBe(4 + 1 + 2 + 1 + 387 + 2 + 72 + 8 + 64);
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // storeType at offset 7 = 3 (LeaseSet2)
+    expect(buf[7]).toBe(3);
+
+    // Identity (387 B) at offset 8..395
+    const identityBytes = identity.toByteArray();
+    expect(buf.subarray(8, 395).equals(identityBytes)).toBe(true);
+
+    // 4-byte publishedSeconds BE at offset 395..399
+    expect(buf.readUInt32BE(395)).toBe(1700000000);
+
+    // 2-byte expiresSeconds BE at offset 399..401
+    expect(buf.readUInt16BE(399)).toBe(600);
+
+    // 2-byte flags at offset 401..403 (must be 0x0000 — no offline sig)
+    expect(buf.readUInt16BE(401)).toBe(0x0000);
   });
 
-  it('[12] multi-leases (2 leases) → leases body is 144 bytes', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(32).fill(0xaa),
-        tunnelGw: new Uint8Array(32).fill(0xbb),
-        expires: 1700000600000,
-      },
-      {
-        routerHash: new Uint8Array(32).fill(0xcc),
-        tunnelGw: new Uint8Array(32).fill(0xdd),
-        expires: 1700000700000,
-      },
-    ];
-    const buf = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 99,
-      leases,
-      expires: 1700000700000,
-      dateMs: 1700000000000,
+  it('[12] LS2 contains options Mapping directly after flags', () => {
+    const options = new Map<string, string>([
+      ['foo', 'bar'],
+      ['baz', 'qux'],
+    ]);
+    const opts = makeLeaseSet2Opts({
+      options,
+      leases: [],
+      privateKeys: [],
     });
-    // Total = 4 (length) + 1 (type) + 2 (sessionId) + payload
-    // payload = 1 (sidByte) + 387 (identity) + 2 (leasesCount) + (72*2) leasesBody + 8 (date) + 64 (sig)
-    expect(buf.length).toBe(4 + 1 + 2 + 1 + 387 + 2 + 72 * 2 + 8 + 64);
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // Options mapping starts right after flags (offset 401+2 = 403)
+    // 2-byte mapping-size BE at 403..405
+    const mappingSize = buf.readUInt16BE(403);
+    expect(mappingSize).toBeGreaterThan(0);
+    // The mapping bytes contain 'foo' and 'baz'
+    const mappingBytes = buf.subarray(405, 405 + mappingSize).toString('utf-8');
+    expect(mappingBytes).toContain('foo');
+    expect(mappingBytes).toContain('bar');
+    expect(mappingBytes).toContain('baz');
+    expect(mappingBytes).toContain('qux');
   });
 
-  it('[13] wrong routerHash length (31 bytes) throws', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(31).fill(0xab),
-        tunnelGw: new Uint8Array(32).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    expect(() =>
-      encodeCreateLeaseSet2({
-        identity,
-        sessionId: 1,
-        leases,
-        expires: 1700000600000,
-        dateMs: 1700000000000,
-      }),
-    ).toThrow(/routerHash/);
-  });
-
-  it('[13b] wrong routerHash length (33 bytes) throws', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(33).fill(0xab),
-        tunnelGw: new Uint8Array(32).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    expect(() =>
-      encodeCreateLeaseSet2({
-        identity,
-        sessionId: 1,
-        leases,
-        expires: 1700000600000,
-        dateMs: 1700000000000,
-      }),
-    ).toThrow(/routerHash/);
-  });
-
-  it('[14] wrong tunnelGw length throws', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(32).fill(0xab),
-        tunnelGw: new Uint8Array(16).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    expect(() =>
-      encodeCreateLeaseSet2({
-        identity,
-        sessionId: 1,
-        leases,
-        expires: 1700000600000,
-        dateMs: 1700000000000,
-      }),
-    ).toThrow(/tunnelGw/);
-  });
-
-  it('[15] signature covers identity || leases || date (round-trip)', () => {
-    const identity = makeTestIdentity();
-    const leases: Lease[] = [
-      {
-        routerHash: new Uint8Array(32).fill(0xab),
-        tunnelGw: new Uint8Array(32).fill(0xcd),
-        expires: 1700000600000,
-      },
-    ];
-    const dateMs = 1700000000000;
-    const buf = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 42,
-      leases,
-      expires: 1700000600000,
-      dateMs,
+  it('[13] lease-entry is exactly 40 bytes (32 tunnelGw + 4 tunnelId BE + 4 endDateSeconds BE)', () => {
+    const tunnelGw = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) tunnelGw[i] = i;
+    const tunnelId = 0xdeadbeef;
+    const endDateSeconds = 0x11223344;
+    const opts = makeLeaseSet2Opts({
+      leases: [{ tunnelGw, tunnelId, endDateSeconds }],
+      privateKeys: [],
     });
+    const buf = encodeCreateLeaseSet2(opts);
 
-    // Inner payload (after envelope header of 7 bytes) starts with 1-byte sidByte.
-    // signedData = identity (387) || leases (72) || date (8).
-    const innerPayload = buf.subarray(7);
-    const sidByte = innerPayload[0];
-    expect(sidByte).toBe(42);
-    const identityBytes = innerPayload.subarray(1, 388);
-    expect(identityBytes.equals(identity.toByteArray())).toBe(true);
+    // ls2 starts at offset 8 (after length+type+sessionId+storeType).
+    // ls2_header: 387+4+2+2 = 395 bytes → after ls2_header: 8 + 395 = 403
+    // options: 2-byte size (empty → 0) + 0 bytes → 403+2 = 405
+    // numk: 1 byte (0) → 405+1 = 406
+    // num: 1 byte (1 lease) → 406+1 = 407
+    // lease[0] starts at offset 407
 
-    // leaseCount = 2 bytes BE at offset 388..389
-    const leaseCount = innerPayload.readUInt16BE(388);
-    expect(leaseCount).toBe(1);
+    const numOffset = 406; // after empty options(2) + numk(1)
+    expect(buf[numOffset]).toBe(1); // num = 1
 
-    // leases body = 72 bytes at offset 390..462
-    const leasesBody = innerPayload.subarray(390, 462);
-    expect(leasesBody.length).toBe(72);
+    const leaseOffset = numOffset + 1; // 407
+    const leaseEntry = buf.subarray(leaseOffset, leaseOffset + 40);
+    expect(leaseEntry.length).toBe(40);
 
-    // date = 8 bytes at offset 462..470
-    const dateBytes = innerPayload.subarray(462, 470);
-    expect(Number(dateBytes.readBigUInt64BE(0))).toBe(dateMs);
+    // tunnelGw: first 32 bytes
+    expect(leaseEntry.subarray(0, 32).equals(tunnelGw)).toBe(true);
 
-    // signature = 64 bytes at offset 470..534
-    const sig = innerPayload.subarray(470, 534);
-    expect(sig.length).toBe(64);
+    // tunnelId: 4 bytes BE at offset 32..36
+    expect(leaseEntry.readUInt32BE(32)).toBe(tunnelId);
 
-    const signedData = Buffer.concat([identityBytes, leasesBody, dateBytes]);
-    expect(IdentityEx.verify(identity.toByteArray(), Buffer.from(sig), signedData)).toBe(true);
+    // endDateSeconds: 4 bytes BE at offset 36..40
+    expect(leaseEntry.readUInt32BE(36)).toBe(endDateSeconds);
   });
 
-  it('[16] top-level `expires` is NOT in signedData (signature only covers identity||leases||date)', () => {
-    const identity = makeTestIdentity();
-    const routerHash = new Uint8Array(32).fill(0xab);
-    const tunnelGw = new Uint8Array(32).fill(0xcd);
-    const leaseExpires = 1700000600000;
-
-    // Build two frames with identical inner inputs but DIFFERENT top-level expires.
-    const buf1 = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 42,
-      leases: [{ routerHash, tunnelGw, expires: leaseExpires }],
-      expires: 1700000600000,
-      dateMs: 1700000000000,
+  it('[14] multi-leases (2 leases) → lease body is 80 bytes, num=2 byte davor', () => {
+    const tunnelGw1 = new Uint8Array(32).fill(0xaa);
+    const tunnelGw2 = new Uint8Array(32).fill(0xbb);
+    const opts = makeLeaseSet2Opts({
+      leases: [
+        { tunnelGw: tunnelGw1, tunnelId: 0x11111111, endDateSeconds: 1700000100 },
+        { tunnelGw: tunnelGw2, tunnelId: 0x22222222, endDateSeconds: 1700000200 },
+      ],
+      privateKeys: [],
     });
-    const buf2 = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 42,
-      leases: [{ routerHash, tunnelGw, expires: leaseExpires }],
-      expires: 9999999999999, // different top-level expires
-      dateMs: 1700000000000,
-    });
+    const buf = encodeCreateLeaseSet2(opts);
 
-    // The signature must be identical because top-level expires is not in signedData.
-    expect(
-      buf1.subarray(buf1.length - 64).equals(buf2.subarray(buf2.length - 64)),
-    ).toBe(true);
+    // num at offset 406, value = 2
+    const numOffset = 406;
+    expect(buf[numOffset]).toBe(2);
+
+    const leaseOffset = numOffset + 1; // 407
+    // First lease: 40 bytes
+    expect(buf.subarray(leaseOffset, leaseOffset + 32).equals(tunnelGw1)).toBe(true);
+    expect(buf.readUInt32BE(leaseOffset + 32)).toBe(0x11111111);
+    expect(buf.readUInt32BE(leaseOffset + 36)).toBe(1700000100);
+    // Second lease: 40 bytes
+    expect(buf.subarray(leaseOffset + 40, leaseOffset + 72).equals(tunnelGw2)).toBe(true);
+    expect(buf.readUInt32BE(leaseOffset + 72)).toBe(0x22222222);
+    expect(buf.readUInt32BE(leaseOffset + 76)).toBe(1700000200);
   });
 
-  it('[17] lease.expires is encoded as 8-byte big-endian in the lease body', () => {
-    const identity = makeTestIdentity();
-    // Use a value that fits in MAX_SAFE_INTEGER (≤ 0x1F_FFFF_FFFF_FFFF).
-    // Pattern: 0x0011_2233_4455_6677 — fits comfortably.
-    const leaseExpires = 0x11223344556677;
-    const buf = encodeCreateLeaseSet2({
-      identity,
-      sessionId: 1,
+  it('[15] wrong tunnelGw length (31 bytes) throws', () => {
+    const opts = makeLeaseSet2Opts({
       leases: [
         {
-          routerHash: new Uint8Array(32).fill(0xab),
-          tunnelGw: new Uint8Array(32).fill(0xcd),
-          expires: leaseExpires,
+          tunnelGw: new Uint8Array(31).fill(0xab),
+          tunnelId: 1,
+          endDateSeconds: 1700000000,
         },
       ],
-      expires: leaseExpires,
-      dateMs: 1700000000000,
     });
-
-    // First lease body starts at offset 7 (envelope) + 1 (sidByte) + 387 (identity) + 2 (leasesCount) = 397
-    // lease body is: routerHash[0..32] || tunnelGw[32..64] || expires[64..72]
-    const leaseBodyExpires = buf.subarray(7 + 1 + 387 + 2 + 64, 7 + 1 + 387 + 2 + 72);
-    expect(Number(leaseBodyExpires.readBigUInt64BE(0))).toBe(leaseExpires);
-    // 14-hex-digit input 0x11223344556677 fits in 7 bytes; padded to 8 bytes BE
-    // (leading zero) the 8-byte sequence is: 00 11 22 33 44 55 66 77.
-    expect(leaseBodyExpires[0]).toBe(0x00);
-    expect(leaseBodyExpires[1]).toBe(0x11);
-    expect(leaseBodyExpires[2]).toBe(0x22);
-    expect(leaseBodyExpires[3]).toBe(0x33);
-    expect(leaseBodyExpires[4]).toBe(0x44);
-    expect(leaseBodyExpires[5]).toBe(0x55);
-    expect(leaseBodyExpires[6]).toBe(0x66);
-    expect(leaseBodyExpires[7]).toBe(0x77);
+    expect(() => encodeCreateLeaseSet2(opts)).toThrow(/tunnelGw/);
   });
-});
 
-describe('encodeCreateSession — determinism (Gold-Master-ish)', () => {
-  it('[18] same identity + same dateMs + same properties → identical bytes', () => {
+  it('[15b] wrong tunnelGw length (33 bytes) throws', () => {
+    const opts = makeLeaseSet2Opts({
+      leases: [
+        {
+          tunnelGw: new Uint8Array(33).fill(0xab),
+          tunnelId: 1,
+          endDateSeconds: 1700000000,
+        },
+      ],
+    });
+    expect(() => encodeCreateLeaseSet2(opts)).toThrow(/tunnelGw/);
+  });
+
+  it('[16] signature covers (0x03 || LeaseSet2 blob) — re-verify byte-genau', () => {
+    const signingKey = makeTestSigningKey();
+    const opts = makeLeaseSet2Opts({ signingKey });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // Outer payload starts at offset 7 (after length+type+sessionId).
+    // layout: [storeType 1B][ls2 blob][signature 64B][#privateKeys 1B][per-key encType(2)+keyLen(2)+key(N)]
+    const outerPayload = buf.subarray(7);
+    const storeType = outerPayload[0];
+    expect(storeType).toBe(3);
+
+    // Determine end of ls2 blob: ls2 blob ends just before the 64-byte signature.
+    // The signature is the 64 bytes immediately preceding the 1-byte #privateKeys.
+    const privKeyStart = outerPayload.length - (1 + 2 + 2 + opts.privateKeys[0].privateKey.length);
+    const sigStart = privKeyStart - 64;
+    const ls2Bytes = outerPayload.subarray(1, sigStart);
+
+    // signedData = 0x03 || ls2Bytes
+    const signedData = Buffer.concat([Buffer.from([0x03]), ls2Bytes]);
+
+    // Extract 64-byte signature
+    const sig = outerPayload.subarray(sigStart, sigStart + 64);
+    expect(sig.length).toBe(64);
+
+    // Re-verify with public key derived from signing key
+    const publicKey = ed.getPublicKey(signingKey);
+    expect(ed.verify(sig, signedData, publicKey)).toBe(true);
+  });
+
+  it('[17] outer payload ends with 1-byte #privateKeys + per-key encType(2)+keyLen(2)+key(N)', () => {
+    const privKeyBytes = new Uint8Array(32).fill(0xee);
+    const opts = makeLeaseSet2Opts({
+      privateKeys: [{ encryptionType: 4, privateKey: privKeyBytes }],
+      leases: [], // minimize ls2 blob
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    const outerPayload = buf.subarray(7);
+    // Last bytes: [numPriv=1][encType=4 BE][keyLen=32 BE][privKey 32B] = 1+2+2+32 = 37 bytes
+    const privKeySectionSize = 1 + 2 + 2 + privKeyBytes.length;
+    const privKeyStart = outerPayload.length - privKeySectionSize;
+    const privKeySection = outerPayload.subarray(privKeyStart);
+    expect(privKeySection[0]).toBe(1); // #privateKeys
+    expect(privKeySection.readUInt16BE(1)).toBe(4); // encType
+    expect(privKeySection.readUInt16BE(3)).toBe(32); // keyLen
+    expect(privKeySection.subarray(5, 5 + 32).equals(privKeyBytes)).toBe(true);
+  });
+
+  it('[18] empty leases — num=0 byte, kein Lease-Body, trotzdem gültige signature', () => {
+    const signingKey = makeTestSigningKey();
+    const opts = makeLeaseSet2Opts({
+      signingKey,
+      leases: [],
+      privateKeys: [],
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // num byte = 0 (right after numk byte which is also 0 here)
+    const numOffset = 406;
+    expect(buf[numOffset]).toBe(0);
+
+    // Signature is still 64 bytes
+    const outerPayload = buf.subarray(7);
+    const privKeyStart = outerPayload.length - 1; // #privateKeys = 0 → only 1 byte at the end
+    const sigStart = privKeyStart - 64;
+    const sig = outerPayload.subarray(sigStart, sigStart + 64);
+    expect(sig.length).toBe(64);
+
+    // Verify signature is valid
+    const ls2Bytes = outerPayload.subarray(1, sigStart);
+    const signedData = Buffer.concat([Buffer.from([0x03]), ls2Bytes]);
+    const publicKey = ed.getPublicKey(signingKey);
+    expect(ed.verify(sig, signedData, publicKey)).toBe(true);
+  });
+
+  it('[19] storeType=1 (Legacy LeaseSet) — storeType-Byte wird korrekt durchgereicht', () => {
+    const opts = makeLeaseSet2Opts({ storeType: 1 });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // storeType at offset 7 = 1
+    expect(buf[7]).toBe(1);
+    // The I2CP header (type=41, sessionId) is still the same
+    expect(buf[4]).toBe(41);
+    expect(buf.readUInt16BE(5)).toBe(opts.sessionId);
+  });
+
+  it('[20] Gold-Master-ish: same identity + same dateMs + same properties → identical bytes', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([
       ['router.version', '0.9.50'],
