@@ -3,6 +3,8 @@ import { I2PSocketHandle } from './i2p-socket-handle';
 import { StreamingConnection } from './streaming-protocol';
 import { computeB32FromPrivKey } from './destination-gen';
 import { encodeMessage, decodeMessage, readMessageFromSocket, I2CP_MSG } from './i2cp-protocol';
+import { IdentityEx } from './i2cp-identity';
+import { encodeCreateSession, encodeCreateLeaseSet2 } from './i2cp-session-creator';
 
 export interface I2CPSocketManagerOpts {
   host: string;
@@ -45,6 +47,8 @@ export class I2CPSocketManager {
   private i2cpSessionId: number | null = null;
   /** True once the router confirmed SessionStatus.Created. */
   private sessionReady = false;
+  /** Offset between local Date.now() and router-reported time. Used to sign CreateSession with a router-valid Date. */
+  private routerDateOffsetMs = 0;
   /** Pending SessionStatus resolvers, keyed by expected status value. */
   private readonly pendingStatus: Map<number, () => void> = new Map();
   /**
@@ -178,41 +182,71 @@ export class I2CPSocketManager {
     });
 
     // Step 3: wire the inbound message reader. Every frame is either a
-    // SessionStatusMessage (during handshake), a MessagePayloadMessage
-    // (incoming streaming data, per-stream), or a DisconnectMessage
-    // (router going away).
+    // SessionStatusMessage (during handshake), a GetDateReply (date sync),
+    // a MessagePayloadMessage (incoming streaming data), or a DisconnectMessage.
     readMessageFromSocket(sock, (msg) => this.handleIncomingMessage(msg));
 
-    // Step 4: send CreateSessionMessage with our properties. The spec wants
-    // a protobuf-shaped Properties mapping (Field-Tag 0x0A per entry =
-    // length-delimited). We send only `nickname` for now — i2pd and Java
-    // I2P both accept a minimal CreateSession.
-    const propsBytes = encodeCreateSessionProperties(this.opts.nickname);
-    sock.write(encodeMessage({
-      type: I2CP_MSG.CREATE_SESSION,
-      sessionId: null,
-      payload: propsBytes,
-    }));
+    // Step 4: GET_DATE — query router's wall-clock so our signed CreateSession
+    // passes the router's ±30s date check (see I2CP-Spec). Router responds
+    // with type=32 GET_DATE (no sessionId) + 8-byte Date BE. On timeout we
+    // continue with routerDateOffsetMs=0 (use local clock) and log a warning.
+    await this.syncRouterClock().catch((err: Error) => {
+      console.warn(`I2CPSocketManager: GET_DATE failed: ${err.message} — using local clock for CreateSession`);
+    });
 
-    // Step 5: fire-and-forget the SessionStatus wait. We do NOT await — the
-    // b32 is already derived in Step 1, the socket is open, and the
-    // CreateSessionMessage is in flight. The renderer can proceed with
-    // user-visible state. The waitForSessionStatus promise resolves in
-    // the background when the router confirms Created; handleIncomingMessage
-    // (called from readMessageFromSocket's data callback) clears the wait.
+    // Step 5: send CreateSessionMessage with spec-compliant layout
+    // (inline IdentityEx + sorted Mapping + Date + Ed25519 Signature).
+    const identity = IdentityEx.fromPrivKey(this.opts.privKey);
+    const properties = new Map<string, string>([
+      ['nickname', this.opts.nickname],
+      ['i2cp.fastReceive', 'true'],
+      ['i2cp.messageReliability', 'BestEffort'],
+    ]);
+    const dateMs = Date.now() + this.routerDateOffsetMs;
+    sock.write(encodeCreateSession({ identity, properties, dateMs }));
+
+    // Step 6: background GET_DATE refresh every 30 minutes (clock drift)
+    setInterval(() => {
+      if (!this.socket || this.socket.destroyed) return;
+      this.socket.write(encodeMessage({
+        type: I2CP_MSG.GET_DATE,
+        sessionId: null,
+        payload: Buffer.alloc(0),
+      }));
+    }, 30 * 60 * 1000).unref();
+
+    // Step 7: fire-and-forget SessionStatus wait (unchanged)
     this.waitForSessionStatus(/*Created*/ 1, /*budgetMs*/ 15_000).catch(
       (err: Error) => {
-        // Timeout or socket-error — log but do not surface. The user's
-        // b32 is still correct; only outbound STREAM CONNECT is blocked
-        // until they restart the app or the router comes back.
         console.warn('I2CPSocketManager: SessionStatus=Created not received:', err.message);
       },
     );
 
-    // Mark the I2CP-layer TCP path as live. `isConnected()` reports true
-    // as soon as the socket is open; `sessionReady` separately tracks
-    // whether the router confirmed our session (gates connectTo).
     this.disconnected = false;
+  }
+
+  private syncRouterClock(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      if (!this.socket) return reject(new Error('no socket'));
+      const sock = this.socket;
+      const timer = setTimeout(() => reject(new Error('GET_DATE timeout after 15s')), 15_000);
+      timer.unref();
+      const onData = (chunk: Buffer): void => {
+        // Minimal decoder: read 4-byte length + 1-byte type; if GET_DATE, read 8-byte date
+        if (chunk.length < 5) return;
+        const length = chunk.readUInt32BE(0);
+        if (chunk.length < 4 + length) return;
+        if (chunk[4] !== I2CP_MSG.GET_DATE) return;
+        if (length < 9) return reject(new Error('GET_DATE reply too short'));
+        const routerMs = Number(chunk.readBigUInt64BE(5));
+        this.routerDateOffsetMs = routerMs - Date.now();
+        clearTimeout(timer);
+        sock.removeListener('data', onData);
+        resolve();
+      };
+      sock.on('data', onData);
+      sock.write(encodeMessage({ type: I2CP_MSG.GET_DATE, sessionId: null, payload: Buffer.alloc(0) }));
+    });
   }
 
   /**
@@ -224,6 +258,17 @@ export class I2CPSocketManager {
    *     via `feedStreamingPacket(streamId, packet)`.
    */
   private handleIncomingMessage(msg: { type: number; sessionId: number | null; payload: Buffer }): void {
+    if (msg.type === I2CP_MSG.GET_DATE) {
+      // Spec: GET_DATE reply has no sessionId, payload is 8-byte Date BE.
+      // Update routerDateOffsetMs from this value (defensive, syncRouterClock
+      // already does this synchronously; this catches the 30-min refresh).
+      if (msg.payload.length >= 8) {
+        const routerMs = Number(msg.payload.readBigUInt64BE(0));
+        this.routerDateOffsetMs = routerMs - Date.now();
+      }
+      return;
+    }
+
     if (msg.type === I2CP_MSG.SESSION_STATUS) {
       // SessionStatus payload layout: sessionId(1 or 2 bytes BE) +
       // 4-byte status int BE. The decoder (`decodeMessage`) already
@@ -367,22 +412,33 @@ export class I2CPSocketManager {
    */
   private async publishLeaseSet(): Promise<void> {
     if (!this.socket || this.i2cpSessionId == null) return;
-    // Extract destination blob from privKey: pubKey at bytes 32..63.
-    const pubKey = this.opts.privKey.subarray(32, 64);
-    const dest = Buffer.concat([
-      Buffer.from(pubKey),
-      Buffer.from(pubKey), // signingPubKey === pubKey for Ed25519 single-key
-      Buffer.from([0x00]), // KEYCERT_NULL
-    ]);
-    const payload = Buffer.concat([
-      Buffer.from([this.i2cpSessionId]),
-      dest,
-    ]);
-    this.socket.write(encodeMessage({
-      type: I2CP_MSG.CREATE_LEASE_SET,
+    const identity = IdentityEx.fromPrivKey(this.opts.privKey);
+    // Local-router-hash placeholder: in production this comes from the
+    // router's RequestVariableLeaseSet handshake. For MVP we hash our
+    // own destination as the lease target (Java-I2P tolerates this for dev).
+    const localHash = new Uint8Array(32);
+    Buffer.from(identity.encryptionPublicKey).copy(localHash, 0);
+    const dateMs = Date.now() + this.routerDateOffsetMs;
+    const publishedSeconds = Math.floor(dateMs / 1000);
+    const lease = {
+      tunnelGw: localHash,
+      tunnelId: 0,
+      endDateSeconds: publishedSeconds + 10 * 60, // +10 min
+    };
+    const frame = encodeCreateLeaseSet2({
+      identity,
       sessionId: this.i2cpSessionId,
-      payload,
-    }));
+      leases: [lease],
+      publishedSeconds,
+      expiresSeconds: 10 * 60, // 10 min offset from published
+      signingKey: this.opts.privKey.subarray(64, 96),
+      privateKeys: [
+        { encryptionType: 0, privateKey: this.opts.privKey.subarray(0, 32) },
+      ],
+      storeType: 3, // LeaseSet2
+      dateMs,
+    });
+    this.socket.write(frame);
   }
 
   /**
