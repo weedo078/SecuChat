@@ -17,13 +17,39 @@ vi.mock('electron', () => ({
   },
 }));
 
+/**
+ * Build a 128-byte IdentityEx privKey blob (Task 5 / spec-2c24bb9 layout):
+ *   bytes  0..32 = encPriv
+ *   bytes 32..64 = encPub
+ *   bytes 64..96 = signPriv
+ *   bytes 96..128 = signPub
+ *
+ * Mirrors the helper in i2cp-socket-manager.test.ts — kept duplicated
+ * rather than extracted to a shared fixture file so this file remains
+ * self-contained for parallel vitest workers.
+ */
+function makeTestPrivKey(seed = 7): Uint8Array {
+  const blob = new Uint8Array(128);
+  for (let i = 0; i < 128; i++) blob[i] = (i * seed + 1) & 0xff;
+  return blob;
+}
+
 // Mock node:net so I2CPSocketManager.initialize() resolves without a real I2P
 // router, mirroring the pattern used by i2cp-socket-manager.test.ts.
 // The fake socket's `write` must invoke its callback (asynchronously, like
 // the real Node Socket does) so `I2PSocketHandle.send()` does not hang.
 // Note the variadic argument shape — Node callers pass either (chunk, cb) or
 // (chunk, encoding, cb); we accept the callback in either slot.
+//
+// Phase-2 (2026-08-18): the mock synthesizes the SessionStatus=1 (Created)
+// reply on 'connect' so the I2CPSocketManager reaches `sessionReady=true`
+// and connectTo/send/close can proceed.
+//
+// Task 7 (2026-08-19): also synthesizes a GET_DATE reply on every
+// outbound GET_DATE write so `syncRouterClock()` resolves immediately
+// instead of hitting the 15 s production timeout.
 vi.mock('node:net', () => {
+  let sessionIdCounter = 1;
   const makeFakeSocket = () => {
     const s = new (require('node:events').EventEmitter)();
     s.write = vi.fn((...args: unknown[]) => {
@@ -31,6 +57,35 @@ vi.mock('node:net', () => {
       const cb = args[args.length - 1];
       if (typeof cb === 'function') {
         setImmediate(() => cb(null));
+      }
+      // Intercept outbound frames so we can synthesize matching router
+      // replies. We react to:
+      //   - GET_DATE (type 32)  → synthesize GET_DATE reply
+      //   - DEST_LOOKUP (34)    → synthesize DEST_REPLY (placeholder)
+      const chunk = args[0];
+      if (chunk && Buffer.isBuffer(chunk) && chunk.length >= 5) {
+        const type = chunk.readUInt8(4);
+        if (type === 32 /* GET_DATE */) {
+          const routerMs = Date.now();
+          const frame = Buffer.alloc(4 + 1 + 8);
+          frame.writeUInt32BE(9, 0);
+          frame.writeUInt8(32, 4);
+          frame.writeBigUInt64BE(BigInt(routerMs), 5);
+          setImmediate(() => s.emit('data', frame));
+        } else if (type === 34 /* DestLookup */) {
+          const sid = chunk.length >= 7 ? chunk.readUInt16BE(5) : 0;
+          const destBlob = Buffer.alloc(65, 0x42); // placeholder dest
+          const innerPayload = Buffer.alloc(4 + 65);
+          innerPayload.writeUInt32BE(1, 0); // found = 1
+          destBlob.copy(innerPayload, 4);
+          const innerLen = 1 + 2 + innerPayload.length;
+          const reply = Buffer.alloc(4 + innerLen);
+          reply.writeUInt32BE(innerLen, 0);
+          reply.writeUInt8(35, 4); // I2CP_MSG.DEST_REPLY
+          reply.writeUInt16BE(sid, 5);
+          innerPayload.copy(reply, 7);
+          setImmediate(() => s.emit('data', reply));
+        }
       }
       return true;
     });
@@ -46,7 +101,26 @@ vi.mock('node:net', () => {
   return {
     connect: vi.fn((_port: number, _host: string) => {
       const s = makeFakeSocket();
-      setImmediate(() => s.emit('connect'));
+      // Synthesize SessionStatus=Created on 'connect' (see
+      // i2cp-socket-manager.test.ts for full wire-format explanation).
+      // Wire format MUST match `decodeMessage`:
+      //   [4-byte length BE][1-byte type=20][2-byte sessionId BE][4-byte status BE]
+      // Java I2P historically sends 1-byte sessionId; the production
+      // handler accepts both, but tests use the 2-byte form (the form
+      // that `decodeMessage` decodes generically).
+      const sid = sessionIdCounter++;
+      const innerPayload = Buffer.alloc(4);
+      innerPayload.writeUInt32BE(1, 0); // status = Created
+      const innerLen = 1 + 2 + innerPayload.length;
+      const frame = Buffer.alloc(4 + innerLen);
+      frame.writeUInt32BE(innerLen, 0);
+      frame.writeUInt8(20, 4); // I2CP_MSG.SESSION_STATUS
+      frame.writeUInt16BE(sid, 5);
+      innerPayload.copy(frame, 7);
+      setImmediate(() => {
+        s.emit('connect');
+        setImmediate(() => s.emit('data', frame));
+      });
       return s;
     }),
     Socket: vi.fn(() => makeFakeSocket()),
@@ -225,9 +299,9 @@ describe('I2PPlugin lifecycle (defensive)', () => {
 
   it('start() returns the b32Address from I2CPSocketManager', async () => {
     const plugin = I2PPlugin.getInstance();
-    // Mock IdentityStore.loadOrNull to return a pre-existing key so the
-    // generateNewPrivKey() stub path is bypassed (Task 7 will implement it).
-    const privKey = new Uint8Array(384);
+    // Plant a 128-byte IdentityEx blob so `start()` reuses it instead
+    // of generating a fresh one. Task 5 spec: 2-key Ed25519.
+    const privKey = makeTestPrivKey();
     const store = plugin['identityStore'];
     await store.save(privKey);
 
@@ -236,12 +310,27 @@ describe('I2PPlugin lifecycle (defensive)', () => {
     expect(b32Address.length).toBeGreaterThan(0);
   });
 
+  /**
+   * Phase-2 helper: the I2CP handshake is asynchronous (we wait for the
+   * router's SessionStatus=Created frame). The mock synthesizes that
+   * frame in a setImmediate; callers that need the socket ready before
+   * exercising connectTo/send/close must await this first.
+   */
+  async function waitForSessionReady(): Promise<void> {
+    for (let i = 0; i < 50; i++) {
+      const sm = I2PPlugin.getInstance()['socketManager'];
+      if (sm && (sm as unknown as { isSessionReady: () => boolean }).isSessionReady()) return;
+      await new Promise<void>((r) => setTimeout(r, 20));
+    }
+  }
+
   it('send() after start() forwards to socketManager.send without appending \\n', async () => {
     const plugin = I2PPlugin.getInstance();
-    const privKey = new Uint8Array(384);
+    const privKey = makeTestPrivKey();
     const store = plugin['identityStore'];
     await store.save(privKey);
     await plugin.start({ host: '127.0.0.1', port: 7654 });
+    await waitForSessionReady();
 
     const { streamId } = await plugin.connectTo({ destination: 'b'.repeat(52) });
     const socketManager = plugin['socketManager']!;
@@ -258,10 +347,11 @@ describe('I2PPlugin lifecycle (defensive)', () => {
 
   it('connectTo() emits i2pStreamConnected', async () => {
     const plugin = I2PPlugin.getInstance();
-    const privKey = new Uint8Array(384);
+    const privKey = makeTestPrivKey();
     const store = plugin['identityStore'];
     await store.save(privKey);
     await plugin.start({ host: '127.0.0.1', port: 7654 });
+    await waitForSessionReady();
 
     const connected: Array<{ streamId: number; peerDestination: string }> = [];
     plugin.onI2pStreamConnected((ev) => connected.push(ev));
@@ -288,7 +378,7 @@ describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
     resetSingleton();
   });
 
-  it('start() with no pre-existing identity generates and persists a 384-byte Ed25519 privKey', async () => {
+  it('start() with no pre-existing identity generates and persists a 128-byte Ed25519 privKey (2-key: encryption + signing)', async () => {
     const plugin = I2PPlugin.getInstance();
     const store = plugin['identityStore'];
 
@@ -302,12 +392,12 @@ describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
     }
     expect(await store.loadOrNull()).toBeNull();
 
-    // After start(), the store must contain a freshly generated 384-byte
-    // privKey blob (Task 7 wiring — was previously a stub that threw).
+    // After start(), the store must contain a freshly generated 128-byte
+    // privKey blob (Task 5 spec — 2-key Ed25519 with encryption + signing).
     await plugin.start({ host: '127.0.0.1', port: 7654 });
     const persisted = await store.loadOrNull();
     expect(persisted).not.toBeNull();
-    expect(persisted?.length).toBe(384);
+    expect(persisted?.length).toBe(128);
 
     // The persisted bytes must round-trip through computeB32FromPrivKey
     // and produce a valid [.b32.i2p] address.
@@ -320,10 +410,9 @@ describe('I2PPlugin.generateNewPrivKey (Task 7 wiring)', () => {
     const plugin = I2PPlugin.getInstance();
     const store = plugin['identityStore'];
 
-    // Plant a known 384-byte identity. Use a non-zero byte pattern so we
-    // can detect any accidental re-generation.
-    const fingerprint = new Uint8Array(384);
-    for (let i = 0; i < 384; i++) fingerprint[i] = (i * 7 + 1) & 0xff;
+    // Plant a known 128-byte IdentityEx blob. Use a non-zero byte
+    // pattern so we can detect any accidental re-generation.
+    const fingerprint = makeTestPrivKey(7);
     await store.save(fingerprint);
 
     await plugin.start({ host: '127.0.0.1', port: 7654 });

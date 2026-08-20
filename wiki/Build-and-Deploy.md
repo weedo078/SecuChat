@@ -80,6 +80,53 @@ Individual Capacitor commands:
 | `npm run cap:open` | Open in Android Studio |
 | `npm run cap:run` | Build and run on device/emulator |
 
+### Release-Signing
+
+`build-release-android` signiert das APK im CI via `apksigner`. Dafür müssen zwei GitHub-Secrets gesetzt sein, sonst bricht der Release-Build mit klarem `::error::` ab und produziert kein Release-Asset.
+
+**Keystore erzeugen (einmalig, lokal):**
+
+```bash
+keytool -genkey -v -keystore release.jks -alias secuchat \
+        -keyalg RSA -keysize 4096 -validity 25000
+```
+
+Der Alias `secuchat` ist im Workflow hartkodiert (`--ks-key-alias "secuchat"`) — abweichende Aliase führen zu `apksigner sign`-Fehlern (`key not found`).
+
+**Base64-kodieren + in Secrets packen:**
+
+```bash
+base64 -w0 release.jks        # → Secret RELEASE_KEYSTORE_BASE64
+# Passwort (selbst merken!)   # → Secret RELEASE_KEYSTORE_PASSWORD
+```
+
+Die Secrets werden unter `Settings → Secrets and variables → Actions` (Repository-Scope) gesetzt. GitHub maskiert sie in Logs automatisch (`***`); der Klartext taucht nirgends im Workflow-Yaml oder Repo auf. `set -euo pipefail` + `chmod 600` + `rm` im selben CI-Step garantieren, dass die `.jks`-Datei nie in `$GITHUB_WORKSPACE` landet und keinen Upload-Glob trifft.
+
+**Rotation:** Bei Schlüsselverlust ist kein Upgrade-Pfad möglich — das ist Android-Standardverhalten, nicht SecuChat-spezifisch. Vor dem ersten signierten Public-Release rotieren ist kostenlos (es gibt noch keine User, die ein signiertes APK installiert haben); danach ist eine Rotation nur via "neue App-Identity" möglich (Play App Signing, anderer Package-Name, …).
+
+**Manuelle Notfall-Signierung** (z.B. für lokal gebautes Test-APK aus dem `app/android/app/build/outputs/apk/release/`-Ordner):
+
+```bash
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" sign \
+    --ks release.jks --ks-key-alias secuchat \
+    --ks-pass pass:$YOUR_PW --key-pass pass:$YOUR_PW \
+    --v1-signing-enabled true --v2-signing-enabled true --v3-signing-enabled true \
+    --out app-release.apk app-release-unsigned.apk
+```
+
+**Verifikation nach `apksigner sign`:**
+
+```bash
+# 1. META-INF-Signatur-Files vorhanden (v1 JAR signing)
+unzip -l app-release.apk | grep -E 'META-INF/.*\.(RSA|SF|MF)'
+
+# 2. apksigner akzeptiert die Datei
+"$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs app-release.apk
+
+# 3. Real-Install auf einem Test-Gerät
+adb install -r app-release.apk
+```
+
 ## Desktop (Electron)
 
 ### Prerequisites

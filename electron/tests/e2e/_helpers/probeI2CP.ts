@@ -37,9 +37,12 @@ export function probeI2CP(host: string = I2CP_HOST, port: number = I2CP_PORT, ti
   });
 }
 
-/** Sentinel b32 returned by `I2CPSocketManager.initialize()` until the
- *  full I2CP CreateSessionMessage / SessionStatusMessage handshake lands. */
-export const B32_PLACEHOLDER = 'placeholder-b32-will-be-set-by-i2p-router';
-
-/** Full I2P b32 wire format — 52 chars of lowercase base32 alphabet + `.b32.i2p`. */
+/** Full I2P b32 wire format — 52 chars of lowercase base32 alphabet + `.b32.i2p`.
+ *
+ * Phase-2 note: the previous `B32_PLACEHOLDER` sentinel is gone — Electron
+ * now derives the b32 locally from the IdentityStore privKey BEFORE the
+ * router handshake (see `electron/src/i2p/i2cp-socket-manager.ts`
+ * `initialize()` step 1), so the test surface only ever sees a wire-format
+ * address. If you need the historical sentinel value for log-grep, search
+ * the pre-2026-08-18 git history. */
 export const B32_WIRE_FORMAT = /^[a-z2-7]{52}\.b32\.i2p$/;
