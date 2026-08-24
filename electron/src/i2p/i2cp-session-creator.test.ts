@@ -1,7 +1,18 @@
 import { describe, it, expect } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { IdentityEx } from './i2cp-identity';
-import { encodeCreateSession, encodeCreateLeaseSet2, Lease2 } from './i2cp-session-creator';
+import {
+  encodeCreateSession,
+  encodeCreateLeaseSet2,
+  Lease2,
+  encodeLegacyDestination,
+  encodeDataHelperProperties,
+  makeEd25519KeyCertificate,
+  LEGACY_PUBLIC_KEY_BYTES,
+  LEGACY_SIGNING_PUBLIC_KEY_BYTES,
+  SIG_TYPE_EDDSA_SHA512_ED25519,
+  CERT_TYPE_KEY_CERTIFICATE,
+} from './i2cp-session-creator';
 
 // RFC 8032 §7.1 Test 1 — deterministic Ed25519 seed.
 const RFC8032_SEED = new Uint8Array([
@@ -72,36 +83,86 @@ function makeLeaseSet2Opts(overrides: Partial<{
 }
 
 // ---------------------------------------------------------------------------
-// encodeCreateSession — Pflicht cases
+// encodeCreateSession — Java-I2P LEGACY SessionConfig layout (Plan)
 // ---------------------------------------------------------------------------
+//
+// Java's SessionConfig.readBytes expects (in this order):
+//   1. Destination  (legacy 391-byte shape: 256B dummy pub + 128B signing slot
+//                    [first 32B = Ed25519 signPub, rest = zero padding] +
+//                    7B KeyCertificate type=5 with Ed25519_PAYLOAD)
+//   2. Properties   (DataHelper.readProperties: 2B size + entries
+//                    [1B keyLen][key][=][1B valLen][val];, sorted lex)
+//   3. Date         (8B BE ms since epoch)
+//   4. Signature    (Ed25519 64B over destination||properties||date)
+//
+// All five `encodeCreateSession` tests assert against this layout.
 
-describe('encodeCreateSession — Pflicht cases (Plan)', () => {
-  it('[1] produces a frame with correct layout (no sessionId in I2CP header)', () => {
+describe('encodeCreateSession — Java-I2P LEGACY SessionConfig (Pflicht)', () => {
+  it('[1] Java-I2P wire layout: 4-byte length + 1-byte type=1 + legacy SessionConfig body', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([['nickname', 'SecuChat']]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
 
-    // Outer I2CP envelope: 4-byte length + 1-byte type=CREATE_SESSION(1)
-    expect(buf.readUInt32BE(0)).toBe(buf.length - 4);
+    // I2CP envelope: 4-byte length (body only) + 1-byte type=CREATE_SESSION
+    // Per Java's I2CPMessageImpl.writeMessage, the length counts only body bytes.
+    expect(buf.readUInt32BE(0)).toBe(buf.length - 4 - 1);
     expect(buf[4]).toBe(1); // CREATE_SESSION
 
-    // No sessionId in the I2CP envelope — body starts at offset 5 directly.
-    // identity(387) at 5..392, mappingSize(2) at 392..394, mapping at 394..
-    expect(buf.subarray(5, 392).equals(identity.toByteArray())).toBe(true);
-    const mappingSize = buf.readUInt16BE(392);
-    expect(mappingSize).toBeGreaterThan(0);
-    // After mapping: 8-byte date + 64-byte signature
-    const expectedPayloadEnd = 394 + mappingSize + 8 + 64;
-    expect(buf.length).toBe(expectedPayloadEnd);
+    // Body starts at offset 5. First substructure = legacy Destination (391 bytes).
+    // Java-I2P 2.7.0 reads SigningPublicKey at the DEFAULT size
+    // (DSA_SHA1.getPubkeyLen()=128). The Ed25519 signing pub occupies the FIRST
+    // 32 bytes of that slot; the remaining 96 bytes are zero padding. The
+    // KeyCert re-types the SigningPublicKey via toTypedKey.
+    const DEST_LEN =
+      LEGACY_PUBLIC_KEY_BYTES + LEGACY_SIGNING_PUBLIC_KEY_BYTES + 7; // 256 + 128 + 7 = 391
+    expect(DEST_LEN).toBe(391);
+    const propSize = buf.readUInt16BE(5 + DEST_LEN);
+    expect(propSize).toBeGreaterThan(0);
+    // sanity: format:  4 + 1 (header) + 391 (dest) + properties_len + 8 (date) + 64 (sig)
+    expect(buf.length).toBe(5 + DEST_LEN + 2 + propSize + 8 + 64);
+
+    // The dummy ElGamal PublicKey (first 256 bytes of legacy Destination) is zeros.
+    expect(buf.subarray(5, 5 + LEGACY_PUBLIC_KEY_BYTES).equals(Buffer.alloc(LEGACY_PUBLIC_KEY_BYTES))).toBe(true);
+
+    // The Ed25519 signing pub (LAST 32 bytes of the 128-byte signing slot —
+    // Java's `SigningPublicKey.toTypedKey` reads `_data[96..127]` for a
+    // typedLen=32 key, NOT the first 32 bytes).
+    const signingSlotStart = 5 + LEGACY_PUBLIC_KEY_BYTES;
+    expect(buf.subarray(signingSlotStart + 96, signingSlotStart + 128)
+      .equals(Buffer.from(identity.signingPublicKey))).toBe(true);
+
+    // The 96-byte zero-padded HEAD of the SigningPublicKey slot
+    // (slots [0..95] are zero padding, [96..127] holds Ed25519 signPub).
+    const signingSlotEnd = signingSlotStart + LEGACY_SIGNING_PUBLIC_KEY_BYTES;
+    expect(buf.subarray(signingSlotStart, signingSlotStart + 96)
+      .equals(Buffer.alloc(96))).toBe(true);
+
+    // The KeyCertificate (7B after the signing slot): per i2p KeyCertificate
+    // constructor + Ed25519_PAYLOAD constant (verified from i2p 2.7.0 bytecode):
+    //   cert[0]   = type (5)
+    //   cert[1..2]= extraLen BE (0x00 0x04) = 4
+    //   cert[3..6]= Ed25519_PAYLOAD = [0x00, 0x07, 0x00, 0x00]
+    //              ((SigType.code>>8)&0xFF) | (SigType.code&0xFF) | padding | padding
+    const certStart = signingSlotEnd;
+    const cert = buf.subarray(certStart, certStart + 7);
+    expect(cert[0]).toBe(CERT_TYPE_KEY_CERTIFICATE);
+    expect(cert.readUInt16BE(1)).toBe(4);
+    expect(cert[1]).toBe(0x00);  // BE high byte of extraLen
+    expect(cert[2]).toBe(0x04);  // BE low byte of extraLen
+    expect(cert[3]).toBe(0x00);  // payload[0] — (SigType.code>>8)&0xFF = 0 for Ed25519
+    expect(cert[4]).toBe(SIG_TYPE_EDDSA_SHA512_ED25519);  // payload[1] — SigType.code & 0xFF
+    expect(cert[5]).toBe(0x00);  // payload[2] — cryptoType high byte
+    expect(cert[6]).toBe(0x00);  // payload[3] — cryptoType low byte
+
+    // 8-byte Date BE at the expected offset.
+    const dateMs = Number(buf.readBigUInt64BE(buf.length - 64 - 8));
+    expect(dateMs).toBe(1700000000000);
 
     // Last 64 bytes = signature
     expect(buf.subarray(buf.length - 64).length).toBe(64);
-    // 8-byte date at the right offset
-    const dateMs = Number(buf.readBigUInt64BE(buf.length - 64 - 8));
-    expect(dateMs).toBe(1700000000000);
   });
 
-  it('[2] signs identity || mapping || date consistently (signature round-trip)', () => {
+  it('[2] signs destination || properties || date (signature round-trip)', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([
       ['a', '1'],
@@ -110,14 +171,27 @@ describe('encodeCreateSession — Pflicht cases (Plan)', () => {
     ]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
 
-    const identityBytes = identity.toByteArray();
-    const mappingSize = buf.readUInt16BE(392);
-    const mappingBytes = buf.subarray(394, 394 + mappingSize);
-    const dateBytes = buf.subarray(buf.length - 64 - 8, buf.length - 64);
-    const signedData = Buffer.concat([identityBytes, mappingBytes, dateBytes]);
+    // Java's SessionConfig.getBytes() (used for signature verification) calls
+    // Destination.writeBytes(out) — which emits the SAME 391-byte form as on
+    // the wire (256B pub + 128B signing slot [96B zero pad + 32B typed sign]
+    // + 7B cert). So the signed form is byte-exact to the wire destination.
+    const DEST_LEN = 391;
+    const propSize = buf.readUInt16BE(5 + DEST_LEN);
 
-    const sig = Buffer.from(buf.subarray(buf.length - 64));
-    expect(IdentityEx.verify(identityBytes, sig, signedData)).toBe(true);
+    // The signed data is [wire destination 391B] || [properties] || [date 8B].
+    const wireDestination = buf.subarray(5, 5 + DEST_LEN);
+    const propBytes = buf.subarray(5 + DEST_LEN, 5 + DEST_LEN + 2 + propSize);
+    const dateBytes = buf.subarray(buf.length - 64 - 8, buf.length - 64);
+    const signedData = Buffer.concat([wireDestination, propBytes, dateBytes]);
+
+    // Ed25519 sign-pub is the typed 32 B at offset 96..127 of the 128-B signing
+    // slot (LAST 32 bytes) — Destination.writeBytes re-slices _data to the
+    // last 32 bytes via SigningPublicKey.toTypedKey.
+    const signPubFromWire = wireDestination.subarray(LEGACY_PUBLIC_KEY_BYTES + 96,
+      LEGACY_PUBLIC_KEY_BYTES + 128);
+
+    const sig = buf.subarray(buf.length - 64);
+    expect(ed.verify(sig, signedData, signPubFromWire)).toBe(true);
   });
 
   it('[3] fails verification when signature is tampered (1-bit flip)', () => {
@@ -128,80 +202,108 @@ describe('encodeCreateSession — Pflicht cases (Plan)', () => {
     ]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
 
-    const mappingSize = buf.readUInt16BE(392);
-    const identityBytes = identity.toByteArray();
-    const mappingBytes = buf.subarray(394, 394 + mappingSize);
+    const DEST_LEN = 391;
+    const propSize = buf.readUInt16BE(5 + DEST_LEN);
+    const wireDestination = buf.subarray(5, 5 + DEST_LEN);
+    const signPubFromWire = wireDestination.subarray(LEGACY_PUBLIC_KEY_BYTES + 96,
+      LEGACY_PUBLIC_KEY_BYTES + 128);
+    const propBytes = buf.subarray(5 + DEST_LEN, 5 + DEST_LEN + 2 + propSize);
     const dateBytes = buf.subarray(buf.length - 64 - 8, buf.length - 64);
-    const signedData = Buffer.concat([identityBytes, mappingBytes, dateBytes]);
+    const signedData = Buffer.concat([wireDestination, propBytes, dateBytes]);
 
     const sig = Buffer.from(buf.subarray(buf.length - 64));
-    sig[0] ^= 0x01; // flip lowest bit of first byte
-    expect(IdentityEx.verify(identityBytes, sig, signedData)).toBe(false);
+    sig[0] ^= 0x01; // flip one bit
+    expect(ed.verify(sig, signedData, signPubFromWire)).toBe(false);
   });
 });
 
 // ---------------------------------------------------------------------------
-// encodeCreateSession — Pflicht extensions
+// encodeCreateSession — Pflicht extensions (brief)
 // ---------------------------------------------------------------------------
+//
+// Tests [5]–[10] and [20] assert against the LEGACY Java-I2P SessionConfig
+// layout (256-byte dummy-pub, 128-byte signing slot with 32B Ed25519 signPub
+// + 96B zero padding, 7-byte KeyCertificate, DataHelper Properties, 8-byte
+// Date, 64-byte signature).
+//
+// Layout offsets (no sessionId since CreateSession is connection-level):
+//   [4-byte length][1-byte type=1]
+//   [5 .. 5+256)              dummy PublicKey                256 bytes
+//   [5+256 .. 5+256+128)      SigningPublicKey slot          128 bytes
+//                              (first 32 B = Ed25519 signPub,
+//                               remaining 96 B = zero padding)
+//   [5+256+128 .. +7)         KeyCertificate (type=5, …)       7 bytes
+//   [5+391 .. 5+391+2)        Properties size (2B BE)         2 bytes
+//   [5+391+2 .. +N)           Properties payload              N bytes
+//   [...+N .. +N+8)           Date (8B BE ms)                  8 bytes
+//   [...last 64]              Signature (Ed25519)              64 bytes
 
 describe('encodeCreateSession — Pflicht extensions (brief)', () => {
   it('[5] header length = inner payload + 5 bytes (math is consistent)', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([['k', 'v']]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
-    // innerLen = 1 (type byte) + 0 (no sessionId) + payload.length
-    // payload = identity(387) + mappingSize(2) + mapping(N) + date(8) + signature(64)
-    const mappingSize = buf.readUInt16BE(392);
-    const expectedInnerLen = 1 + 0 + (387 + 2 + mappingSize + 8 + 64);
+
+    // bodyLen = legacy Destination(391) + Properties(2+propSize) + Date(8) + Sig(64)
+    const propSize = buf.readUInt16BE(5 + 391);
+    const expectedInnerLen = 391 + 2 + propSize + 8 + 64;
     expect(buf.readUInt32BE(0)).toBe(expectedInnerLen);
-    expect(buf.length).toBe(4 + expectedInnerLen);
+    expect(buf.length).toBe(4 + 1 + expectedInnerLen);
   });
 
-  it('[6] mapping contains sorted properties (lexicographic UTF-8 byte order)', () => {
+  it('[6] properties payload is sorted lexicographically by key', () => {
     const identity = makeTestIdentity();
-    // Insert in non-sorted order; encoded mapping must follow lex order.
     const properties = new Map<string, string>([
       ['zeta', '6'],
       ['alpha', '1'],
       ['mike', '3'],
     ]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
-    const mappingSize = buf.readUInt16BE(392);
-    const mappingBytes = buf.subarray(394, 394 + mappingSize).toString('utf-8');
+
+    // Properties payload starts at offset 5+391+2 = 398.
+    const propSize = buf.readUInt16BE(5 + 391);
+    const propBytes = buf.subarray(5 + 391 + 2, 5 + 391 + 2 + propSize).toString('utf-8');
     // alpha must appear before mike, which must appear before zeta.
-    const alphaAt = mappingBytes.indexOf('alpha');
-    const mikeAt = mappingBytes.indexOf('mike');
-    const zetaAt = mappingBytes.indexOf('zeta');
+    const alphaAt = propBytes.indexOf('alpha');
+    const mikeAt = propBytes.indexOf('mike');
+    const zetaAt = propBytes.indexOf('zeta');
     expect(alphaAt).toBeGreaterThanOrEqual(0);
     expect(mikeAt).toBeGreaterThan(alphaAt);
     expect(zetaAt).toBeGreaterThan(mikeAt);
   });
 
-  it('[7] multiple properties — three distinct entries all encoded', () => {
+  it('[7] DataHelper entries: 1B keyLen + key + 0x3D + 1B valLen + val + 0x3B', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>([
-      ['c', '3'],
       ['a', '1'],
-      ['b', '2'],
     ]);
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
-    const mappingBytes = buf.subarray(394, 394 + buf.readUInt16BE(392)).toString('utf-8');
-    expect(mappingBytes).toContain('a');
-    expect(mappingBytes).toContain('b');
-    expect(mappingBytes).toContain('c');
-    expect(mappingBytes).toContain('1');
-    expect(mappingBytes).toContain('2');
-    expect(mappingBytes).toContain('3');
+
+    // The first entry starts at offset 5+391+2 = 398 (right after the 2B size header).
+    // Format: [1B=keyLen][key UTF-8][0x3D='][1B=valLen][val UTF-8][0x3B ';']…
+    expect(buf[5 + 391 + 2 + 0]).toBe(1);   // keyLen = 1 (key = 'a')
+    expect(buf[5 + 391 + 2 + 1]).toBe(0x61);  // 'a' UTF-8
+    expect(buf[5 + 391 + 2 + 2]).toBe(0x3D);  // '='
+    expect(buf[5 + 391 + 2 + 3]).toBe(1);   // valLen = 1 (value = '1')
+    expect(buf[5 + 391 + 2 + 4]).toBe(0x31);  // '1' UTF-8
+    expect(buf[5 + 391 + 2 + 5]).toBe(0x3B);  // ';'
+
+    // Properties size header reflects just the entry payload (above 6 bytes).
+    const propSize = buf.readUInt16BE(5 + 391);
+    expect(propSize).toBe(6);
   });
 
-  it('[8] empty properties map → mappingSize=0, signature still 64 bytes', () => {
+  it('[8] empty properties → propSize=0, no DataHelper payload bytes', () => {
     const identity = makeTestIdentity();
     const properties = new Map<string, string>();
     const buf = encodeCreateSession({ identity, properties, dateMs: 1700000000000 });
-    expect(buf.readUInt16BE(392)).toBe(0);
-    // Total = 4 (length) + 1 (type) + 0 (no sessionId) + payload
-    //       = 4 + 1 + 0 + (387 + 2 + 0 + 8 + 64) = 466
-    expect(buf.length).toBe(4 + 1 + 387 + 2 + 0 + 8 + 64);
+
+    // propSize at offset 5+391 = 0 → no entry bytes between the size header
+    // and the 8-byte date immediately after (offset 5+391+2).
+    expect(buf.readUInt16BE(5 + 391)).toBe(0);
+    // Total = 4 (length) + 1 (type) + 391 (Destination) + 2 (propSize) + 0 (props)
+    //       + 8 (date) + 64 (sig) = 470
+    expect(buf.length).toBe(4 + 1 + 391 + 2 + 0 + 8 + 64);
     expect(buf.subarray(buf.length - 64).length).toBe(64);
   });
 
@@ -233,8 +335,9 @@ describe('encodeCreateLeaseSet2 — Pflicht case (Plan)', () => {
     const opts = makeLeaseSet2Opts({ sessionId: 42 });
     const buf = encodeCreateLeaseSet2(opts);
 
-    // Outer envelope: 4-byte length + 1-byte type=41 + 2-byte sessionId
-    expect(buf.readUInt32BE(0)).toBe(buf.length - 4);
+    // Outer envelope: 4-byte length (body only) + 1-byte type=41 + 2-byte sessionId
+    //   length = buf.length - 4 (length prefix) - 1 (type byte) = body length
+    expect(buf.readUInt32BE(0)).toBe(buf.length - 4 - 1);
     expect(buf[4]).toBe(41); // CREATE_LEASE_SET_2
     expect(buf.readUInt16BE(5)).toBe(42); // sessionId in I2CP header
 

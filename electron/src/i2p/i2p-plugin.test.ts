@@ -67,10 +67,13 @@ vi.mock('node:net', () => {
         const type = chunk.readUInt8(4);
         if (type === 32 /* GET_DATE */) {
           const routerMs = Date.now();
+          // I2CP wire format: [4-byte length=body][1-byte type][8-byte date BE].
+          // Per Java-I2P's I2CPMessageImpl.writeMessage the length is the BODY
+          // length (does NOT include the 1-byte type). body = 8 bytes (date only).
           const frame = Buffer.alloc(4 + 1 + 8);
-          frame.writeUInt32BE(9, 0);
-          frame.writeUInt8(32, 4);
-          frame.writeBigUInt64BE(BigInt(routerMs), 5);
+          frame.writeUInt32BE(8, 0);                   // length = 8 body bytes (NO type)
+          frame.writeUInt8(32, 4);                     // I2CP_MSG.GET_DATE
+          frame.writeBigUInt64BE(BigInt(routerMs), 5); // 8-byte BE ms since epoch
           setImmediate(() => s.emit('data', frame));
         } else if (type === 34 /* DestLookup */) {
           const sid = chunk.length >= 7 ? chunk.readUInt16BE(5) : 0;
@@ -78,9 +81,11 @@ vi.mock('node:net', () => {
           const innerPayload = Buffer.alloc(4 + 65);
           innerPayload.writeUInt32BE(1, 0); // found = 1
           destBlob.copy(innerPayload, 4);
-          const innerLen = 1 + 2 + innerPayload.length;
-          const reply = Buffer.alloc(4 + innerLen);
-          reply.writeUInt32BE(innerLen, 0);
+          // body = 2-byte sid + innerPayload (4 found-flag + 65 dest). Length is
+          // the body length ONLY — the 1-byte type is NOT counted.
+          const bodyLen = 2 + innerPayload.length;
+          const reply = Buffer.alloc(4 + 1 + bodyLen);
+          reply.writeUInt32BE(bodyLen, 0);
           reply.writeUInt8(35, 4); // I2CP_MSG.DEST_REPLY
           reply.writeUInt16BE(sid, 5);
           innerPayload.copy(reply, 7);
@@ -111,9 +116,12 @@ vi.mock('node:net', () => {
       const sid = sessionIdCounter++;
       const innerPayload = Buffer.alloc(4);
       innerPayload.writeUInt32BE(1, 0); // status = Created
-      const innerLen = 1 + 2 + innerPayload.length;
-      const frame = Buffer.alloc(4 + innerLen);
-      frame.writeUInt32BE(innerLen, 0);
+      // body = 2-byte sid + innerPayload (4-byte status). Per I2CP spec the
+      // 4-byte length prefix counts ONLY the body bytes — the 1-byte type
+      // is NOT included (Java's I2CPMessageImpl.writeMessage is authoritative).
+      const bodyLen = 2 + innerPayload.length;
+      const frame = Buffer.alloc(4 + 1 + bodyLen);
+      frame.writeUInt32BE(bodyLen, 0);
       frame.writeUInt8(20, 4); // I2CP_MSG.SESSION_STATUS
       frame.writeUInt16BE(sid, 5);
       innerPayload.copy(frame, 7);

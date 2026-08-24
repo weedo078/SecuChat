@@ -2,7 +2,7 @@ import * as net from 'node:net';
 import { I2PSocketHandle } from './i2p-socket-handle';
 import { StreamingConnection } from './streaming-protocol';
 import { computeB32FromPrivKey } from './destination-gen';
-import { encodeMessage, decodeMessage, readMessageFromSocket, I2CP_MSG } from './i2cp-protocol';
+import { encodeMessage, decodeMessage, readMessageFromSocket, I2CP_MSG, I2CP_HELLO_BYTE } from './i2cp-protocol';
 import { IdentityEx } from './i2cp-identity';
 import { encodeCreateSession, encodeCreateLeaseSet2 } from './i2cp-session-creator';
 
@@ -168,6 +168,15 @@ export class I2CPSocketManager {
       };
       const onConnect = (): void => {
         sock.removeListener('error', onError);
+        // I2CP wire protocol: the very first byte after TCP-connect MUST
+        // be the protocol hello byte (0x2A = 42). Java-I2P's
+        // ClientListenerRunner.validate() reads this byte and closes the
+        // socket if it does not match; i2pd's I2CP.cpp::ReadProtocolByte()
+        // enforces the same gate. Without it, the router FIN-closes the
+        // socket silently and we never see a reply — see
+        // https://i2p.net/en/docs/specs/i2cp-overview
+        // and the live-debug notes for PR #209.
+        sock.write(Buffer.from([I2CP_HELLO_BYTE]));
         resolve();
       };
       sock.once('connect', onConnect);
@@ -232,12 +241,16 @@ export class I2CPSocketManager {
       const timer = setTimeout(() => reject(new Error('GET_DATE timeout after 15s')), 15_000);
       timer.unref();
       const onData = (chunk: Buffer): void => {
-        // Minimal decoder: read 4-byte length + 1-byte type; if GET_DATE, read 8-byte date
+        // Minimal decoder for the GET_DATE round-trip: read 4-byte length
+        // (= body length, NOT including the 1-byte type), 1-byte type, and
+        // the 8-byte Date BE. Per Java-I2P's I2CPMessageImpl.writeMessage
+        // the body length does NOT include the type byte — so a vanilla
+        // GET_DATE reply has body=8 (date only) or 8+N (date + version).
         if (chunk.length < 5) return;
         const length = chunk.readUInt32BE(0);
-        if (chunk.length < 4 + length) return;
+        if (chunk.length < 4 + 1 + length) return;
         if (chunk[4] !== I2CP_MSG.GET_DATE) return;
-        if (length < 9) return reject(new Error('GET_DATE reply too short'));
+        if (length < 8) return reject(new Error('GET_DATE reply too short'));
         const routerMs = Number(chunk.readBigUInt64BE(5));
         this.routerDateOffsetMs = routerMs - Date.now();
         clearTimeout(timer);
@@ -270,35 +283,34 @@ export class I2CPSocketManager {
     }
 
     if (msg.type === I2CP_MSG.SESSION_STATUS) {
-      // SessionStatus payload layout: sessionId(1 or 2 bytes BE) +
-      // 4-byte status int BE. The decoder (`decodeMessage`) already
-      // peels off any leading 2-byte sessionId from the body — so the
-      // payload we see here is just the 4-byte status for routers that
-      // follow the spec exactly. Java I2P historically tacks the 1-byte
-      // sessionId IN FRONT of the status; in that case the decoder
-      // either leaves `payload = <1-byte sid><4-byte status>` (if body
-      // < 2 bytes, it would skip the read — but Java sends 5-byte body
-      // which IS ≥ 2 bytes, so it tries to read 2 bytes as sessionId and
-      // returns a corrupt status).
+      // SESSION_STATUS is in SID_LESS_TYPES (see i2cp-protocol.ts), so the
+      // decoder does NOT strip a 2-byte sessionId prefix — `msg.payload`
+      // IS the full body, and `msg.sessionId` is null. Body shape depends
+      // on the router version:
       //
-      // Pragmatic decoding: accept either layout by checking msg.sessionId.
-      // If sessionId is non-null and < 256, the router used the spec
-      // (2-byte) layout; otherwise the first byte of payload is the
-      // sessionId and status starts at offset 1.
+      //   6 bytes [2B sid][4B status]     — i2pd / I2CP spec literal reading
+      //   5 bytes [1B sid][4B status]     — legacy Java-I2P (pre-0.9.34)
+      //   3 bytes [2B msgId][1B status]   — Java-I2P 0.9.34+ (msgId == sid)
+      //
+      // The 5-byte form is the reason we cannot let the decoder strip a
+      // fixed-width sessionId: it has only 1 byte of sid, so a 2-byte
+      // strip would silently merge the sid's high byte into the status.
       let status: number;
       let sid: number;
-      if (msg.sessionId !== null && msg.sessionId !== undefined) {
-        // Spec-correct layout: 2-byte sessionId in body header, payload
-        // is just the 4-byte status int. (The generic decoder has
-        // already consumed the 2-byte sessionId into msg.sessionId.)
-        sid = msg.sessionId;
-        if (msg.payload.length < 4) return;
-        status = msg.payload.readUInt32BE(0);
-      } else {
-        // Java-I2P-style layout: payload = <1-byte sid><4-byte status>.
-        if (msg.payload.length < 5) return;
+      if (msg.payload.length === 6) {
+        sid = msg.payload.readUInt16BE(0);
+        status = msg.payload.readUInt32BE(2);
+      } else if (msg.payload.length === 5) {
         sid = msg.payload.readUInt8(0);
         status = msg.payload.readUInt32BE(1);
+      } else if (msg.payload.length === 3) {
+        sid = msg.payload.readUInt16BE(0);
+        status = msg.payload.readUInt8(2);
+      } else {
+        // Unrecognized body shape — router sent a malformed reply.
+        // Bail out without touching i2cpSessionId so the previous value
+        // (likely null or a valid prior sid) is preserved.
+        return;
       }
       this.i2cpSessionId = sid;
       if (status === 1 /* Created */) {
