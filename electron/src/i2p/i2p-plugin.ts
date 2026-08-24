@@ -116,10 +116,15 @@ export class I2PPlugin {
       this.emitOrBuffer('i2pMessage', {
         streamId: ev.streamId,
         data: new TextDecoder().decode(ev.data),
+        peerDestination: ev.peerDestination,
       });
     });
     handle.setOnClose((ev) => {
-      this.emitOrBuffer('i2pStreamClosed', { streamId: ev.streamId, reason: ev.reason });
+      this.emitOrBuffer('i2pStreamClosed', {
+        streamId: ev.streamId,
+        reason: ev.reason,
+        peerDestination: ev.peerDestination,
+      });
     });
     // startReadThread() is idempotent and the actual I2PSocketHandle API
     // requires explicit invocation — it is NOT auto-started by the
@@ -288,28 +293,49 @@ export class I2PPlugin {
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private startAcceptLoop(): void {
-    // Phase-2-Follow-up: spawn a background task that polls
-    // `socketManager.acceptIncoming()` on a short interval and wires the
-    // resulting I2PSocketHandle into onData/onClose like `connectTo` does.
+    // Subscribe to the I2CPSocketManager's peer-initiated stream events.
+    // The socketManager fires exactly once per RECEIVE_MESSAGE_BEGIN with
+    // a previously-unknown streamId; for each such event we look up the
+    // freshly-created I2PSocketHandle and wire its lifecycle into our
+    // buffered event bus so the renderer sees the same shape it sees for
+    // client-initiated streams.
     //
-    // Pseudocode for the follow-up:
-    //   setInterval(async () => {
-    //     if (!this.socketManager?.isConnected()) return;
-    //     try {
-    //       const streamId = await this.socketManager.acceptIncoming();
-    //       const handle = this.socketManager.getStream(streamId);
-    //       if (!handle) return;
-    //       handle.setOnData((ev) => this.emitOrBuffer('i2pMessage', { ... }));
-    //       handle.setOnClose((ev) => this.emitOrBuffer('i2pStreamClosed', { ... }));
-    //       handle.startReadThread();
-    //       this.emitOrBuffer('i2pStreamConnected', { streamId, peerDestination: handle.peerDestination });
-    //     } catch { /* sleep 3s */ }
-    //   }, 0);
-    //
-    // For now, the accept path is exercised via `connectTo` only — the
-    // renderer's IPC bridge will call `connectTo` for outbound peers and
-    // expect server-initiated streams to flow through `acceptIncoming`
-    // once the loop is wired up.
+    // No polling here: the socketManager pushes the event synchronously
+    // from inside its inbound-message reader, so the listener runs in the
+    // same tick the router delivers the BEGIN frame. Unsubscribe is left
+    // dangling on purpose — the I2CPSocketManager is a singleton with the
+    // same lifetime as this I2PPlugin, and a stale unsubscribe could not
+    // meaningfully outlive `disconnect()` since the socketManager is reset
+    // there too.
+    if (!this.socketManager) return;
+    this.socketManager.onIncomingStream(({ streamId, peerB32 }) => {
+      const handle = this.socketManager!.getStream(streamId);
+      if (!handle) {
+        console.error(
+          `I2PPlugin.startAcceptLoop: no I2PSocketHandle for incoming stream ${streamId} — ignoring`,
+        );
+        return;
+      }
+      handle.setOnData((ev) => {
+        this.emitOrBuffer('i2pMessage', {
+          streamId: ev.streamId,
+          data: new TextDecoder().decode(ev.data),
+          peerDestination: ev.peerDestination,
+        });
+      });
+      handle.setOnClose((ev) => {
+        this.emitOrBuffer('i2pStreamClosed', {
+          streamId: ev.streamId,
+          reason: ev.reason,
+          peerDestination: ev.peerDestination,
+        });
+      });
+      handle.startReadThread();
+      this.emitOrBuffer('i2pStreamConnected', {
+        streamId,
+        peerDestination: peerB32 === 'unknown-peer' ? handle.peerDestination : peerB32,
+      });
+    });
   }
 
   private async generateNewPrivKey(): Promise<Uint8Array> {

@@ -1,6 +1,6 @@
 {
   "name": "securechat",
-  "version": "1.1.0",
+  "version": "1.0.23",
   "description": "Privacy-focused messaging with PGP + I2P",
   "homepage": "https://github.com/weedo078/SecuChat",
   "repository": {
@@ -30,6 +30,8 @@
     "vitest": "^2.1.9"
   },
   "dependencies": {
+    "@noble/ed25519": "^2.3.0",
+    "@noble/hashes": "^1.8.0",
     "better-sqlite3": "^13.0.2",
     "electron-updater": "^6.8.9"
   },

@@ -3,11 +3,20 @@ import { Duplex } from 'node:stream';
 export interface DataEvent {
   streamId: number;
   data: Uint8Array;
+  /**
+   * Peer that produced this data — wired through to the IPC layer so the
+   * renderer can attribute incoming messages without joining the stream
+   * registry on the main side. For client-initiated streams this is the
+   * b32 we connected to; for server-initiated streams it is the b32 the
+   * peer claims to be (best-effort — see I2PPlugin.acceptIncoming TODO).
+   */
+  peerDestination: string;
 }
 
 export interface CloseEvent {
   streamId: number;
   reason: string;
+  peerDestination: string;
 }
 
 export class I2PSocketHandle {
@@ -62,7 +71,11 @@ export class I2PSocketHandle {
         const line = this.newlineBuffer.subarray(0, nlIdx);
         this.newlineBuffer = this.newlineBuffer.subarray(nlIdx + 1);
         if (line.length === 0) continue;
-        this.onDataCb?.({ streamId: this.streamId, data: new Uint8Array(line) });
+        this.onDataCb?.({
+          streamId: this.streamId,
+          data: new Uint8Array(line),
+          peerDestination: this.peerDestination,
+        });
       }
     });
 
@@ -92,7 +105,7 @@ export class I2PSocketHandle {
     if (this.closed) return;
     this.closed = true;
     this.socket.destroy();
-    this.onCloseCb?.({ streamId: this.streamId, reason: 'closed' });
+    this.onCloseCb?.({ streamId: this.streamId, reason: 'closed', peerDestination: this.peerDestination });
   }
 
   isClosed(): boolean {
@@ -101,6 +114,6 @@ export class I2PSocketHandle {
 
   private fireClose(reason: string): void {
     this.closed = true;
-    this.onCloseCb?.({ streamId: this.streamId, reason });
+    this.onCloseCb?.({ streamId: this.streamId, reason, peerDestination: this.peerDestination });
   }
 }
