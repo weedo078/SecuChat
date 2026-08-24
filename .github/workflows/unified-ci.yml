@@ -300,7 +300,7 @@ jobs:
 
       - name: Cache Gradle
         if: steps.check-android.outputs.exists == 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
@@ -588,7 +588,7 @@ jobs:
           packages: 'tools platform-tools build-tools;36.0.0'   # build-tools 36.0.0 = compileSdk/targetSdk; pinned für reproduzierbare apksigner-Pfad
 
       - name: Cache Gradle
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: |
             ~/.gradle/caches
