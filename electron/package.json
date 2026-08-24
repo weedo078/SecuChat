@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
-    "@types/better-sqlite3": "^7.6.13",
+    "@types/better-sqlite3": "^9.6.0",
     "@types/node": "^25.9.0",
     "electron": "^42.9.2",
     "electron-builder": "^26.15.3",
