@@ -37,16 +37,42 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      electron: ${{ steps.filter.outputs.electron }}
-      android: ${{ steps.filter.outputs.android }}
-      app-core: ${{ steps.filter.outputs.app-core }}
-      shared: ${{ steps.filter.outputs.shared }}
-      wiki: ${{ steps.filter.outputs.wiki }}
-      version-file: ${{ steps.filter.outputs.version-file }}
+      electron: ${{ steps.override.outputs.electron || steps.filter.outputs.electron }}
+      android: ${{ steps.override.outputs.android || steps.filter.outputs.android }}
+      app-core: ${{ steps.override.outputs.app-core || steps.filter.outputs.app-core }}
+      shared: ${{ steps.override.outputs.shared || steps.filter.outputs.shared }}
+      wiki: ${{ steps.override.outputs.wiki || steps.filter.outputs.wiki }}
+      version-file: ${{ steps.override.outputs.version-file || steps.filter.outputs.version-file }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      # When manually dispatched (e.g. for rc/final releases), the
+      # dorny/paths-filter step below has no commit-diff to inspect —
+      # `workflow_dispatch` events carry no `before`/`after` field, and
+      # a tag-only push likewise has no new commit. The filter then
+      # returns all categories as false and every downstream job's
+      # `if: needs.detect-changes.outputs.X == 'true'` short-circuits,
+      # silently skipping the entire release pipeline (rc1 of #208 was
+      # lost this way).
+      #
+      # For workflow_dispatch we WANT all categories to fire so the
+      # full release pipeline runs. Set every output to true so the
+      # downstream `if:` conditions pass. The override step is skipped
+      # on push/pull_request events, so the original filter output is
+      # used there (empty string + filter result → falsy OR returns the
+      # filter result, which is exactly the prior behaviour).
+      - name: Override outputs for workflow_dispatch
+        id: override
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "electron=true"      >> "$GITHUB_OUTPUT"
+          echo "android=true"       >> "$GITHUB_OUTPUT"
+          echo "app-core=true"      >> "$GITHUB_OUTPUT"
+          echo "shared=true"        >> "$GITHUB_OUTPUT"
+          echo "wiki=true"          >> "$GITHUB_OUTPUT"
+          echo "version-file=true"  >> "$GITHUB_OUTPUT"
 
       - name: Detect Changes
         uses: dorny/paths-filter@v4
