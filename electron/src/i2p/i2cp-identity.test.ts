@@ -343,3 +343,31 @@ describe('IdentityEx edge cases', () => {
     }
   });
 });
+
+describe('IdentityEx round-trip via fromDestinationBytes', () => {
+  it('preserves non-NULL KEYCERT_SIGNED (0x05) and non-zero expiration byte-exact', () => {
+    const raw = Buffer.alloc(387);
+    raw[0] = 0xaa; raw[1] = 0xbb; // 2 bytes of encryption pub (Rest bleibt 0)
+    raw[32] = 0xcc; raw[33] = 0xdd; // 2 bytes of signing pub
+    raw[64] = 0x05; // KEYCERT_SIGNED (non-NULL)
+    raw.writeBigUInt64BE(BigInt(0x0102030405060708), 65); // expiration
+
+    const identity = IdentityEx.fromDestinationBytes(raw);
+    const roundtrip = identity.toByteArray();
+
+    expect(roundtrip.equals(raw)).toBe(true);
+  });
+
+  it('preserves KEYCERT_NULL (0x00) and zero expiration (back-compat)', () => {
+    const raw = Buffer.alloc(387);
+    raw[0] = 0x11; raw[32] = 0x22;
+    raw[64] = 0x00; // KEYCERT_NULL
+
+    const identity = IdentityEx.fromDestinationBytes(raw);
+    expect(identity.toByteArray().equals(raw)).toBe(true);
+  });
+
+  it('rejects non-387-byte input', () => {
+    expect(() => IdentityEx.fromDestinationBytes(Buffer.alloc(100))).toThrow(/expected 387 bytes/);
+  });
+});

@@ -28,7 +28,7 @@ ed.etc.sha512Sync = (...messages: Uint8Array[]): Uint8Array => {
  * Layout (after toByteArray):
  *   [0..32]    encryption public key (Ed25519)
  *   [32..64]   signing public key (Ed25519 — separate from encryption for spec compliance)
- *   [64]       KEYCERT_NULL = 0x00
+ *   [64]       key certificate type (0x00 = KEYCERT_NULL, 0x05 = KEYCERT_SIGNED, ...)
  *   [65..73]   expiration (8 bytes BE, default 0 = no expiration)
  *   [73..387]  padding (314 bytes of 0x00 for Java IdentityEx-Compat)
  *
@@ -45,6 +45,7 @@ export class IdentityEx {
     public readonly encryptionPublicKey: Uint8Array,
     public readonly signingPublicKey: Uint8Array,
     public readonly signingPrivateKey: Uint8Array,
+    public readonly cert: number = 0x00,
     public readonly expirationMs: number = 0,
   ) {}
 
@@ -66,14 +67,35 @@ export class IdentityEx {
     const encPub = Uint8Array.from(blob.subarray(32, 64));   // encryption pub
     const signPub = Uint8Array.from(blob.subarray(96, 128)); // signing pub
     const signPriv = Uint8Array.from(blob.subarray(64, 96)); // signing priv seed
-    return new IdentityEx(encPub, signPub, signPriv);
+    return new IdentityEx(encPub, signPub, signPriv, 0x00, 0);
+  }
+
+  static fromDestinationBytes(rawBytes: Buffer | Uint8Array): IdentityEx {
+    if (rawBytes.length !== 387) {
+      throw new Error(
+        `IdentityEx.fromDestinationBytes: expected 387 bytes, got ${rawBytes.length}`,
+      );
+    }
+    const encPub = Uint8Array.from(rawBytes.subarray(0, 32));
+    const signPub = Uint8Array.from(rawBytes.subarray(32, 64));
+    const cert = rawBytes[64];
+    // DataView (vs Buffer.readBigUInt64BE) keeps the public API compatible
+    // with both `Buffer` and plain `Uint8Array` while reading big-endian
+    // uint64 at offset 65 (i.e. bytes 65..73 = IdentityEx expiration).
+    const view = new DataView(rawBytes.buffer, rawBytes.byteOffset, rawBytes.byteLength);
+    const expirationMs = Number(view.getBigUint64(65));
+    // NOTE: fromDestinationBytes does NOT have a signingPrivateKey — the
+    // wire-format Destination blob only carries public-key material.
+    // Callers that need to sign must keep the original 128-byte privKey
+    // blob separately and combine via `fromPrivKey` if applicable.
+    return new IdentityEx(encPub, signPub, new Uint8Array(32), cert, expirationMs);
   }
 
   toByteArray(): Buffer {
     const buf = Buffer.alloc(387);
     Buffer.from(this.encryptionPublicKey).copy(buf, 0);
     Buffer.from(this.signingPublicKey).copy(buf, 32);
-    buf[64] = 0x00; // KEYCERT_NULL
+    buf[64] = this.cert;
     if (this.expirationMs > 0) {
       buf.writeBigUInt64BE(BigInt(this.expirationMs), 65);
     }
