@@ -371,13 +371,54 @@ describe('I2PPlugin lifecycle (defensive)', () => {
     expect(connected[0]?.peerDestination).toBe(dest);
   });
 
-  it('isI2pAvailable() returns a result without throwing when port is closed', async () => {
+  it('probeI2pOnce() returns a result without throwing when port is closed', async () => {
     // Port 7654 is not listening in this test environment — we only assert
     // that the call resolves (true OR false), not the exact boolean, since
-    // a developer machine could have an I2P router running.
+    // a developer machine could have an I2P router running. The retry
+    // loop on top of this method is exercised separately below; calling
+    // probeI2pOnce() directly keeps this test fast (~2s, not 55s).
     const plugin = I2PPlugin.getInstance();
-    const result = await plugin.isI2pAvailable();
+    const result = await plugin['probeI2pOnce']();
     expect(typeof result.available).toBe('boolean');
+  });
+
+  it('isI2pAvailable() retries with backoff and resolves false when router never comes up', async () => {
+    // Use fake timers so the ~55s retry schedule does not actually delay
+    // the suite. We stub probeI2pOnce to always fail and assert that the
+    // retry loop runs the configured number of attempts before resolving.
+    vi.useFakeTimers();
+    const plugin = I2PPlugin.getInstance();
+    const probeSpy = vi
+      .spyOn(plugin as unknown as { probeI2pOnce: () => Promise<{ available: boolean }> }, 'probeI2pOnce')
+      .mockResolvedValue({ available: false });
+
+    const promise = plugin.isI2pAvailable();
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.available).toBe(false);
+    expect(probeSpy).toHaveBeenCalledTimes(5); // matches I2P_AVAILABILITY_RETRY_DELAYS_MS length
+
+    probeSpy.mockRestore();
+    vi.useRealTimers();
+  });
+
+  it('isI2pAvailable() resolves true on the first probe when router is already up', async () => {
+    vi.useFakeTimers();
+    const plugin = I2PPlugin.getInstance();
+    const probeSpy = vi
+      .spyOn(plugin as unknown as { probeI2pOnce: () => Promise<{ available: boolean }> }, 'probeI2pOnce')
+      .mockResolvedValueOnce({ available: true });
+
+    const promise = plugin.isI2pAvailable();
+    await vi.runAllTimersAsync();
+    const result = await promise;
+
+    expect(result.available).toBe(true);
+    expect(probeSpy).toHaveBeenCalledTimes(1);
+
+    probeSpy.mockRestore();
+    vi.useRealTimers();
   });
 });
 

@@ -17,9 +17,30 @@ const BUFFER_CAPACITY = 64;
 /**
  * I2P availability probe timeout. Matches the Android probe's TCP-connect
  * budget so a slow / hung router cannot block the renderer's startup for
- * more than two seconds.
+ * more than two seconds PER ATTEMPT.
  */
 const I2P_AVAILABILITY_TIMEOUT_MS = 2_000;
+
+/**
+ * Retry schedule for `isI2pAvailable()`. The Main process runs this probe
+ * once at `app.whenReady()`; without retries a router that is still booting
+ * looks indistinguishable from "not installed" — the user sees the "I2P
+ * Warning" modal even though the router will be ready moments later.
+ *
+ * A fresh Java-I2P install can take 30-60s before the I2CP port starts
+ * listening (Caps transitions "Start OK" → "Network" → steady state). The
+ * schedule below gives the router ~55s to come up before the modal fires.
+ * Worst-case latency is 55s + 5×2s = 65s, which is short enough that a
+ * truly missing router fails fast but long enough to ride out a normal
+ * Java-I2P boot.
+ */
+const I2P_AVAILABILITY_RETRY_DELAYS_MS: readonly number[] = [
+  0, // attempt 1: immediate
+  3_000, // attempt 2: +3s
+  7_000, // attempt 3: +7s (10s total)
+  15_000, // attempt 4: +15s (25s total)
+  30_000, // attempt 5: +30s (55s total)
+];
 
 interface BufferedEvent {
   name: string;
@@ -178,10 +199,31 @@ export class I2PPlugin {
   }
 
   async isI2pAvailable(): Promise<{ available: boolean }> {
-    // Cheap TCP-connect probe to the I2P router's I2CP port. Uses the
-    // imported `net` module (consistent with Task-5 I2CPSocketManager)
-    // rather than `require('node:net')` so the import is statically
-    // traceable and tree-shakeable.
+    // Cheap TCP-connect probe to the I2P router's I2CP port, retried with
+    // backoff so a router that is still booting does not look like a
+    // missing router (see I2P_AVAILABILITY_RETRY_DELAYS_MS for the
+    // rationale). The actual connect logic lives in `probeI2pOnce()` so
+    // unit tests can exercise the single-attempt code path without
+    // waiting 55s for the retry loop to drain.
+    for (const delayMs of I2P_AVAILABILITY_RETRY_DELAYS_MS) {
+      if (delayMs > 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      }
+      const { available } = await this.probeI2pOnce();
+      if (available) {
+        return { available: true };
+      }
+    }
+    return { available: false };
+  }
+
+  /**
+   * Single TCP-connect probe to the I2P router's I2CP port. Uses the
+   * imported `net` module (consistent with Task-5 I2CPSocketManager)
+   * rather than `require('node:net')` so the import is statically
+   * traceable and tree-shakeable.
+   */
+  private probeI2pOnce(): Promise<{ available: boolean }> {
     return new Promise((resolve) => {
       const socket = net.connect(7654, '127.0.0.1');
       const timeout = setTimeout(() => {
