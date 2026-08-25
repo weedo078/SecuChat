@@ -660,6 +660,15 @@ jobs:
             echo "::error::Siehe wiki/Build-and-Deploy.md § Release-Signing für Setup-Anleitung."
             exit 1
           fi
+          # Diagnose-Hilfe für paste-Artefakte (CRLF, trailing newlines): nur Länge,
+          # keine Inhalte loggen. Reine Length-Diff zeigt sofort, ob Whitespace
+          # beim Einfügen ins Secret reingerutscht ist.
+          RAW_LEN=${#RELEASE_KEYSTORE_BASE64}
+          CLEAN_LEN=$(printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n\t ' | wc -c)
+          echo "Keystore base64: ${RAW_LEN} chars raw, ${CLEAN_LEN} chars after stripping CR/LF/Tab/Space"
+          if [ "$RAW_LEN" != "$CLEAN_LEN" ]; then
+            echo "::warning::Whitespace im Secret gefunden (paste-Artefakt). Decode-Pipeline strippt CR/LF/Tab/Space automatisch."
+          fi
 
       - name: Sign Release APK
         env:
@@ -675,7 +684,7 @@ jobs:
           APKSIGNER="$BT_DIR/apksigner"
           ZIPALIGN="$BT_DIR/zipalign"
           test -x "$APKSIGNER" && test -x "$ZIPALIGN" || { echo "apksigner/zipalign not found in $BT_DIR"; exit 1; }
-          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE"
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n\t ' | base64 -di > "$KEYSTORE"
           chmod 600 "$KEYSTORE"
           "$ZIPALIGN" -p -f 4 "$UNSIGNED" "$ALIGNED"
           "$APKSIGNER" sign \
