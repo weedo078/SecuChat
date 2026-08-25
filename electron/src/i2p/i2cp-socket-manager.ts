@@ -574,10 +574,10 @@ export class I2CPSocketManager {
         parsedBase,
         msg.sessionId ?? this.i2cpSessionId,
       );
-      const identity = IdentityEx.fromPrivKey(this.opts.privKey);
+      const expectedDestination = IdentityEx.fromPrivKey(this.opts.privKey).toByteArray();
       validateParsedLeaseSetRequest(parsed, {
         expectedSessionId: this.i2cpSessionId,
-        expectedIdentity: identity,
+        expectedDestinationBytes: expectedDestination,
         currentRouterTimeSeconds: () => this.currentRouterTimeSeconds(),
       });
 

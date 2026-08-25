@@ -1,5 +1,4 @@
 import { decodeMapping } from "./i2cp-protobuf";
-import { IdentityEx } from "./i2cp-identity";
 import type { Lease2 } from "./i2cp-session-creator";
 
 export type LeaseSetState =
@@ -14,7 +13,7 @@ export type LeaseSetState =
 export interface ParsedLeaseSetRequest {
   sessionId: number;
   storeType: 3;
-  identity: IdentityEx;
+  destinationBytes: Buffer;
   publishedSeconds: number;
   expiresSeconds: number;
   flags: number;
@@ -27,7 +26,7 @@ export interface ParsedLeaseSetRequest {
 
 export interface ValidateLeaseSetRequestOpts {
   expectedSessionId: number;
-  expectedIdentity: IdentityEx;
+  expectedDestinationBytes: Buffer;
   currentRouterTimeSeconds: () => number;
 }
 
@@ -121,18 +120,11 @@ function parseLeaseSetRequest(
     Buffer.from([DATABASE_STORE_LEASESET2_TYPE]),
     leaseSetBytesWithoutSignature,
   ]);
-  const priv = new Uint8Array(128);
-  identityBytes
-    .subarray(0, 32)
-    .copy(Buffer.from(priv.buffer, priv.byteOffset + 32, 32));
-  identityBytes
-    .subarray(32, 64)
-    .copy(Buffer.from(priv.buffer, priv.byteOffset + 96, 32));
 
   return {
     sessionId: 0,
     storeType: 3,
-    identity: IdentityEx.fromPrivKey(priv),
+    destinationBytes: Buffer.from(identityBytes), // 387 raw bytes, byte-exact
     publishedSeconds,
     expiresSeconds,
     flags,
@@ -170,9 +162,7 @@ export function validateParsedLeaseSetRequest(
       `LeaseSet request sessionId mismatch: got ${parsed.sessionId}, expected ${opts.expectedSessionId}`,
     );
   }
-  if (
-    !parsed.identity.toByteArray().equals(opts.expectedIdentity.toByteArray())
-  ) {
+  if (!parsed.destinationBytes.equals(opts.expectedDestinationBytes)) {
     throw new Error("LeaseSet request destination mismatch");
   }
   if (parsed.storeType !== 3)

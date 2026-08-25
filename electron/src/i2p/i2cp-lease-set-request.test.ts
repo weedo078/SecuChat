@@ -77,9 +77,7 @@ describe("I2CP LeaseSet request parser", () => {
     const parsed = parseRequestVariableLeaseSet(payload);
 
     expect(parsed.storeType).toBe(3);
-    expect(parsed.identity.toByteArray().equals(identity.toByteArray())).toBe(
-      true,
-    );
+    expect(parsed.destinationBytes.equals(identity.toByteArray())).toBe(true);
     expect(parsed.options.get("i2cp.leaseSetType")).toBe("3");
     expect(parsed.encryptionKeys).toHaveLength(1);
     expect(parsed.leases).toHaveLength(1);
@@ -110,7 +108,7 @@ describe("I2CP LeaseSet request parser", () => {
     expect(() =>
       validateParsedLeaseSetRequest(parsed, {
         expectedSessionId: 42,
-        expectedIdentity: identity,
+        expectedDestinationBytes: identity.toByteArray(),
         currentRouterTimeSeconds: () => 1_700_000_000,
       }),
     ).not.toThrow();
@@ -135,7 +133,7 @@ describe("I2CP LeaseSet request parser", () => {
     expect(() =>
       validateParsedLeaseSetRequest(emptyLeases, {
         expectedSessionId: 7,
-        expectedIdentity: identity,
+        expectedDestinationBytes: identity.toByteArray(),
         currentRouterTimeSeconds: () => 1_700_000_000,
       }),
     ).toThrow(/lease count/);
@@ -149,9 +147,27 @@ describe("I2CP LeaseSet request parser", () => {
     expect(() =>
       validateParsedLeaseSetRequest(stale, {
         expectedSessionId: 7,
-        expectedIdentity: identity,
+        expectedDestinationBytes: identity.toByteArray(),
         currentRouterTimeSeconds: () => 1_700_000_000,
       }),
     ).toThrow(/too old/);
+  });
+
+  describe("I2CP LeaseSet request parser — IdentityEx byte-exact round-trip", () => {
+    it("accepts REQUEST_VARIABLE_LEASE_SET with non-NULL cert (0x05) byte-exact", () => {
+      // Custom identity with non-NULL KEYCERT_SIGNED (0x05) and non-zero expiration
+      const raw = Buffer.alloc(387);
+      raw[0] = 0xaa; raw[1] = 0xbb;
+      raw[32] = 0xcc; raw[33] = 0xdd;
+      raw[64] = 0x05;
+      raw.writeBigUInt64BE(BigInt(0x0102030405060708), 65);
+      const payload = makeRequestPayload(undefined, {});
+      // Inject the custom identity bytes into the payload (replace default identity)
+      const identityStart = 1; // after storeType byte
+      raw.copy(payload, identityStart, 0, 387);
+
+      const parsed = parseRequestVariableLeaseSet(payload);
+      expect(parsed.destinationBytes.equals(raw)).toBe(true);
+    });
   });
 });
