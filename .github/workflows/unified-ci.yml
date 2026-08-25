@@ -660,15 +660,39 @@ jobs:
             echo "::error::Siehe wiki/Build-and-Deploy.md § Release-Signing für Setup-Anleitung."
             exit 1
           fi
-          # Diagnose-Hilfe für paste-Artefakte (CRLF, trailing newlines): nur Länge,
-          # keine Inhalte loggen. Reine Length-Diff zeigt sofort, ob Whitespace
-          # beim Einfügen ins Secret reingerutscht ist.
+          # Diagnose-Hilfe: Längen + Decoded-Magic. Sun/Oracle JKS startet mit
+          # 0xFEEDFEED (4 Bytes big-endian) — wenn das nicht matched, ist die
+          # Source-Datei eine andere (z.B. PEM-armored cert statt JKS, oder ein
+          # anderer Keystore).
+          #
+          # node statt GNU base64, weil Node's Buffer.from(str,'base64') non-strict
+          # ist und alle Non-Alphabet-Chars still droppt (GNU base64 -d scheitert
+          # selbst bei einem einzigen invalid char hart mit exit 1).
           RAW_LEN=${#RELEASE_KEYSTORE_BASE64}
           CLEAN_LEN=$(printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n\t ' | wc -c)
           echo "Keystore base64: ${RAW_LEN} chars raw, ${CLEAN_LEN} chars after stripping CR/LF/Tab/Space"
           if [ "$RAW_LEN" != "$CLEAN_LEN" ]; then
             echo "::warning::Whitespace im Secret gefunden (paste-Artefakt). Decode-Pipeline strippt CR/LF/Tab/Space automatisch."
           fi
+          node -e "
+            const s = process.env.RELEASE_KEYSTORE_BASE64.replace(/[\r\n\t ]/g, '');
+            const buf = Buffer.from(s, 'base64');
+            const head = Array.from(buf.slice(0, 4)).map(b => b.toString(16).padStart(2, '0')).join('');
+            // Akzeptiere sowohl Sun JKS (0xFEEDFEED) als auch PKCS12 (0x3082 =
+            // ASN.1 SEQUENCE, Java 21+ default für keytool -genkeypair).
+            const isJKS = head === 'feedfeed';
+            const isPKCS12 = head.startsWith('3082');
+            if (!isJKS && !isPKCS12) {
+              console.error('::error::Decoded Keystore-Magic mismatch: got 0x' + head + ' (kein JKS und kein PKCS12)');
+              console.error('::error::Wahrscheinlich ist RELEASE_KEYSTORE_BASE64 die falsche Datei (z.B. PEM cert, oder anderer Keystore).');
+              process.exit(1);
+            }
+            const kind = isJKS ? 'JKS' : 'PKCS12';
+            const sha = require('crypto').createHash('sha256').update(buf).digest('hex');
+            console.log('Keystore-Magic: 0x' + head + ' (' + kind + ', ' + buf.length + ' bytes)');
+            console.log('Keystore-SHA256: ' + sha);
+            console.log('::notice::Vergleiche sha256sum ~/secrets/secuchat/release.jks mit dem SHA oben.');
+          "
 
       - name: Sign Release APK
         env:
@@ -684,7 +708,15 @@ jobs:
           APKSIGNER="$BT_DIR/apksigner"
           ZIPALIGN="$BT_DIR/zipalign"
           test -x "$APKSIGNER" && test -x "$ZIPALIGN" || { echo "apksigner/zipalign not found in $BT_DIR"; exit 1; }
-          printf '%s' "$RELEASE_KEYSTORE_BASE64" | tr -d '\r\n\t ' | base64 -di > "$KEYSTORE"
+          # node-basierter Decode statt GNU base64 -d: Buffer.from(str,'base64')
+          # ist non-strict und droppt Non-Alphabet-Chars still (GNU base64 -d
+          # wirft bei einem einzigen invalid char 'invalid input' und exit 1).
+          # Der Pre-flight-Step weiter oben hat die Magic 0xFEEDFEED bereits
+          # geprüft — hier wird nur noch geschrieben.
+          node -e "
+            const s = process.env.RELEASE_KEYSTORE_BASE64.replace(/[\r\n\t ]/g, '');
+            require('fs').writeFileSync(process.argv[1], Buffer.from(s, 'base64'));
+          " "$KEYSTORE"
           chmod 600 "$KEYSTORE"
           "$ZIPALIGN" -p -f 4 "$UNSIGNED" "$ALIGNED"
           "$APKSIGNER" sign \
