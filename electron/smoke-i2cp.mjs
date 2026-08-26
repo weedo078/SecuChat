@@ -240,7 +240,13 @@ async function main() {
       },
     ];
 
-    const createLeaseSet2Buf = encodeCreateLeaseSet2({
+    // encodeCreateLeaseSet2() already returns a fully-framed I2CP message
+    // (4-byte length BE || 1-byte type || 2-byte sessionId || payload) per
+    // i2cp-session-creator.ts:471. Wrapping it again with encodeMessage()
+    // produces a double-prefix that Java-I2P parses as `storeType=0`,
+    // triggering `Unsupported Leaseset type: 0` DISCONNECT. Send the
+    // buffer as-is.
+    const createLeaseSet2Frame = encodeCreateLeaseSet2({
       identity,
       sessionId: lsSessionId,
       leases: dummyLeases,
@@ -250,12 +256,6 @@ async function main() {
       privateKeys: [],
       storeType: 3, // LeaseSet2
       dateMs: Date.now() + routerDateOffsetMs,
-    });
-
-    const createLeaseSet2Frame = encodeMessage({
-      type: I2CP_MSG.CREATE_LEASE_SET_2,
-      sessionId: lsSessionId,
-      payload: createLeaseSet2Buf,
     });
     sock.write(createLeaseSet2Frame);
     console.log(
