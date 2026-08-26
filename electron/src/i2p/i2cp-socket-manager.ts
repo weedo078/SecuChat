@@ -617,13 +617,16 @@ export class I2CPSocketManager {
       expiresSeconds: parsed.expiresSeconds,
       options: parsed.options,
       signingKey: this.opts.privKey.subarray(64, 96),
-      privateKeys: parsed.encryptionKeys.map((k) => ({
+      // The router echoes our public encryption keys in REQUEST_LEASE_SET;
+      // forward them as-is into the signed LS2 body.
+      publicKeys: parsed.encryptionKeys.map((k) => ({
         encryptionType: k.encryptionType,
-        privateKey: this.opts.privKey.subarray(
-          0,
-          Math.min(32, k.publicKey.length || 32),
-        ),
+        publicKey: k.publicKey,
       })),
+      // SecuChat is an outbound-only client; the LS2 signing key stays local
+      // and inbound-stream decryption happens in process. No private keys
+      // are leaked to the router.
+      privateKeys: [],
       storeType: parsed.storeType,
       dateMs: Date.now() + this.routerDateOffsetMs,
     });
