@@ -921,7 +921,13 @@ export class I2CPSocketManager {
       clearInterval(this.getDateRefreshTimer);
       this.getDateRefreshTimer = null;
     }
-    this.leaseSetState = "idle";
+    // Preserve 'failed' so callers can distinguish a parse-error-induced
+    // disconnect from a clean user-initiated shutdown. See Spec G §4
+    // ("parseErrorCount > 5 -> disconnect()") which fires after the
+    // catch-block at handleRequestLeaseSet has already set state='failed'.
+    if (this.leaseSetState !== "failed") {
+      this.leaseSetState = "idle";
+    }
     this.currentLeases = [];
     this.currentPublished = 0;
     this.currentExpires = 0;
