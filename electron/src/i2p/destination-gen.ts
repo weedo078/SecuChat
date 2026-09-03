@@ -1,19 +1,26 @@
 import * as ed from '@noble/ed25519';
 import { sha256 } from '@noble/hashes/sha256';
 import { toBase32 } from '../utils/base32';
+import { loadLibsodium, ed25519SkToCurve25519 } from './libsodium';
 
 /**
  * I2P Destination mit 2 separaten Ed25519-Keypairs (encryption + signing).
  *
- * Layout des 128-Byte privKey-Blobs (siehe Spec Section 4.3):
- *   [0..32]    encryption private key (Ed25519 seed)
- *   [32..64]   encryption public key
+ * Layout des 128-Byte privKey-Blobs (siehe Spec Section 4.3 + Spec H.1):
+ *   [0..32]    X25519 encPriv (Spec H.1 — via libsodium
+ *              ed25519SkToCurve25519 vom Ed25519 signPriv abgeleitet)
+ *   [32..64]   encryption public key (Ed25519)
  *   [64..96]   signing private key (Ed25519 seed) — separate, NICHT abgeleitet
- *   [96..128]  signing public key
+ *   [96..128]  signing public key (Ed25519)
  *
  * EdDSA-Ed25519 ist single-key (signing === encryption), aber I2P IdentityEx
  * verlangt zwei separate Keys als Java-Compat-Layer. Wir erzeugen daher zwei
  * unabhängige Ed25519-Keypairs.
+ *
+ * Spec H.1: privKey [0..32] wurde mit X25519 encPriv befüllt (LeaseSet-
+ * Encryption via ECDH-X25519). IdentityEx.fromPrivKey() detektiert
+ * all-zero [0..32] als 'Legacy ohne X25519 encPriv' und behandelt
+ * x25519PrivateKey als undefined — siehe i2cp-identity.ts.
  *
  * b32Address = base32(SHA-256(65-byte minimal identity)) + ".b32.i2p".
  * Die 65-byte minimal identity für b32-Hashing nutzt encPub zweimal
@@ -33,6 +40,10 @@ export interface Destination {
  * canonical on-disk format for the I2CP wire protocol (CreateSession /
  * CreateLeaseSet2 use the encryption+signing private seeds to sign the
  * spec-compliant SessionConfig and LeaseSet2 records).
+ *
+ * Spec H.1: privKey [0..32] enthält den X25519 encPriv (via libsodium-
+ * Mapping vom Ed25519 signPriv). Dadurch kann I2CP LeaseSet2 mit ECIES-
+ * X25519 publizieren ohne separaten X25519 Keypair-Storage.
  */
 export async function generateEd25519Destination(): Promise<Destination> {
   // Generate two independent Ed25519 keypairs — encryption and signing
@@ -42,8 +53,15 @@ export async function generateEd25519Destination(): Promise<Destination> {
   const signPriv = ed.utils.randomPrivateKey();
   const signPub = await ed.getPublicKeyAsync(signPriv);
 
+  // Spec H.1: [0..32] = X25519 encPriv, abgeleitet vom Ed25519 signPriv
+  // via libsodium ed25519SkToCurve25519 (ZIP-215 cofactored). Der erste
+  // Aufruf resolved den Singleton-Promise (~50ms Native-Init); Folgeaufrufe
+  // sind sync-Hit. ed25519SkToCurve25519 ist dann sync-ready.
+  await loadLibsodium();
+  const x25519EncPriv = ed25519SkToCurve25519(signPriv);
+
   const privKey = new Uint8Array(128);
-  privKey.set(encPriv, 0);
+  privKey.set(x25519EncPriv, 0); // Spec H.1: war vorher encPriv-Seed
   privKey.set(encPub, 32);
   privKey.set(signPriv, 64);
   privKey.set(signPub, 96);
