@@ -261,13 +261,28 @@ async function main() {
       // Private-Keys für outbound-only clients aus der LS2-Body
       // publicKeys ab. Mit privateKeys=[] matcht #privateKeys dem
       // LeaseSet2-Parser.
+      // Spec H.1 acceptance-discovery: 3 smoke variants were tested against
+      // ~/i2p Java-I2P 2.13.0; ALL throw I2CPMessageException (either
+      // 'Error reading...' or 'Wrong number of privkeys'). Java-I2P 2.13.0
+      // is incompatible with the libsodium-X25519-mapping LeaseSet arch.
+      // See memory/secuchat-h1-destination-format-encryption-2026-09-03
+      // for full bytecode analysis. Spec H.1 is mechanisch correct but
+      // Java-I2P-Acceptance blocked at version-compatibility level.
+      //
+      // Keeping the previous Smoke-Stand (numk=1 + #privateKeys=1 matched,
+      // encType=4 + identity.x25519PublicKey) per Final-Review C1-Fix.
       publicKeys: [
         {
           encryptionType: 4, // ECIES-X25519 (Java-I2P 0.9.31+)
           publicKey: identity.x25519PublicKey,
         },
       ],
-      privateKeys: [],
+      privateKeys: [
+        {
+          encryptionType: 4,
+          privateKey: dest.privKey.subarray(0, 32),
+        },
+      ],
       storeType: 3, // LeaseSet2
       dateMs: Date.now() + routerDateOffsetMs,
     });

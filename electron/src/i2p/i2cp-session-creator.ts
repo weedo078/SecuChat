@@ -401,12 +401,16 @@ export function encodeCreateLeaseSet2(opts: CreateLeaseSet2Opts): Buffer {
       throw new Error(`Lease2.tunnelGw must be 32 bytes, got ${lease.tunnelGw.length}`);
     }
   }
-  // Spec requires at least one public encryption key per LeaseSet2; without
-  // it Java-I2P rejects with "Error reading the CreateLeaseSetMessage"
-  // because the LeaseSet cannot be used to encrypt to us.
+  // Spec H.1: at least one public encryption key is required per LeaseSet2.
+  // (See prog.md note 2026-09-03: Java-I2P 2.13.0's LeaseSet2-Parser
+  // rejects empty LS2-publicKeys-Blocks. Earlier "Error reading
+  // CreateLeaseSetMessage" turned into "Wrong number of privkeys" once
+  // numk=1 + #privateKeys=1 matched correctly. Both error paths leave
+  // LeaseSet2 not accepted — see acceptance-discovery issue.)
   if (opts.publicKeys.length === 0) {
     throw new Error('encodeCreateLeaseSet2: at least one public encryption key is required');
   }
+
 
   const identityBytes = opts.identity.toByteArray();
   const optionsMap = opts.options ?? new Map<string, string>();
