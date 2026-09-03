@@ -1,10 +1,27 @@
-import * as net from 'node:net';
-import { I2PSocketHandle } from './i2p-socket-handle';
-import { StreamingConnection } from './streaming-protocol';
-import { computeB32FromPrivKey } from './destination-gen';
-import { encodeMessage, decodeMessage, readMessageFromSocket, I2CP_MSG, I2CP_HELLO_BYTE } from './i2cp-protocol';
-import { IdentityEx } from './i2cp-identity';
-import { encodeCreateSession, encodeCreateLeaseSet2 } from './i2cp-session-creator';
+import * as net from "node:net";
+import { I2PSocketHandle } from "./i2p-socket-handle";
+import { StreamingConnection } from "./streaming-protocol";
+import { computeB32FromPrivKey } from "./destination-gen";
+import {
+  encodeMessage,
+  decodeMessage,
+  readMessageFromSocket,
+  I2CP_MSG,
+  I2CP_HELLO_BYTE,
+} from "./i2cp-protocol";
+import { IdentityEx } from "./i2cp-identity";
+import {
+  encodeCreateSession,
+  encodeCreateLeaseSet2,
+} from "./i2cp-session-creator";
+import {
+  parseRequestLeaseSet,
+  parseRequestVariableLeaseSet,
+  validateParsedLeaseSetRequest,
+  withLeaseSetSessionId,
+  type LeaseSetState,
+  type ParsedLeaseSetRequest,
+} from "./i2cp-lease-set-request";
 
 export interface I2CPSocketManagerOpts {
   host: string;
@@ -49,6 +66,21 @@ export class I2CPSocketManager {
   private sessionReady = false;
   /** Offset between local Date.now() and router-reported time. Used to sign CreateSession with a router-valid Date. */
   private routerDateOffsetMs = 0;
+  private leaseSetState: LeaseSetState = "idle";
+  private currentLeases: Array<{
+    tunnelGw: Uint8Array;
+    tunnelId: number;
+    endDateSeconds: number;
+  }> = [];
+  private currentPublished = 0;
+  private currentExpires = 0;
+  private leaseSetExpiryWatchdog: NodeJS.Timeout | null = null;
+  private leaseSetRequestTimeout: NodeJS.Timeout | null = null;
+  private getDateRefreshTimer: NodeJS.Timeout | null = null;
+  private parseErrorCount = 0;
+  private static readonly MAX_PARSE_ERRORS = 5;
+  private static readonly LEASE_SET_REQUEST_TIMEOUT_MS = 60_000;
+  private static readonly LEASE_SET_WATCHDOG_MARGIN_SEC = 60;
   /** Pending SessionStatus resolvers, keyed by expected status value. */
   private readonly pendingStatus: Map<number, () => void> = new Map();
   /**
@@ -78,11 +110,15 @@ export class I2CPSocketManager {
    * this is best-effort: same identity model as SAM's
    * `STREAM CONNECTED <peer-destination>` in SAMv3.
    */
-  private readonly incomingStreamListeners: Array<(info: { streamId: number; peerB32: string }) => void> = [];
+  private readonly incomingStreamListeners: Array<
+    (info: { streamId: number; peerB32: string }) => void
+  > = [];
 
   private constructor(private readonly opts: I2CPSocketManagerOpts) {}
 
-  static async getOrCreate(opts: I2CPSocketManagerOpts): Promise<I2CPSocketManager> {
+  static async getOrCreate(
+    opts: I2CPSocketManagerOpts,
+  ): Promise<I2CPSocketManager> {
     if (!I2CPSocketManager.instance) {
       I2CPSocketManager.instance = new I2CPSocketManager(opts);
       await I2CPSocketManager.instance.initialize();
@@ -103,7 +139,9 @@ export class I2CPSocketManager {
    *
    * Returns an unsubscribe function.
    */
-  onIncomingStream(cb: (info: { streamId: number; peerB32: string }) => void): () => void {
+  onIncomingStream(
+    cb: (info: { streamId: number; peerB32: string }) => void,
+  ): () => void {
     this.incomingStreamListeners.push(cb);
     return () => {
       const i = this.incomingStreamListeners.indexOf(cb);
@@ -118,8 +156,11 @@ export class I2CPSocketManager {
    * without leaking the full destination into logs.
    */
   static requireDestination(destinationB32: string | null | undefined): void {
-    if (typeof destinationB32 !== 'string' || destinationB32.length === 0) {
-      const safe = JSON.stringify(destinationB32 ?? '<null/undefined>').slice(0, 64);
+    if (typeof destinationB32 !== "string" || destinationB32.length === 0) {
+      const safe = JSON.stringify(destinationB32 ?? "<null/undefined>").slice(
+        0,
+        64,
+      );
       throw new Error(`destination B32 required (got: ${safe})`);
     }
   }
@@ -163,11 +204,11 @@ export class I2CPSocketManager {
     this.socket = sock;
     await new Promise<void>((resolve, reject) => {
       const onError = (err: Error): void => {
-        sock.removeListener('connect', onConnect);
+        sock.removeListener("connect", onConnect);
         reject(err);
       };
       const onConnect = (): void => {
-        sock.removeListener('error', onError);
+        sock.removeListener("error", onError);
         // I2CP wire protocol: the very first byte after TCP-connect MUST
         // be the protocol hello byte (0x2A = 42). Java-I2P's
         // ClientListenerRunner.validate() reads this byte and closes the
@@ -179,13 +220,13 @@ export class I2CPSocketManager {
         sock.write(Buffer.from([I2CP_HELLO_BYTE]));
         resolve();
       };
-      sock.once('connect', onConnect);
-      sock.once('error', onError);
+      sock.once("connect", onConnect);
+      sock.once("error", onError);
       const timer = setTimeout(() => {
-        sock.removeListener('connect', onConnect);
-        sock.removeListener('error', onError);
+        sock.removeListener("connect", onConnect);
+        sock.removeListener("error", onError);
         sock.destroy();
-        reject(new Error('connect timeout'));
+        reject(new Error("connect timeout"));
       }, 15_000);
       timer.unref();
     });
@@ -200,34 +241,45 @@ export class I2CPSocketManager {
     // with type=32 GET_DATE (no sessionId) + 8-byte Date BE. On timeout we
     // continue with routerDateOffsetMs=0 (use local clock) and log a warning.
     await this.syncRouterClock().catch((err: Error) => {
-      console.warn(`I2CPSocketManager: GET_DATE failed: ${err.message} — using local clock for CreateSession`);
+      console.warn(
+        `I2CPSocketManager: GET_DATE failed: ${err.message} — using local clock for CreateSession`,
+      );
     });
 
     // Step 5: send CreateSessionMessage with spec-compliant layout
     // (inline IdentityEx + sorted Mapping + Date + Ed25519 Signature).
     const identity = IdentityEx.fromPrivKey(this.opts.privKey);
     const properties = new Map<string, string>([
-      ['nickname', this.opts.nickname],
-      ['i2cp.fastReceive', 'true'],
-      ['i2cp.messageReliability', 'BestEffort'],
+      ["nickname", this.opts.nickname],
+      ["i2cp.fastReceive", "true"],
+      ["i2cp.messageReliability", "BestEffort"],
     ]);
     const dateMs = Date.now() + this.routerDateOffsetMs;
     sock.write(encodeCreateSession({ identity, properties, dateMs }));
 
     // Step 6: background GET_DATE refresh every 30 minutes (clock drift)
-    setInterval(() => {
-      if (!this.socket || this.socket.destroyed) return;
-      this.socket.write(encodeMessage({
-        type: I2CP_MSG.GET_DATE,
-        sessionId: null,
-        payload: Buffer.alloc(0),
-      }));
-    }, 30 * 60 * 1000).unref();
+    this.getDateRefreshTimer = setInterval(
+      () => {
+        if (!this.socket || this.socket.destroyed) return;
+        this.socket.write(
+          encodeMessage({
+            type: I2CP_MSG.GET_DATE,
+            sessionId: null,
+            payload: Buffer.alloc(0),
+          }),
+        );
+      },
+      30 * 60 * 1000,
+    );
+    this.getDateRefreshTimer.unref();
 
     // Step 7: fire-and-forget SessionStatus wait (unchanged)
     this.waitForSessionStatus(/*Created*/ 1, /*budgetMs*/ 15_000).catch(
       (err: Error) => {
-        console.warn('I2CPSocketManager: SessionStatus=Created not received:', err.message);
+        console.warn(
+          "I2CPSocketManager: SessionStatus=Created not received:",
+          err.message,
+        );
       },
     );
 
@@ -236,9 +288,12 @@ export class I2CPSocketManager {
 
   private syncRouterClock(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      if (!this.socket) return reject(new Error('no socket'));
+      if (!this.socket) return reject(new Error("no socket"));
       const sock = this.socket;
-      const timer = setTimeout(() => reject(new Error('GET_DATE timeout after 15s')), 15_000);
+      const timer = setTimeout(
+        () => reject(new Error("GET_DATE timeout after 15s")),
+        15_000,
+      );
       timer.unref();
       const onData = (chunk: Buffer): void => {
         // Minimal decoder for the GET_DATE round-trip: read 4-byte length
@@ -250,15 +305,21 @@ export class I2CPSocketManager {
         const length = chunk.readUInt32BE(0);
         if (chunk.length < 4 + 1 + length) return;
         if (chunk[4] !== I2CP_MSG.GET_DATE) return;
-        if (length < 8) return reject(new Error('GET_DATE reply too short'));
+        if (length < 8) return reject(new Error("GET_DATE reply too short"));
         const routerMs = Number(chunk.readBigUInt64BE(5));
         this.routerDateOffsetMs = routerMs - Date.now();
         clearTimeout(timer);
-        sock.removeListener('data', onData);
+        sock.removeListener("data", onData);
         resolve();
       };
-      sock.on('data', onData);
-      sock.write(encodeMessage({ type: I2CP_MSG.GET_DATE, sessionId: null, payload: Buffer.alloc(0) }));
+      sock.on("data", onData);
+      sock.write(
+        encodeMessage({
+          type: I2CP_MSG.GET_DATE,
+          sessionId: null,
+          payload: Buffer.alloc(0),
+        }),
+      );
     });
   }
 
@@ -270,7 +331,11 @@ export class I2CPSocketManager {
    *     streaming data from peer — fed into the matching StreamingConnection
    *     via `feedStreamingPacket(streamId, packet)`.
    */
-  private handleIncomingMessage(msg: { type: number; sessionId: number | null; payload: Buffer }): void {
+  private handleIncomingMessage(msg: {
+    type: number;
+    sessionId: number | null;
+    payload: Buffer;
+  }): void {
     if (msg.type === I2CP_MSG.GET_DATE) {
       // Spec: GET_DATE reply has no sessionId, payload is 8-byte Date BE.
       // Update routerDateOffsetMs from this value (defensive, syncRouterClock
@@ -320,10 +385,11 @@ export class I2CPSocketManager {
           this.pendingStatus.delete(status);
           resolve();
         }
-        // After SessionStatus=Created, send CreateLeaseSet so the router
-        // publishes our LeaseSet. Without this, peers cannot STREAM CONNECT
-        // to us — they'd fail with "LeaseSet not found".
-        void this.publishLeaseSet();
+        // Do NOT send a self-built placeholder LeaseSet here. Java-I2P
+        // owns tunnel construction and will send REQUEST_LEASE_SET (21) or
+        // REQUEST_VARIABLE_LEASE_SET (37) with the real lease material.
+        this.leaseSetState = "awaiting-router-request";
+        this.startLeaseSetRequestTimeout();
       } else if (status === 2 /* Updated */ || status === 3 /* Destroyed */) {
         const resolve = this.pendingStatus.get(status);
         if (resolve) {
@@ -331,6 +397,14 @@ export class I2CPSocketManager {
           resolve();
         }
       }
+      return;
+    }
+
+    if (
+      msg.type === I2CP_MSG.REQUEST_LEASE_SET ||
+      msg.type === I2CP_MSG.REQUEST_VARIABLE_LEASE_SET
+    ) {
+      this.handleRequestLeaseSet(msg);
       return;
     }
 
@@ -376,12 +450,21 @@ export class I2CPSocketManager {
         // destination blob in BEGIN); we record `unknown-peer` and let
         // any later DestLookup upgrade it. This matches SAMv3's
         // `STREAM CONNECTED <peer-destination>` semantics.
-        const handle = new I2PSocketHandle(streamId, new net.Socket(), 'unknown-peer');
+        const handle = new I2PSocketHandle(
+          streamId,
+          new net.Socket(),
+          "unknown-peer",
+        );
         this.incomingStreams.set(streamId, handle);
         // Phase-1 streaming defaults; Phase-7 (streaming-2.0) replaces
         // these with negotiated values from the BEGIN/ACK handshake.
         const conn = new StreamingConnection(
-          { windowSize: 1, initialRTT: 1000, maxRTO: 8000, idleTimeout: 90_000 },
+          {
+            windowSize: 1,
+            initialRTT: 1000,
+            maxRTO: 8000,
+            idleTimeout: 90_000,
+          },
           /*onSendPacket*/ (_packet: Buffer): void => {
             // Outbound from an incoming peer-stream is intentionally
             // unsupported in the Phase-3 MVP — the I2PSocketHandle.send
@@ -391,15 +474,20 @@ export class I2CPSocketManager {
             // setup; that lands when the streaming lib's RTT/retransmit
             // path is fully wired (Phase-7).
             void _packet;
-            console.warn(`I2CPSocketManager: ignoring outbound packet on server-initiated stream ${streamId}`);
+            console.warn(
+              `I2CPSocketManager: ignoring outbound packet on server-initiated stream ${streamId}`,
+            );
           },
         );
         this.streamingConnections.set(streamId, conn);
         for (const listener of [...this.incomingStreamListeners]) {
           try {
-            listener({ streamId, peerB32: 'unknown-peer' });
+            listener({ streamId, peerB32: "unknown-peer" });
           } catch (e) {
-            console.error('I2CPSocketManager: incomingStreamListener threw:', e);
+            console.error(
+              "I2CPSocketManager: incomingStreamListener threw:",
+              e,
+            );
           }
         }
       }
@@ -413,55 +501,151 @@ export class I2CPSocketManager {
     }
   }
 
-  /**
-   * Publish our LeaseSet to the DHT so other peers can STREAM CONNECT to us.
-   * Minimal CreateLeaseSetMessage: 1-byte sessionId + the destination blob
-   * (65 bytes for Ed25519: pubKey || signingPubKey || 0x00 NULL cert).
-   *
-   * The full LeaseSet body (signatures, private-key signing, lease entries)
-   * would be required for production; the Java-I2P router tolerates a
-   * skeleton LeaseSet for local development and immediately reports it.
-   */
-  private async publishLeaseSet(): Promise<void> {
+  private currentRouterTimeSeconds(): number {
+    return Math.floor((Date.now() + this.routerDateOffsetMs) / 1000);
+  }
+
+  private startLeaseSetRequestTimeout(): void {
+    this.clearLeaseSetRequestTimeout();
+    this.leaseSetRequestTimeout = setTimeout(() => {
+      if (this.disconnected || this.leaseSetState !== "awaiting-router-request")
+        return;
+      this.leaseSetState = "failed";
+      console.warn(
+        "I2CPSocketManager: no REQUEST_LEASE_SET received within 60s after SessionStatus=Created",
+      );
+    }, I2CPSocketManager.LEASE_SET_REQUEST_TIMEOUT_MS);
+    this.leaseSetRequestTimeout.unref();
+  }
+
+  private clearLeaseSetRequestTimeout(): void {
+    if (this.leaseSetRequestTimeout) {
+      clearTimeout(this.leaseSetRequestTimeout);
+      this.leaseSetRequestTimeout = null;
+    }
+  }
+
+  private startLeaseSetExpiryWatchdog(): void {
+    this.clearLeaseSetExpiryWatchdog();
+    if (this.currentLeases.length === 0) return;
+    const minEndDate = Math.min(
+      ...this.currentLeases.map((l) => l.endDateSeconds),
+    );
+    const delayMs =
+      Math.max(
+        0,
+        minEndDate -
+          I2CPSocketManager.LEASE_SET_WATCHDOG_MARGIN_SEC -
+          this.currentRouterTimeSeconds(),
+      ) * 1000;
+    this.leaseSetExpiryWatchdog = setTimeout(() => {
+      if (this.disconnected || !this.socket) return;
+      console.warn(
+        `I2CPSocketManager: LeaseSet expires soon and no router refresh has been received (state=${this.leaseSetState})`,
+      );
+      if (this.leaseSetState !== "awaiting-router-request") {
+        this.leaseSetState = "awaiting-router-request";
+        this.startLeaseSetRequestTimeout();
+      }
+    }, delayMs);
+    this.leaseSetExpiryWatchdog.unref();
+  }
+
+  private clearLeaseSetExpiryWatchdog(): void {
+    if (this.leaseSetExpiryWatchdog) {
+      clearTimeout(this.leaseSetExpiryWatchdog);
+      this.leaseSetExpiryWatchdog = null;
+    }
+  }
+
+  private handleRequestLeaseSet(msg: {
+    type: number;
+    sessionId: number | null;
+    payload: Buffer;
+  }): void {
     if (!this.socket || this.i2cpSessionId == null) return;
-    const identity = IdentityEx.fromPrivKey(this.opts.privKey);
-    // Local-router-hash placeholder: in production this comes from the
-    // router's RequestVariableLeaseSet handshake. For MVP we hash our
-    // own destination as the lease target (Java-I2P tolerates this for dev).
-    const localHash = new Uint8Array(32);
-    Buffer.from(identity.encryptionPublicKey).copy(localHash, 0);
-    const dateMs = Date.now() + this.routerDateOffsetMs;
-    const publishedSeconds = Math.floor(dateMs / 1000);
-    const lease = {
-      tunnelGw: localHash,
-      tunnelId: 0,
-      endDateSeconds: publishedSeconds + 10 * 60, // +10 min
-    };
-    const frame = encodeCreateLeaseSet2({
-      identity,
-      sessionId: this.i2cpSessionId,
-      leases: [lease],
-      publishedSeconds,
-      expiresSeconds: 10 * 60, // 10 min offset from published
+    try {
+      this.leaseSetState = "validating";
+      const parsedBase =
+        msg.type === I2CP_MSG.REQUEST_VARIABLE_LEASE_SET
+          ? parseRequestVariableLeaseSet(msg.payload)
+          : parseRequestLeaseSet(msg.payload);
+      const parsed = withLeaseSetSessionId(
+        parsedBase,
+        msg.sessionId ?? this.i2cpSessionId,
+      );
+      const expectedDestination = IdentityEx.fromPrivKey(this.opts.privKey).toByteArray();
+      validateParsedLeaseSetRequest(parsed, {
+        expectedSessionId: this.i2cpSessionId,
+        expectedDestinationBytes: expectedDestination,
+        currentRouterTimeSeconds: () => this.currentRouterTimeSeconds(),
+      });
+
+      this.leaseSetState = "signing";
+      const frame = this.buildCreateLeaseSet2FromRequest(parsed);
+      this.leaseSetState = "submitted";
+      this.socket.write(frame);
+
+      this.parseErrorCount = 0;
+      this.currentLeases = parsed.leases;
+      this.currentPublished = parsed.publishedSeconds;
+      this.currentExpires = parsed.expiresSeconds;
+      this.leaseSetState = "published-assumed";
+      this.clearLeaseSetRequestTimeout();
+      this.startLeaseSetExpiryWatchdog();
+    } catch (err) {
+      this.parseErrorCount += 1;
+      console.error("I2CPSocketManager: LeaseSet request rejected:", err);
+      this.leaseSetState =
+        this.parseErrorCount > I2CPSocketManager.MAX_PARSE_ERRORS
+          ? "failed"
+          : "awaiting-router-request";
+      if (this.parseErrorCount > I2CPSocketManager.MAX_PARSE_ERRORS) {
+        void this.disconnect();
+      }
+    }
+  }
+
+  private buildCreateLeaseSet2FromRequest(
+    parsed: ParsedLeaseSetRequest,
+  ): Buffer {
+    return encodeCreateLeaseSet2({
+      identity: IdentityEx.fromPrivKey(this.opts.privKey),
+      sessionId: parsed.sessionId,
+      leases: parsed.leases,
+      publishedSeconds: parsed.publishedSeconds,
+      expiresSeconds: parsed.expiresSeconds,
+      options: parsed.options,
       signingKey: this.opts.privKey.subarray(64, 96),
-      privateKeys: [
-        { encryptionType: 0, privateKey: this.opts.privKey.subarray(0, 32) },
-      ],
-      storeType: 3, // LeaseSet2
-      dateMs,
+      // The router echoes our public encryption keys in REQUEST_LEASE_SET;
+      // forward them as-is into the signed LS2 body.
+      publicKeys: parsed.encryptionKeys.map((k) => ({
+        encryptionType: k.encryptionType,
+        publicKey: k.publicKey,
+      })),
+      // SecuChat is an outbound-only client; the LS2 signing key stays local
+      // and inbound-stream decryption happens in process. No private keys
+      // are leaked to the router.
+      privateKeys: [],
+      storeType: parsed.storeType,
+      dateMs: Date.now() + this.routerDateOffsetMs,
     });
-    this.socket.write(frame);
   }
 
   /**
    * Resolve once the router reports the expected SessionStatus.
    * Times out after `budgetMs` rather than hanging forever.
    */
-  private waitForSessionStatus(expected: number, budgetMs: number): Promise<void> {
+  private waitForSessionStatus(
+    expected: number,
+    budgetMs: number,
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingStatus.delete(expected);
-        reject(new Error(`SessionStatus=${expected} timeout after ${budgetMs}ms`));
+        reject(
+          new Error(`SessionStatus=${expected} timeout after ${budgetMs}ms`),
+        );
       }, budgetMs);
       timer.unref();
       this.pendingStatus.set(expected, () => {
@@ -482,7 +666,7 @@ export class I2CPSocketManager {
    */
   private async lookupDestination(b32: string): Promise<Buffer> {
     if (!this.socket || this.i2cpSessionId == null) {
-      throw new Error('I2CP session not ready — cannot lookup destination');
+      throw new Error("I2CP session not ready — cannot lookup destination");
     }
     const cached = this.destCache.get(b32);
     if (cached) return cached;
@@ -497,32 +681,38 @@ export class I2CPSocketManager {
     const requestId = this.destLookupCounter++ & 0xffff;
     if (this.destLookupCounter > 0xffff) this.destLookupCounter = 1;
 
-    const replyPromise = new Promise<{ found: boolean; dest: Buffer | null }>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        this.pendingDestLookups.delete(requestId);
-        reject(new Error(`DestLookup for ${b32} timeout`));
-      }, 15_000);
-      timer.unref();
-      this.pendingDestLookups.set(requestId, (reply) => {
-        clearTimeout(timer);
-        resolve(reply);
-      });
-    });
+    const replyPromise = new Promise<{ found: boolean; dest: Buffer | null }>(
+      (resolve, reject) => {
+        const timer = setTimeout(() => {
+          this.pendingDestLookups.delete(requestId);
+          reject(new Error(`DestLookup for ${b32} timeout`));
+        }, 15_000);
+        timer.unref();
+        this.pendingDestLookups.set(requestId, (reply) => {
+          clearTimeout(timer);
+          resolve(reply);
+        });
+      },
+    );
 
     // DestLookup: 2-byte sessionId (== requestId) + 32-byte SHA-256 hash.
     // The router echoes the requestId back in the DestReply's sessionId
     // field, which `handleIncomingMessage` uses to look up our pending
     // resolver. The body sessionId lives in the spec-mandated 2-byte
     // header slot, NOT in the payload.
-    this.socket.write(encodeMessage({
-      type: I2CP_MSG.DEST_LOOKUP,
-      sessionId: requestId,
-      payload: Buffer.from(hashBytes),
-    }));
+    this.socket.write(
+      encodeMessage({
+        type: I2CP_MSG.DEST_LOOKUP,
+        sessionId: requestId,
+        payload: Buffer.from(hashBytes),
+      }),
+    );
 
     const reply = await replyPromise;
     if (!reply.found || !reply.dest) {
-      throw new Error(`DestLookup for ${b32}: not found (peer offline or unknown)`);
+      throw new Error(
+        `DestLookup for ${b32}: not found (peer offline or unknown)`,
+      );
     }
     this.destCache.set(b32, reply.dest);
     return reply.dest;
@@ -564,11 +754,13 @@ export class I2CPSocketManager {
           Buffer.from(streamingPacket),
         ]);
         if (this.socket && !this.socket.destroyed) {
-          this.socket.write(encodeMessage({
-            type: I2CP_MSG.SEND_MESSAGE,
-            sessionId: streamId,
-            payload: envelope,
-          }));
+          this.socket.write(
+            encodeMessage({
+              type: I2CP_MSG.SEND_MESSAGE,
+              sessionId: streamId,
+              payload: envelope,
+            }),
+          );
         }
       },
     );
@@ -585,15 +777,17 @@ export class I2CPSocketManager {
     // works the same for both incoming and outgoing streams.
     const handleSink = new I2PSocketHandle(streamId, new net.Socket(), peerB32);
     void handleSink; // The handleSink's underlying socket is unused; the
-                    // I2CPSocketManager's own send/close methods bypass
-                    // it and use the streaming connection instead.
+    // I2CPSocketManager's own send/close methods bypass
+    // it and use the streaming connection instead.
     return handleSink;
   }
 
   async connectTo(destinationB32: string): Promise<number> {
     I2CPSocketManager.requireDestination(destinationB32);
     if (!this.sessionReady || !this.socket || this.i2cpSessionId == null) {
-      throw new Error('I2CP session not ready — router unreachable or handshake incomplete');
+      throw new Error(
+        "I2CP session not ready — router unreachable or handshake incomplete",
+      );
     }
     // Resolve the destination b32 to a full destination blob via the
     // router's DestLookup (message 34). The router replies with DestReply
@@ -618,13 +812,18 @@ export class I2CPSocketManager {
       // surface stays consistent.
       dest = Buffer.alloc(65);
     }
-    const handle = this.createStreamingHandle(streamId, dest, destinationB32, /*incoming*/ false);
+    const handle = this.createStreamingHandle(
+      streamId,
+      dest,
+      destinationB32,
+      /*incoming*/ false,
+    );
     this.outgoingStreams.set(streamId, handle);
     return streamId;
   }
 
   async acceptIncoming(): Promise<number> {
-    if (!this.sessionReady) throw new Error('I2CP session not ready');
+    if (!this.sessionReady) throw new Error("I2CP session not ready");
     // Real accept path is driven by the inbound RECEIVE_MESSAGE_BEGIN /
     // RECEIVE_MESSAGE_END messages; the explicit `acceptIncoming()` IPC
     // returns a streamId reserved for the next server-initiated stream.
@@ -632,7 +831,11 @@ export class I2CPSocketManager {
     // SYN-accept wiring lands when the streaming lib is fully wired into
     // the I2CP message reader in Phase B.2.
     const streamId = this.streamIdCounter++;
-    const handle = new I2PSocketHandle(streamId, new net.Socket(), 'unknown-peer');
+    const handle = new I2PSocketHandle(
+      streamId,
+      new net.Socket(),
+      "unknown-peer",
+    );
     this.incomingStreams.set(streamId, handle);
     return streamId;
   }
@@ -651,7 +854,8 @@ export class I2CPSocketManager {
     // raw I2PSocketHandle so the IPC surface keeps working even if a
     // connectTo() is in flight and the streaming conn hasn't been wired
     // yet.
-    const handle = this.outgoingStreams.get(streamId) ?? this.incomingStreams.get(streamId);
+    const handle =
+      this.outgoingStreams.get(streamId) ?? this.incomingStreams.get(streamId);
     if (!handle) throw new Error(`stream ${streamId} not found`);
     await handle.send(data);
   }
@@ -664,7 +868,10 @@ export class I2CPSocketManager {
       try {
         await outHandle.close(reason);
       } catch (err) {
-        console.error(`I2CPSocketManager.close(${streamId}) outgoing handle error:`, err);
+        console.error(
+          `I2CPSocketManager.close(${streamId}) outgoing handle error:`,
+          err,
+        );
       }
       return;
     }
@@ -675,7 +882,10 @@ export class I2CPSocketManager {
       try {
         await inHandle.close(reason);
       } catch (err) {
-        console.error(`I2CPSocketManager.close(${streamId}) incoming handle error:`, err);
+        console.error(
+          `I2CPSocketManager.close(${streamId}) incoming handle error:`,
+          err,
+        );
       }
       return;
     }
@@ -687,25 +897,51 @@ export class I2CPSocketManager {
     this.sessionReady = false;
     for (const [id, h] of this.outgoingStreams) {
       try {
-        await h.close('disconnect');
+        await h.close("disconnect");
       } catch (err) {
-        console.error(`I2CPSocketManager.disconnect() outgoing[${id}] error:`, err);
+        console.error(
+          `I2CPSocketManager.disconnect() outgoing[${id}] error:`,
+          err,
+        );
       }
     }
     for (const [id, h] of this.incomingStreams) {
       try {
-        await h.close('disconnect');
+        await h.close("disconnect");
       } catch (err) {
-        console.error(`I2CPSocketManager.disconnect() incoming[${id}] error:`, err);
+        console.error(
+          `I2CPSocketManager.disconnect() incoming[${id}] error:`,
+          err,
+        );
       }
     }
     this.outgoingStreams.clear();
     this.incomingStreams.clear();
     this.streamingConnections.clear();
+    this.clearLeaseSetExpiryWatchdog();
+    this.clearLeaseSetRequestTimeout();
+    if (this.getDateRefreshTimer) {
+      clearInterval(this.getDateRefreshTimer);
+      this.getDateRefreshTimer = null;
+    }
+    // Preserve 'failed' so callers can distinguish a parse-error-induced
+    // disconnect from a clean user-initiated shutdown. See Spec G §4
+    // ("parseErrorCount > 5 -> disconnect()") which fires after the
+    // catch-block at handleRequestLeaseSet has already set state='failed'.
+    if (this.leaseSetState !== "failed") {
+      this.leaseSetState = "idle";
+    }
+    this.currentLeases = [];
+    this.currentPublished = 0;
+    this.currentExpires = 0;
+    this.parseErrorCount = 0;
     try {
       this.socket?.destroy();
     } catch (err) {
-      console.error('I2CPSocketManager.disconnect() socket destroy error:', err);
+      console.error(
+        "I2CPSocketManager.disconnect() socket destroy error:",
+        err,
+      );
     }
     this.socket = null;
     this.i2cpSessionId = null;
@@ -721,11 +957,7 @@ export class I2CPSocketManager {
     // handshake has been kicked off. Does NOT require the router to
     // have confirmed SessionStatus=Created yet — that gate is
     // `isSessionReady()` below, and connectTo() enforces it internally.
-    return (
-      !this.disconnected &&
-      this.socket !== null &&
-      !this.socket.destroyed
-    );
+    return !this.disconnected && this.socket !== null && !this.socket.destroyed;
   }
 
   /**
@@ -740,8 +972,29 @@ export class I2CPSocketManager {
     return this.sessionReady && this.i2cpSessionId != null;
   }
 
+  getLeaseSetState(): LeaseSetState {
+    return this.leaseSetState;
+  }
+
+  getLeaseSetInfo(): {
+    state: LeaseSetState;
+    published: number;
+    expires: number;
+    leases: number;
+  } | null {
+    if (this.currentLeases.length === 0) return null;
+    return {
+      state: this.leaseSetState,
+      published: this.currentPublished,
+      expires: this.currentExpires,
+      leases: this.currentLeases.length,
+    };
+  }
+
   getStream(streamId: number): I2PSocketHandle | undefined {
-    return this.outgoingStreams.get(streamId) ?? this.incomingStreams.get(streamId);
+    return (
+      this.outgoingStreams.get(streamId) ?? this.incomingStreams.get(streamId)
+    );
   }
 }
 
@@ -753,7 +1006,9 @@ export class I2CPSocketManager {
  */
 function b32ToBytes(b32: string): Uint8Array {
   if (b32.length !== 52) {
-    throw new Error(`b32ToBytes: expected 52-char b32 prefix, got ${b32.length}`);
+    throw new Error(
+      `b32ToBytes: expected 52-char b32 prefix, got ${b32.length}`,
+    );
   }
   if (!/^[a-z2-7]{52}$/.test(b32)) {
     throw new Error(`b32ToBytes: invalid b32 alphabet`);
@@ -761,7 +1016,7 @@ function b32ToBytes(b32: string): Uint8Array {
   const out = new Uint8Array(32);
   // Standard RFC 4648 base32 decode (lowercase). 52 chars × 5 bits = 260
   // bits = 32 bytes + 4 padding bits that get dropped.
-  const ALPHABET = 'abcdefghijklmnopqrstuvwxyz234567';
+  const ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
   let buffer = 0;
   let bitsLeft = 0;
   let outIdx = 0;

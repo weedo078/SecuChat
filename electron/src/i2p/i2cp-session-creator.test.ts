@@ -51,6 +51,7 @@ function makeLeaseSet2Opts(overrides: Partial<{
   expiresSeconds: number;
   options: Map<string, string>;
   signingKey: Uint8Array;
+  publicKeys: Array<{ encryptionType: number; publicKey: Uint8Array }>;
   privateKeys: Array<{ encryptionType: number; privateKey: Uint8Array }>;
   storeType: 1 | 3 | 5 | 7;
   dateMs: number;
@@ -71,12 +72,15 @@ function makeLeaseSet2Opts(overrides: Partial<{
     expiresSeconds: overrides.expiresSeconds ?? 600, // 10 minutes
     options: overrides.options ?? new Map<string, string>(),
     signingKey,
-    privateKeys: overrides.privateKeys ?? [
+    // LS2 body needs at least one public encryption key. Default = the
+    // first 32 bytes of the IdentityEx with ECIES-X25519 type tag.
+    publicKeys: overrides.publicKeys ?? [
       {
-        encryptionType: 0, // ECIES-X25519 = 0 in i2pd spec table
-        privateKey: new Uint8Array(32).fill(0xee),
+        encryptionType: 4, // ECIES-X25519
+        publicKey: identity.encryptionPublicKey,
       },
     ],
+    privateKeys: overrides.privateKeys ?? [], // outbound-only test default
     storeType: overrides.storeType ?? (3 as const),
     dateMs: overrides.dateMs ?? 1700000000000,
   };
@@ -421,11 +425,11 @@ describe('encodeCreateLeaseSet2 — Pflicht extensions (brief)', () => {
     // ls2 starts at offset 8 (after length+type+sessionId+storeType).
     // ls2_header: 387+4+2+2 = 395 bytes → after ls2_header: 8 + 395 = 403
     // options: 2-byte size (empty → 0) + 0 bytes → 403+2 = 405
-    // numk: 1 byte (0) → 405+1 = 406
-    // num: 1 byte (1 lease) → 406+1 = 407
-    // lease[0] starts at offset 407
+    // numk: 1 byte (=1) + 2 encType + 2 keyLen + 32 publicKey → 405+37 = 442
+    // num: 1 byte (1 lease) → 442+1 = 443
+    // lease[0] starts at offset 443
 
-    const numOffset = 406; // after empty options(2) + numk(1)
+    const numOffset = 442; // after numk(1) + encType(2) + keyLen(2) + publicKey(32)
     expect(buf[numOffset]).toBe(1); // num = 1
 
     const leaseOffset = numOffset + 1; // 407
@@ -450,12 +454,23 @@ describe('encodeCreateLeaseSet2 — Pflicht extensions (brief)', () => {
         { tunnelGw: tunnelGw1, tunnelId: 0x11111111, endDateSeconds: 1700000100 },
         { tunnelGw: tunnelGw2, tunnelId: 0x22222222, endDateSeconds: 1700000200 },
       ],
-      privateKeys: [],
     });
     const buf = encodeCreateLeaseSet2(opts);
 
-    // num at offset 406, value = 2
-    const numOffset = 406;
+    // Frame layout (default test options: 1 publicKey of 32B, no options):
+    //   4-byte length + 1-byte type + 2-byte sessionId + (Outer-Payload)
+    //   Outer-Payload:
+    //     1-byte storeType
+    //     387-byte IdentityEx
+    //     4-byte published
+    //     2-byte expires
+    //     2-byte flags
+    //     2-byte optionsSize (=0) + 0-byte options
+    //     1-byte numk (=1) + 2-byte encType + 2-byte keyLen + 32-byte publicKey
+    //     1-byte numLeases
+    //     (Leases follow)
+    // → numLeases offset = 7 + 1 + 387 + 4 + 2 + 2 + 2 + 1 + 2 + 2 + 32 = 442
+    const numOffset = 442;
     expect(buf[numOffset]).toBe(2);
 
     const leaseOffset = numOffset + 1; // 407
@@ -506,9 +521,10 @@ describe('encodeCreateLeaseSet2 — Pflicht extensions (brief)', () => {
     const storeType = outerPayload[0];
     expect(storeType).toBe(3);
 
-    // Determine end of ls2 blob: ls2 blob ends just before the 64-byte signature.
-    // The signature is the 64 bytes immediately preceding the 1-byte #privateKeys.
-    const privKeyStart = outerPayload.length - (1 + 2 + 2 + opts.privateKeys[0].privateKey.length);
+    // Default test opts have privateKeys=[], so the privateKeys tail is just
+    // the 1-byte count (=0). The 64-byte signature ends at
+    // outerPayload.length - 1 (the #privateKeys byte).
+    const privKeyStart = outerPayload.length - 1;
     const sigStart = privKeyStart - 64;
     const ls2Bytes = outerPayload.subarray(1, sigStart);
 
@@ -591,5 +607,126 @@ describe('encodeCreateLeaseSet2 — Pflicht extensions (brief)', () => {
     const a = encodeCreateSession(opts);
     const b = encodeCreateSession(opts);
     expect(a.equals(b)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// encodeCreateLeaseSet2 — X25519-Keypair-Integration (Spec H.1 Task 4)
+// ---------------------------------------------------------------------------
+//
+// Frame layout reference (offsets in buf, NOT in outerPayload):
+//   [0..3]                        4-byte length (BE)
+//   [4]                           1-byte type = 41 (CREATE_LEASE_SET_2)
+//   [5..6]                        2-byte sessionId (BE)
+//   [7]                           1-byte storeType = 3 (LeaseSet2)
+//   [8..394]                      387-byte IdentityEx (ls2_header.destination)
+//   [395..398]                    4-byte publishedSeconds (BE)
+//   [399..400]                    2-byte expiresSeconds (BE)
+//   [401..402]                    2-byte flags (BE)
+//   [403..404]                    2-byte optionsSize (BE) — 0 in tests below
+//   [405]                         1-byte numk (= publicKeys.length)
+//   [406..407]                    2-byte encType[0] (BE)
+//   [408..409]                    2-byte keyLen[0] (BE)
+//   [410..441]                    publicKey[0] (32 B for X25519)
+//   [442]                         1-byte numLeases
+//   [443..]                       lease entries (40 B each)
+//   [...end-64-1..end-1]          64-byte Ed25519 signature
+//   [end-1]                       1-byte #privateKeys
+//   [end+0..end+1]                2-byte encType[0] (BE) — for each privateKey
+//   [end+2..end+3]                2-byte keyLen[0] (BE)
+//   [end+4..end+35]               privateKey[0] (32 B for X25519)
+
+describe('encodeCreateLeaseSet2 — X25519-Keypair-Integration (Spec H.1)', () => {
+  it('[T4-1] numk byte = publicKeys.length (=1) at LS2 body offset 405', () => {
+    const x25519EncPriv = new Uint8Array(32).fill(0xaa);
+    const opts = makeLeaseSet2Opts({
+      publicKeys: [{
+        encryptionType: 4,
+        publicKey: new Uint8Array(32).fill(0xbb),
+      }],
+      privateKeys: [{ encryptionType: 4, privateKey: x25519EncPriv }],
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // numk byte at offset 405 (= 7 + 1 + 387 + 4 + 2 + 2 + 2 + 2)
+    //                 = frame-prefix(7) + storeType(1) + IdentityEx(387)
+    //                 + published(4) + expires(2) + flags(2) + optionsSize(2)
+    expect(buf[405]).toBe(1);
+  });
+
+  it('[T4-2] publicKeys[0] slot = encType=4 + keyLen=32 + X25519 encPub (byte-exakt)', () => {
+    const x25519EncPub = new Uint8Array(32).fill(0x99);
+    const opts = makeLeaseSet2Opts({
+      publicKeys: [{ encryptionType: 4, publicKey: x25519EncPub }],
+      privateKeys: [],
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // In payload-coordinates (= buf.subarray(7) = outerPayload):
+    //   numkOffset = 1 (storeType) + 387 (IdentityEx) + 4 (published)
+    //              + 2 (expires) + 2 (flags) + 2 (optionsSize) = 398
+    const payload = buf.subarray(7);
+    const numkOffset = 398;
+    expect(payload[numkOffset]).toBe(1);                                  // numk = 1
+    expect(payload.readUInt16BE(numkOffset + 1)).toBe(4);                  // encType = 4 (ECIES-X25519)
+    expect(payload.readUInt16BE(numkOffset + 3)).toBe(32);                 // keyLen = 32
+    expect(Buffer.from(payload.subarray(numkOffset + 5, numkOffset + 37))
+      .equals(Buffer.from(x25519EncPub))).toBe(true);
+  });
+
+  it('[T4-3] privateKeys[0] slot = encType=4 + keyLen=32 + X25519 encPriv (byte-exakt)', () => {
+    const x25519EncPriv = new Uint8Array(32).fill(0xcc);
+    const opts = makeLeaseSet2Opts({
+      publicKeys: [{
+        encryptionType: 4,
+        publicKey: new Uint8Array(32).fill(0xdd), // any encPub — numk stays 1
+      }],
+      privateKeys: [{ encryptionType: 4, privateKey: x25519EncPriv }],
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // Tail block (outerPayload):
+    //   [1B #privateKeys][2B encType][2B keyLen][32B privateKey] = 37 bytes
+    const payload = buf.subarray(7);
+    const privKeySectionSize = 1 + 2 + 2 + x25519EncPriv.length;
+    const privKeyStart = payload.length - privKeySectionSize;
+    const tail = payload.subarray(privKeyStart);
+    expect(tail[0]).toBe(1);                       // #privateKeys = 1
+    expect(tail.readUInt16BE(1)).toBe(4);          // encType = 4 (ECIES-X25519)
+    expect(tail.readUInt16BE(3)).toBe(32);         // keyLen = 32
+    expect(Buffer.from(tail.subarray(5, 5 + 32))
+      .equals(Buffer.from(x25519EncPriv))).toBe(true);
+  });
+
+  it('[T4-4] 1:1-mapping (1 publicKey + 1 matched privateKey) — beide Slots korrekt befüllt', () => {
+    const x25519EncPub = new Uint8Array(32).fill(0x11);
+    const x25519EncPriv = new Uint8Array(32).fill(0x22);
+    const opts = makeLeaseSet2Opts({
+      publicKeys: [{ encryptionType: 4, publicKey: x25519EncPub }],
+      privateKeys: [{ encryptionType: 4, privateKey: x25519EncPriv }],
+    });
+    const buf = encodeCreateLeaseSet2(opts);
+
+    // --- publicKeys[0] slot im LS2-Body ---
+    // numk byte at payload offset 398
+    const payload = buf.subarray(7);
+    const numkOffset = 398;
+    expect(payload[numkOffset]).toBe(1);
+    expect(payload.readUInt16BE(numkOffset + 1)).toBe(4);
+    expect(payload.readUInt16BE(numkOffset + 3)).toBe(32);
+    expect(Buffer.from(payload.subarray(numkOffset + 5, numkOffset + 37))
+      .equals(Buffer.from(x25519EncPub))).toBe(true);
+
+    // --- privateKeys[0] slot im Tail-Block ---
+    // Java-I2P enforced 1:1 zwischen numk (#publicKeys) und #privateKeys.
+    // Beide Slots müssen je 32-B X25519-Material tragen.
+    const privKeySectionSize = 1 + 2 + 2 + x25519EncPriv.length;
+    const privKeyStart = payload.length - privKeySectionSize;
+    const tail = payload.subarray(privKeyStart);
+    expect(tail[0]).toBe(1);                  // #privateKeys == numk == 1
+    expect(tail.readUInt16BE(1)).toBe(4);     // gleicher encType wie public
+    expect(tail.readUInt16BE(3)).toBe(32);
+    expect(Buffer.from(tail.subarray(5, 5 + 32))
+      .equals(Buffer.from(x25519EncPriv))).toBe(true);
   });
 });

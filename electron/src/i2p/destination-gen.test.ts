@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import * as ed from '@noble/ed25519';
 import {
   generateEd25519Destination,
@@ -6,6 +6,7 @@ import {
 } from './destination-gen';
 import { toBase32 } from '../utils/base32';
 import { createHash } from 'node:crypto';
+import { loadLibsodium, ed25519SkToCurve25519 } from './libsodium';
 
 const B32_PATTERN = /^[a-z2-7]{52}\.b32\.i2p$/;
 
@@ -25,7 +26,7 @@ describe('generateEd25519Destination (brief)', () => {
     expect(dest.b32Address).toMatch(B32_PATTERN);
   });
 
-  it('privKey blob layout: bytes 0..31 = encryption priv, 32..63 = encryption pub, 64..95 = signing priv, 96..127 = signing pub', async () => {
+  it('privKey blob layout (Spec H.1): bytes 0..31 = X25519 encPriv, 32..63 = Ed25519 encPub, 64..95 = Ed25519 signPriv, 96..127 = Ed25519 signPub', async () => {
     const dest = await generateEd25519Destination();
 
     // Bytes 32..63 must equal the encryption public key exactly
@@ -34,7 +35,9 @@ describe('generateEd25519Destination (brief)', () => {
     // Bytes 96..127 must equal the signing public key exactly
     expect(dest.privKey.subarray(96, 128)).toEqual(dest.signingPublicKey);
 
-    // The signing keypair must be DIFFERENT from the encryption keypair
+    // [0..32] is the X25519 encPriv (Spec H.1) — derived from signPriv at
+    // [64..96] via libsodium ed25519SkToCurve25519. Must therefore be
+    // different from the signPriv bytes (different curve mappings).
     expect(dest.privKey.subarray(0, 32)).not.toEqual(dest.privKey.subarray(64, 96));
     expect(dest.privKey.subarray(32, 64)).not.toEqual(dest.privKey.subarray(96, 128));
   });
@@ -56,11 +59,19 @@ describe('generateEd25519Destination (defensive)', () => {
     expect(dest.publicKey).not.toEqual(dest.signingPublicKey);
   });
 
-  it('consumer contract: ed.getPublicKeyAsync(encPriv) === dest.publicKey', async () => {
+  it('consumer contract: [0..32] is NO LONGER Ed25519 encPriv seed (Spec H.1 shift)', async () => {
+    // Spec H.1: privKey [0..32] wurde von Ed25519 encPriv-Seed auf den
+    // X25519 encPriv (via libsodium-Mapping vom signPriv) umgestellt.
+    // Der Ed25519 encPriv-Seed wird nicht mehr persistiert — I2CP
+    // nutzt den X25519 encPriv für LeaseSet-Encryption.
+    //
+    // Diese Assertion verifiziert die Negation des Legacy-Contracts:
+    // ed.getPublicKeyAsync([0..32]) darf NICHT == dest.publicKey sein,
+    // weil [0..32] jetzt X25519 encPriv ist, nicht Ed25519 encPriv-Seed.
     const dest = await generateEd25519Destination();
-    const encPriv = dest.privKey.subarray(0, 32);
-    const derivedPub = await ed.getPublicKeyAsync(encPriv);
-    expect(derivedPub).toEqual(dest.publicKey);
+    const x25519EncPrivCandidate = dest.privKey.subarray(0, 32);
+    const derivedFromX25519 = await ed.getPublicKeyAsync(x25519EncPrivCandidate);
+    expect(derivedFromX25519).not.toEqual(dest.publicKey);
   });
 
   it('consumer contract: ed.getPublicKeyAsync(signPriv) === dest.signingPublicKey', async () => {
@@ -157,5 +168,41 @@ describe('computeB32FromPrivKey (defensive)', () => {
     const b32 = await computeB32FromPrivKey(synthetic);
     const expectedB32 = await computeB32FromPrivKey(b.privKey);
     expect(b32).toBe(expectedB32);
+  });
+});
+
+describe('generateEd25519Destination (Spec H.1)', () => {
+  // Task 3: privKey-Blob [0..32] enthält den X25519 encPriv (Spec H.1).
+  // libsodium ed25519SkToCurve25519 ist sync-ready, sobald
+  // loadLibsodium() einmal erfolgreich `await`ed wurde.
+  beforeAll(async () => {
+    await loadLibsodium();
+  });
+
+  it('returns 128B privKey with [0..32] = X25519 encPriv (non-zero)', async () => {
+    const dest = await generateEd25519Destination();
+    expect(dest.privKey.length).toBe(128);
+    const encPrivCandidate = dest.privKey.subarray(0, 32);
+    expect(Array.from(encPrivCandidate).some((b) => b !== 0)).toBe(true);
+  });
+
+  it('[0..32] differs across independent generations (random signSeed → random X25519 encPriv)', async () => {
+    // Zwei unabhängige Generierungen produzieren (by design) unterschiedliche
+    // Seeds, daher unterschiedliche encPriv. Wir verifizieren nur, dass
+    // die [0..32] Bytes NICHT all-zero sind (= gültige X25519-Secret).
+    const a = await generateEd25519Destination();
+    const b = await generateEd25519Destination();
+    expect(a.privKey.slice(0, 32)).not.toEqual(b.privKey.slice(0, 32));
+  });
+
+  it('[0..32] X25519 encPriv equals libsodium ed25519SkToCurve25519(signPriv)', async () => {
+    // Starke Spec-H.1-Verifikation: [0..32] muss die libsodium-Mapping-
+    // Funktion vom Ed25519-Sign-Seed sein — NICHT der Ed25519 encPriv
+    // selbst. Diese Assertion failed garantiert mit dem Alt-Code
+    // (encPriv-Ed25519-Seed statt X25519-Mapping).
+    const dest = await generateEd25519Destination();
+    const signPriv = dest.privKey.subarray(64, 96);
+    const expected = ed25519SkToCurve25519(signPriv);
+    expect(dest.privKey.subarray(0, 32)).toEqual(expected);
   });
 });

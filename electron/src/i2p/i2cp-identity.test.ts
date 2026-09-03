@@ -1,6 +1,16 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { IdentityEx } from './i2cp-identity';
+import { loadLibsodium } from './libsodium';
+
+// Spec H.1: IdentityEx.fromPrivKey derives x25519PublicKey via libsodium
+// (ed25519PkToCurve25519). Once `loadLibsodium()` resolves, the mapping
+// is sync — but the cached singleton MUST be awaited once before any
+// test that touches IdentityEx construction runs. Without this beforeAll,
+// every existing test would throw "libsodium not ready" inside fromPrivKey.
+beforeAll(async () => {
+  await loadLibsodium();
+});
 
 // RFC 8032 §7.1 Test 1 deterministic seed → known signature.
 // Source: https://datatracker.ietf.org/doc/html/rfc8032#section-7.1
@@ -341,5 +351,96 @@ describe('IdentityEx edge cases', () => {
       const next = id.toByteArray();
       expect(next.equals(first)).toBe(true);
     }
+  });
+});
+
+describe('IdentityEx round-trip via fromDestinationBytes', () => {
+  it('preserves non-NULL KEYCERT_SIGNED (0x05) and non-zero expiration byte-exact', () => {
+    const raw = Buffer.alloc(387);
+    raw[0] = 0xaa; raw[1] = 0xbb; // 2 bytes of encryption pub (Rest bleibt 0)
+    raw[32] = 0xcc; raw[33] = 0xdd; // 2 bytes of signing pub
+    raw[64] = 0x05; // KEYCERT_SIGNED (non-NULL)
+    raw.writeBigUInt64BE(BigInt(0x0102030405060708), 65); // expiration
+
+    const identity = IdentityEx.fromDestinationBytes(raw);
+    const roundtrip = identity.toByteArray();
+
+    expect(roundtrip.equals(raw)).toBe(true);
+  });
+
+  it('preserves KEYCERT_NULL (0x00) and zero expiration (back-compat)', () => {
+    const raw = Buffer.alloc(387);
+    raw[0] = 0x11; raw[32] = 0x22;
+    raw[64] = 0x00; // KEYCERT_NULL
+
+    const identity = IdentityEx.fromDestinationBytes(raw);
+    expect(identity.toByteArray().equals(raw)).toBe(true);
+  });
+
+  it('rejects non-387-byte input', () => {
+    expect(() => IdentityEx.fromDestinationBytes(Buffer.alloc(100))).toThrow(/expected 387 bytes/);
+  });
+});
+
+describe('IdentityEx X25519 derivation (Spec H.1)', () => {
+  it('fromPrivKey sets x25519PublicKey via libsodium mapping', async () => {
+    const { loadLibsodium } = await import('./libsodium');
+    await loadLibsodium();
+    // 128B privKey mit signSeed=0x43 (gültiger Ed25519-Seed via libsodium
+    // expandable), und synthetischen [32..64]=encPub + [96..128]=signPub.
+    const signSeed = new Uint8Array(32).fill(0x43);
+    const signPub = ed.getPublicKey(signSeed);
+    const privKey = new Uint8Array(128);
+    privKey.fill(0xaa, 0, 32);   // x25519EncPriv placeholder (non-zero → neue Form)
+    privKey.fill(0x42, 32, 64);  // encPub placeholder
+    privKey.set(signSeed, 64);   // signPriv (= Ed25519-Seed)
+    privKey.set(signPub, 96);    // signPub (matching derived)
+    const identity = IdentityEx.fromPrivKey(privKey);
+    expect(identity.x25519PublicKey?.length).toBe(32);
+  });
+
+  it('x25519PublicKey equals libsodium mapping of signPub', async () => {
+    const { loadLibsodium, ed25519PkToCurve25519 } = await import('./libsodium');
+    await loadLibsodium();
+    const signSeed = new Uint8Array(32).fill(0x43);
+    const signPub = ed.getPublicKey(signSeed);
+    const privKey = new Uint8Array(128);
+    privKey.fill(0xaa, 0, 32);
+    privKey.fill(0x42, 32, 64);
+    privKey.set(signSeed, 64);
+    privKey.set(signPub, 96);
+    const identity = IdentityEx.fromPrivKey(privKey);
+    const expected = ed25519PkToCurve25519(identity.signingPublicKey);
+    expect(identity.x25519PublicKey).toEqual(expected);
+  });
+
+  it('all-zero [0..32] sets x25519PrivateKey=undefined (alte Form)', () => {
+    // [0..32] bleibt absichtlich all-zero → Migration-Pfad: alte
+    // privKeys haben den X25519-encPriv nicht persistiert.
+    const signSeed = new Uint8Array(32).fill(0x43);
+    const signPub = ed.getPublicKey(signSeed);
+    const privKey = new Uint8Array(128);
+    // privKey[0..32] = 0 (all-zero)
+    privKey.fill(0x42, 32, 64);
+    privKey.set(signSeed, 64);
+    privKey.set(signPub, 96);
+    const identity = IdentityEx.fromPrivKey(privKey);
+    expect(identity.x25519PrivateKey).toBeUndefined();
+  });
+
+  it('round-trip via toByteArray + fromDestinationBytes preserves x25519PublicKey', async () => {
+    const { loadLibsodium } = await import('./libsodium');
+    await loadLibsodium();
+    const signSeed = new Uint8Array(32).fill(0x43);
+    const signPub = ed.getPublicKey(signSeed);
+    const privKey = new Uint8Array(128);
+    privKey.fill(0xaa, 0, 32);
+    privKey.fill(0x42, 32, 64);
+    privKey.set(signSeed, 64);
+    privKey.set(signPub, 96);
+    const identity = IdentityEx.fromPrivKey(privKey);
+    const wire = identity.toByteArray();
+    const reconstructed = IdentityEx.fromDestinationBytes(wire);
+    expect(reconstructed.x25519PublicKey).toEqual(identity.x25519PublicKey);
   });
 });

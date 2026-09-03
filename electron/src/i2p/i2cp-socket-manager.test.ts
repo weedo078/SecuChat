@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { I2CPSocketManager } from './i2cp-socket-manager';
 import * as net from 'node:net';
+import { IdentityEx } from './i2cp-identity';
+import { encodeMapping } from './i2cp-protobuf';
+import { I2CP_MSG, encodeMessage } from './i2cp-protocol';
 
 /**
  * Synthesize a router→client GET_DATE reply frame.
@@ -525,5 +528,351 @@ describe('I2CPSocketManager SessionStatus body-format variants', () => {
     expect(m.isSessionReady()).toBe(true);
     expect((m as unknown as { i2cpSessionId: number }).i2cpSessionId).toBe(42);
     expect(42).not.toBe(before);
+  });
+});
+
+/**
+ * Spec G §5.2 State-Machine-Tests for the 7 LeaseSetState transitions in
+ * `I2CPSocketManager`:
+ *   - idle → awaiting-router-request (after SESSION_STATUS=Created)
+ *   - awaiting-router-request → validating → signing → submitted → published-assumed (happy path)
+ *   - awaiting-router-request → failed (after 60s timeout without REQUEST_LEASE_SET)
+ *   - parseErrorCount escalation (5 errors → DESTROY_SESSION → state=failed)
+ *   - Cleanup after disconnect() (all 3 Timer-Handles null, leaseSetState === 'idle')
+ */
+describe('I2CPSocketManager LeaseSetState transitions (Task 6 / Spec G §5.2)', () => {
+  beforeEach(() => {
+    resetSingleton();
+    // Reset the simulated router clock between cases so the
+    // publishedSeconds time-window check stays deterministic.
+    (net as unknown as { __setRouterClock: (ms: number) => void }).__setRouterClock(Date.now());
+  });
+
+  afterEach(() => {
+    // Safety net: if Test 3 (the only test using fake timers) throws
+    // before its try/finally runs, make sure we leave the global timer
+    // state clean for the next describe.
+    vi.useRealTimers();
+  });
+
+  /**
+   * Build a LeaseSet2 body (the `payload` portion of a REQUEST_VARIABLE_LEASE_SET
+   * message — see i2cp-lease-set-request.ts parseLeaseSetRequest for the inverse).
+   * Mirrors the local `makeRequestPayload` helper from
+   * i2cp-lease-set-request.test.ts so we don't depend on that file's internals.
+   */
+  function buildLeaseSet2Body(
+    identity: IdentityEx,
+    overrides: Partial<{
+      publishedSeconds: number;
+      expiresSeconds: number;
+      leases: Array<{
+        tunnelGw: Uint8Array;
+        tunnelId: number;
+        endDateSeconds: number;
+      }>;
+    }> = {},
+  ): Buffer {
+    const publishedSeconds = overrides.publishedSeconds ?? 1_700_000_000;
+    const expiresSeconds = overrides.expiresSeconds ?? 600;
+    const leases = overrides.leases ?? [
+      {
+        tunnelGw: new Uint8Array(32).fill(0xab),
+        tunnelId: 0x11223344,
+        endDateSeconds: publishedSeconds + 600,
+      },
+    ];
+    const options = encodeMapping(new Map([['i2cp.leaseSetType', '3']]));
+    const parts: Buffer[] = [
+      Buffer.from([3]), // storeType = 3 (LeaseSet2)
+      identity.toByteArray(),
+    ];
+    const published = Buffer.alloc(4);
+    published.writeUInt32BE(publishedSeconds, 0);
+    parts.push(published);
+    const expires = Buffer.alloc(2);
+    expires.writeUInt16BE(expiresSeconds, 0);
+    parts.push(expires);
+    const flags = Buffer.alloc(2);
+    flags.writeUInt16BE(0, 0);
+    parts.push(flags);
+    const optLen = Buffer.alloc(2);
+    optLen.writeUInt16BE(options.length, 0);
+    parts.push(optLen, options);
+    parts.push(Buffer.from([1])); // numKeys = 1
+    const encType = Buffer.alloc(2);
+    encType.writeUInt16BE(0, 0);
+    const encLen = Buffer.alloc(2);
+    encLen.writeUInt16BE(32, 0);
+    parts.push(encType, encLen, Buffer.from(identity.encryptionPublicKey));
+    parts.push(Buffer.from([leases.length]));
+    for (const lease of leases) {
+      const tid = Buffer.alloc(4);
+      tid.writeUInt32BE(lease.tunnelId, 0);
+      const end = Buffer.alloc(4);
+      end.writeUInt32BE(lease.endDateSeconds, 0);
+      parts.push(Buffer.from(lease.tunnelGw), tid, end);
+    }
+    return Buffer.concat(parts);
+  }
+
+  /** Capture the fake socket the manager is currently bound to. */
+  function getSocket(m: I2CPSocketManager): EventEmitter & {
+    write: ReturnType<typeof vi.fn>;
+    destroy: ReturnType<typeof vi.fn>;
+    destroyed: boolean;
+  } {
+    return (m as unknown as { socket: EventEmitter & { write: ReturnType<typeof vi.fn>; destroy: ReturnType<typeof vi.fn>; destroyed: boolean } }).socket;
+  }
+
+  /**
+   * Microtask-poll helper — does NOT use setTimeout so it remains compatible
+   * with `vi.useFakeTimers({ toFake: ['setTimeout', ...] })` in the timeout
+   * test. setImmediate is left un-faked, so the connect-time handshake
+   * (SessionStatus=Created frame emission) still drives normally.
+   */
+  async function flushUntilReady(m: I2CPSocketManager): Promise<void> {
+    for (let i = 0; i < 100; i++) {
+      if (m.isSessionReady()) return;
+      await new Promise<void>((r) => setImmediate(r));
+    }
+  }
+
+  it('Test 1: idle → awaiting-router-request after SESSION_STATUS=Created', async () => {
+    // After getOrCreate() + flushUntilReady, the mock's SessionStatus=Created
+    // frame has been processed by handleIncomingMessage, which sets
+    // leaseSetState='awaiting-router-request' (see socket-manager.ts:391).
+    const m = await I2CPSocketManager.getOrCreate(baseOpts());
+    await flushUntilReady(m);
+    expect(m.isSessionReady()).toBe(true);
+    expect(m.getLeaseSetState()).toBe('awaiting-router-request');
+  });
+
+  it('Test 2: awaiting-router-request → published-assumed happy path', async () => {
+    const m = await I2CPSocketManager.getOrCreate(baseOpts());
+    await flushUntilReady(m);
+    expect(m.getLeaseSetState()).toBe('awaiting-router-request');
+
+    // Build a valid REQUEST_VARIABLE_LEASE_SET frame. The destination bytes
+    // must equal IdentityEx.fromPrivKey(opts.privKey) — that's what
+    // validateParsedLeaseSetRequest compares against. We also need
+    // publishedSeconds within ±300s (past) / +60s (future) of the router
+    // clock and lease.endDateSeconds > now+30 to pass every validator.
+    const identity = IdentityEx.fromPrivKey(baseOpts().privKey);
+    const sid = (m as unknown as { i2cpSessionId: number }).i2cpSessionId;
+    const now = Math.floor(Date.now() / 1000);
+    const body = buildLeaseSet2Body(identity, {
+      publishedSeconds: now,
+      expiresSeconds: 600,
+      leases: [
+        {
+          tunnelGw: new Uint8Array(32).fill(0xab),
+          tunnelId: 0x11223344,
+          endDateSeconds: now + 600,
+        },
+      ],
+    });
+    const frame = encodeMessage({
+      type: I2CP_MSG.REQUEST_VARIABLE_LEASE_SET,
+      sessionId: sid,
+      payload: body,
+    });
+
+    // Push it through the mock socket so the existing readMessageFromSocket
+    // listener decodes it and dispatches to handleRequestLeaseSet.
+    const sock = getSocket(m);
+    sock.emit('data', frame);
+    await new Promise<void>((r) => setImmediate(r));
+
+    expect(m.getLeaseSetState()).toBe('published-assumed');
+    const info = m.getLeaseSetInfo();
+    expect(info).not.toBeNull();
+    expect(info?.leases).toBeGreaterThan(0);
+    expect(info?.leases).toBe(1);
+    expect(info?.state).toBe('published-assumed');
+  });
+
+  it('Test 3: awaiting-router-request → failed after 60s timeout', async () => {
+    // Fake ONLY setTimeout/setInterval — setImmediate stays real so the
+    // mock's connect-time SessionStatus frame still fires normally. The
+    // setTimeout(60_000) armed by startLeaseSetRequestTimeout() IS a fake
+    // timer, so vi.advanceTimersByTimeAsync can fire it without waiting 60s.
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'],
+    });
+    try {
+      const m = await I2CPSocketManager.getOrCreate(baseOpts());
+      await flushUntilReady(m);
+      expect(m.getLeaseSetState()).toBe('awaiting-router-request');
+
+      // Advance past the 60s budget. 60_001 ms is one tick past
+      // LEASE_SET_REQUEST_TIMEOUT_MS (60_000).
+      await vi.advanceTimersByTimeAsync(60_001);
+
+      expect(m.getLeaseSetState()).toBe('failed');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('Test 4: parseErrorCount escalation → disconnect after 6 malformed frames', async () => {
+    const m = await I2CPSocketManager.getOrCreate(baseOpts());
+    await flushUntilReady(m);
+    expect(m.getLeaseSetState()).toBe('awaiting-router-request');
+
+    // Build 6 frames with a WRONG destination (different IdentityEx). The
+    // parser succeeds but validateParsedLeaseSetRequest throws
+    // "LeaseSet request destination mismatch" on every one, incrementing
+    // parseErrorCount. After the 6th error, parseErrorCount > MAX_PARSE_ERRORS
+    // (5) and disconnect() is invoked.
+    const wrongIdentity = IdentityEx.fromPrivKey(makeTestPrivKey(99));
+    const sid = (m as unknown as { i2cpSessionId: number }).i2cpSessionId;
+    const now = Math.floor(Date.now() / 1000);
+    const body = buildLeaseSet2Body(wrongIdentity, {
+      publishedSeconds: now,
+      expiresSeconds: 600,
+      leases: [
+        {
+          tunnelGw: new Uint8Array(32).fill(0xcd),
+          tunnelId: 0x55667788,
+          endDateSeconds: now + 600,
+        },
+      ],
+    });
+    const frame = encodeMessage({
+      type: I2CP_MSG.REQUEST_VARIABLE_LEASE_SET,
+      sessionId: sid,
+      payload: body,
+    });
+
+    const sock = getSocket(m);
+    for (let i = 0; i < 6; i++) {
+      sock.emit('data', frame);
+      await new Promise<void>((r) => setImmediate(r));
+    }
+
+    // Spec: after the 6th invalid frame, state should be 'failed' AND the
+    // socket should have been destroyed. NOTE: handleRequestLeaseSet's
+    // catch block sets state='failed' and then calls disconnect(); the
+    // current disconnect() implementation unconditionally resets state
+    // to 'idle' (overriding the 'failed' marker). See Concerns in the
+    // task-6 report. We assert what the spec asks for; the test surfaces
+    // the regression if the implementation is patched.
+    expect(m.getLeaseSetState()).toBe('failed');
+    expect(sock.destroyed).toBe(true);
+  });
+
+  it('Test 5: published-assumed → idle after disconnect, all 3 timers null', async () => {
+    // Drive the manager into 'published-assumed' first (re-uses Test 2 setup).
+    const m = await I2CPSocketManager.getOrCreate(baseOpts());
+    await flushUntilReady(m);
+
+    const identity = IdentityEx.fromPrivKey(baseOpts().privKey);
+    const sid = (m as unknown as { i2cpSessionId: number }).i2cpSessionId;
+    const now = Math.floor(Date.now() / 1000);
+    const body = buildLeaseSet2Body(identity, {
+      publishedSeconds: now,
+      expiresSeconds: 600,
+      leases: [
+        {
+          tunnelGw: new Uint8Array(32).fill(0xab),
+          tunnelId: 0x11223344,
+          endDateSeconds: now + 600,
+        },
+      ],
+    });
+    const frame = encodeMessage({
+      type: I2CP_MSG.REQUEST_VARIABLE_LEASE_SET,
+      sessionId: sid,
+      payload: body,
+    });
+    const sock = getSocket(m);
+    sock.emit('data', frame);
+    await new Promise<void>((r) => setImmediate(r));
+    expect(m.getLeaseSetState()).toBe('published-assumed');
+
+    // Sanity: published-assumed arms the expiry watchdog (a timer).
+    expect(
+      (m as unknown as { leaseSetExpiryWatchdog: NodeJS.Timeout | null }).leaseSetExpiryWatchdog,
+    ).not.toBeNull();
+    expect(
+      (m as unknown as { getDateRefreshTimer: NodeJS.Timeout | null }).getDateRefreshTimer,
+    ).not.toBeNull();
+
+    await m.disconnect();
+
+    expect(m.getLeaseSetState()).toBe('idle');
+    // All 3 Timer-Handles must be nulled by disconnect().
+    const handles = m as unknown as {
+      leaseSetRequestTimeout: NodeJS.Timeout | null;
+      leaseSetExpiryWatchdog: NodeJS.Timeout | null;
+      getDateRefreshTimer: NodeJS.Timeout | null;
+    };
+    expect(handles.leaseSetRequestTimeout).toBeNull();
+    expect(handles.leaseSetExpiryWatchdog).toBeNull();
+    expect(handles.getDateRefreshTimer).toBeNull();
+  });
+
+  it('Test 6 (bonus): parseErrorCount resets to 0 after a successful parse', async () => {
+    const m = await I2CPSocketManager.getOrCreate(baseOpts());
+    await flushUntilReady(m);
+    expect(m.getLeaseSetState()).toBe('awaiting-router-request');
+
+    // First, two malformed frames (wrong destination) → parseErrorCount = 2.
+    const wrongIdentity = IdentityEx.fromPrivKey(makeTestPrivKey(123));
+    const sid = (m as unknown as { i2cpSessionId: number }).i2cpSessionId;
+    const now = Math.floor(Date.now() / 1000);
+    const badBody = buildLeaseSet2Body(wrongIdentity, {
+      publishedSeconds: now,
+      expiresSeconds: 600,
+      leases: [
+        {
+          tunnelGw: new Uint8Array(32).fill(0xee),
+          tunnelId: 0xdeadbeef,
+          endDateSeconds: now + 600,
+        },
+      ],
+    });
+    const badFrame = encodeMessage({
+      type: I2CP_MSG.REQUEST_VARIABLE_LEASE_SET,
+      sessionId: sid,
+      payload: badBody,
+    });
+    const sock = getSocket(m);
+    for (let i = 0; i < 2; i++) {
+      sock.emit('data', badFrame);
+      await new Promise<void>((r) => setImmediate(r));
+    }
+    expect(
+      (m as unknown as { parseErrorCount: number }).parseErrorCount,
+    ).toBe(2);
+
+    // Now one VALID frame → state advances to 'published-assumed' and
+    // parseErrorCount is reset to 0 inside the try-block (see
+    // socket-manager.ts:589).
+    const identity = IdentityEx.fromPrivKey(baseOpts().privKey);
+    const goodBody = buildLeaseSet2Body(identity, {
+      publishedSeconds: now,
+      expiresSeconds: 600,
+      leases: [
+        {
+          tunnelGw: new Uint8Array(32).fill(0xab),
+          tunnelId: 0x11223344,
+          endDateSeconds: now + 600,
+        },
+      ],
+    });
+    const goodFrame = encodeMessage({
+      type: I2CP_MSG.REQUEST_VARIABLE_LEASE_SET,
+      sessionId: sid,
+      payload: goodBody,
+    });
+    sock.emit('data', goodFrame);
+    await new Promise<void>((r) => setImmediate(r));
+
+    expect(m.getLeaseSetState()).toBe('published-assumed');
+    expect(
+      (m as unknown as { parseErrorCount: number }).parseErrorCount,
+    ).toBe(0);
   });
 });
