@@ -47,6 +47,22 @@ export class IdentityStore {
       );
       return null;
     }
+    // Spec H.1 v3→v4 migration detection: a pre-Spec-H.1 128-byte blob has
+    // an all-zero X25519 encryption-private-key slot at bytes [0..32] (the
+    // legacy layout only carried the Ed25519 encPriv-Seed there, which has
+    // since been replaced with an X25519 encPriv via libsodium). Returning
+    // null signals `start()` to regenerate via `generateEd25519Destination()`
+    // and re-save — the old b32 has no LeaseSet behind it (Spec H.1 was the
+    // first release that persisted the X25519 encPriv), so existing
+    // contacts pointing at the old b32 are effectively dead.
+    const x25519Candidate = payload.subarray(0, 32);
+    if (x25519Candidate.every((b) => b === 0)) {
+      console.warn(
+        'IdentityStore: pre-Spec-H.1 blob detected (all-zero X25519 slot). ' +
+          'Regenerating identity. Existing contacts with old b32 are dead.',
+      );
+      return null;
+    }
     return payload;
   }
 
