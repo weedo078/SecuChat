@@ -253,25 +253,21 @@ async function main() {
       publishedSeconds: nowSeconds,
       expiresSeconds: 600,
       signingKey: dest.privKey.subarray(64, 96), // 32-byte Ed25519 signing seed
-      // LeaseSet2 requires at least one public encryption key. We use the
-      // first 32 bytes of the IdentityEx as a stand-in: SecuChat Ed25519
-      // destinations do not carry a separate ElGamal/X25519 keypair, and
-      // for the Spec-G §5.4 Console-Verify acceptance step Java-I2P only
-      // needs a syntactically valid key block, not mathematically correct
-      // encryption material.
+      // Spec H.1: real X25519-Encryption-Keypair, derived from the Ed25519
+      // seed via libsodium. encPub via identity.encryptionPublicKey
+      // (populated in Task H.1.2 via libsodium ed25519PkToCurve25519),
+      // encPriv via privKey[0..32] (populated in Task H.1.3 via
+      // libsodium ed25519SkToCurve25519).
       publicKeys: [
         {
-          encryptionType: 0, // ElGamal 2048 (Java-I2P default, 256-byte key)
-          publicKey: new Uint8Array(256),
+          encryptionType: 4, // ECIES-X25519 (Java-I2P 0.9.31+)
+          publicKey: identity.encryptionPublicKey,
         },
       ],
-      // Java-I2P enforces 1:1 publicKeys/privateKeys mapping; the privkeys
-      // count must equal numk. For Spec-G §5.4 Console-Verify we send a
-      // placeholder; real encryption key material is Spec H.
       privateKeys: [
         {
-          encryptionType: 0,
-          privateKey: new Uint8Array(256),
+          encryptionType: 4,
+          privateKey: dest.privKey.subarray(0, 32),
         },
       ],
       storeType: 3, // LeaseSet2
