@@ -253,23 +253,21 @@ async function main() {
       publishedSeconds: nowSeconds,
       expiresSeconds: 600,
       signingKey: dest.privKey.subarray(64, 96), // 32-byte Ed25519 signing seed
-      // Spec H.1: real X25519-Encryption-Keypair, derived from the Ed25519
-      // seed via libsodium. encPub via identity.encryptionPublicKey
-      // (populated in Task H.1.2 via libsodium ed25519PkToCurve25519),
-      // encPriv via privKey[0..32] (populated in Task H.1.3 via
-      // libsodium ed25519SkToCurve25519).
+      // Spec H.1 §2.6: X25519 encPub via libsodium ed25519PkToCurve25519
+      // from identity.signingPublicKey (= signPub from privKey [32..64]).
+      // privateKeys im Outer-Payload ist LEER: Java-I2P validiert
+      // #privateKeys == leaseSet.getEncryptionKeys().size() (Bytecode
+      // CreateLeaseSet2Message.doReadMessage:208-217), und leitet die
+      // Private-Keys für outbound-only clients aus der LS2-Body
+      // publicKeys ab. Mit privateKeys=[] matcht #privateKeys dem
+      // LeaseSet2-Parser.
       publicKeys: [
         {
           encryptionType: 4, // ECIES-X25519 (Java-I2P 0.9.31+)
-          publicKey: identity.encryptionPublicKey,
+          publicKey: identity.x25519PublicKey,
         },
       ],
-      privateKeys: [
-        {
-          encryptionType: 4,
-          privateKey: dest.privKey.subarray(0, 32),
-        },
-      ],
+      privateKeys: [],
       storeType: 3, // LeaseSet2
       dateMs: Date.now() + routerDateOffsetMs,
     });
